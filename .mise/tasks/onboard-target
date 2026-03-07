@@ -30,18 +30,23 @@ if [[ -z "$ANTHROPIC_API_KEY" ]]; then
     exit 1
 fi
 
+read -rp "Local repo clone path: " TARGET_REPO_PATH
+if [[ -n "$TARGET_REPO_PATH" && ! -d "$TARGET_REPO_PATH" ]]; then
+    echo "Error: Directory does not exist: $TARGET_REPO_PATH" >&2
+    exit 1
+fi
+
 WEBHOOK_SECRET=$(openssl rand -hex 32)
 echo ""
 echo "Generated webhook secret: $WEBHOOK_SECRET"
 
-# Create or append to targets.auto.tfvars
+# --- Orchestrator-side: register target in tfvars ---
+
 if [[ ! -f "$TFVARS_FILE" ]]; then
     echo 'targets = {' > "$TFVARS_FILE"
     echo '}' >> "$TFVARS_FILE"
 fi
 
-# Insert the new target before the closing brace
-# Using a temp file for portable sed behavior
 ENTRY="  \"$REPO_NAME\" = {
     repo_owner        = \"$REPO_OWNER\"
     repo_name         = \"$REPO_NAME\"
@@ -58,11 +63,147 @@ rm -f "$TFVARS_FILE.bak"
 
 echo ""
 echo "Appended to $TFVARS_FILE"
+
+# --- Target repo side: scaffold productbuilding files ---
+
+if [[ -n "$TARGET_REPO_PATH" ]]; then
+    echo ""
+    echo "Scaffolding target repo at $TARGET_REPO_PATH..."
+
+    # .productbuilding/preview/config.yml
+    mkdir -p "$TARGET_REPO_PATH/.productbuilding/preview"
+    if [[ ! -f "$TARGET_REPO_PATH/.productbuilding/preview/config.yml" ]]; then
+        cat > "$TARGET_REPO_PATH/.productbuilding/preview/config.yml" <<'CONFIGEOF'
+version: 1
+
+compose:
+  file: .productbuilding/preview/docker-compose.yml
+  service: app
+
+runtime:
+  internal_port: 8080
+  healthcheck_path: /healthz
+  startup_timeout_seconds: 300
+
+# database:
+#   migrate_command: <your migration command here>
+CONFIGEOF
+        echo "  Created .productbuilding/preview/config.yml"
+    else
+        echo "  Skipped .productbuilding/preview/config.yml (already exists)"
+    fi
+
+    # .productbuilding/preview/docker-compose.yml
+    if [[ ! -f "$TARGET_REPO_PATH/.productbuilding/preview/docker-compose.yml" ]]; then
+        cat > "$TARGET_REPO_PATH/.productbuilding/preview/docker-compose.yml" <<'COMPOSEEOF'
+# Preview Compose file — production-oriented (no hot reload, no host mounts).
+# The orchestrator will generate an override with Traefik labels and network config.
+
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    # environment:
+    #   - DATABASE_URL=postgres://...
+    # depends_on:
+    #   db:
+    #     condition: service_healthy
+
+  # db:
+  #   image: postgres:17
+  #   environment:
+  #     POSTGRES_DB: app
+  #     POSTGRES_USER: app
+  #     POSTGRES_PASSWORD: preview
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U app"]
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 5
+COMPOSEEOF
+        echo "  Created .productbuilding/preview/docker-compose.yml"
+    else
+        echo "  Skipped .productbuilding/preview/docker-compose.yml (already exists)"
+    fi
+
+    # .github/workflows/claude.yml
+    mkdir -p "$TARGET_REPO_PATH/.github/workflows"
+    if [[ ! -f "$TARGET_REPO_PATH/.github/workflows/claude.yml" ]]; then
+        cat > "$TARGET_REPO_PATH/.github/workflows/claude.yml" <<'WORKFLOWEOF'
+name: Claude Code
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'issues' && contains(github.event.issue.body, '@claude'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+WORKFLOWEOF
+        echo "  Created .github/workflows/claude.yml"
+    else
+        echo "  Skipped .github/workflows/claude.yml (already exists)"
+    fi
+
+    # CLAUDE.md
+    if [[ ! -f "$TARGET_REPO_PATH/CLAUDE.md" ]]; then
+        cat > "$TARGET_REPO_PATH/CLAUDE.md" <<CLAUDEEOF
+# CLAUDE.md — Project Guide for Claude Code
+
+## Project Overview
+
+<!-- Describe what this project does, its purpose, and key features. -->
+
+## Architecture
+
+<!-- Describe the project structure, key directories, and architectural patterns. -->
+
+## Development
+
+<!-- How to build, run, and test the project locally. -->
+
+## Coding Standards
+
+<!-- Language-specific conventions, formatting, naming, etc. -->
+
+## Important Rules
+
+<!-- Non-negotiable constraints Claude should always follow. -->
+CLAUDEEOF
+        echo "  Created CLAUDE.md"
+    else
+        echo "  Skipped CLAUDE.md (already exists)"
+    fi
+fi
+
 echo ""
 echo "Next steps:"
 echo "  1. mise run infra-apply"
 echo "  2. Install the Claude GitHub App on the repo:"
 echo "     https://github.com/apps/claude"
-echo "  3. Add .github/workflows/claude.yml to the repo"
-echo "  4. Add CLAUDE.md to the repo"
-echo "  5. Add preview.yml + docker-compose.preview.yml to the repo"
+if [[ -n "$TARGET_REPO_PATH" ]]; then
+    echo "  3. Review and customize the scaffolded files, then commit and push"
+else
+    echo "  3. Add .productbuilding/preview/ to the repo (see docs)"
+    echo "  4. Add .github/workflows/claude.yml to the repo"
+    echo "  5. Add CLAUDE.md to the repo"
+fi

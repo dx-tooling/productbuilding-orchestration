@@ -99,16 +99,19 @@ mise run ssh -- "docker --version && docker network ls | grep preview-net"
 For each target repository:
 
 ```bash
-mise run onboard-target     # Interactive — prompts for repo details + credentials
+mise run onboard-target     # Interactive — prompts for repo details, credentials, and local clone path
+                            # Registers the target AND scaffolds .productbuilding/, workflow, CLAUDE.md
 mise run infra-apply        # Creates webhook, Secrets Manager entry, GitHub Actions secret
 ```
 
 Then manually:
 
 1. Install the Claude GitHub App on the repo: https://github.com/apps/claude
-2. Add `.github/workflows/claude.yml` to the repo
-3. Add `CLAUDE.md` to the repo
-4. Add `preview.yml` + `docker-compose.preview.yml` to the repo
+2. Review and customize the scaffolded files in the target repo:
+   - `.productbuilding/preview/config.yml` — preview contract (ports, healthcheck, migrations)
+   - `.productbuilding/preview/docker-compose.yml` — preview Compose file (services, Dockerfiles)
+   - `CLAUDE.md` — project conventions for Claude Code
+3. Commit and push the scaffolded files
 
 ---
 
@@ -149,7 +152,7 @@ The Elastic IP remains stable, so DNS continues to work.
 ### Add a new target repo
 
 ```bash
-mise run onboard-target
+mise run onboard-target     # Registers target + scaffolds files in target repo
 mise run infra-apply
-# Then: install Claude GitHub App, add workflow + preview contract to repo
+# Then: install Claude GitHub App, customize scaffolded files, commit + push
 ```

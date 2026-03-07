@@ -152,7 +152,7 @@ OpenTofu iterates over this map to create webhooks, Secrets Manager entries, and
 
 ### 2.4 Target Repo Onboarding Script
 
-`.mise/tasks/onboard-target` (run via `mise run onboard-target`) automates the mechanical parts of adding a new target repo:
+`.mise/tasks/onboard-target` (run via `mise run onboard-target`) automates adding a new target repo. It handles both the orchestrator-side registration **and** scaffolding the target repo itself:
 
 ```
 $ mise run onboard-target
@@ -163,24 +163,35 @@ Repo owner [luminor-project]: luminor-project
 Repo name: my-new-app
 GitHub PAT (fine-grained, scoped to this repo): github_pat_...
 Anthropic API key (for Claude Code): sk-ant-...
+Local repo clone path: /Users/me/git/my-new-app
 Generating webhook secret... done (e4f8a1...)
 
 Appending to main/targets.auto.tfvars... done.
 
+Scaffolding target repo at /Users/me/git/my-new-app...
+  Created .productbuilding/preview/config.yml (edit to match your app)
+  Created .productbuilding/preview/docker-compose.yml (edit to match your app)
+  Created .github/workflows/claude.yml
+  Created CLAUDE.md (starter template — customize for your project)
+
 Next steps:
-  1. cd main && tofu apply
+  1. mise run infra-apply
   2. Install the Claude GitHub App on the repo:
      https://github.com/apps/claude
-  3. Add .github/workflows/claude.yml to the repo (see docs)
-  4. Add preview.yml + docker-compose.preview.yml to the repo (see docs)
+  3. Review and customize the scaffolded files, then commit and push
 ```
 
 The script:
 
-1. Prompts for repo owner, repo name, fine-grained PAT, Anthropic API key
+1. Prompts for repo owner, repo name, fine-grained PAT, Anthropic API key, **local clone path**
 2. Generates a webhook secret via `openssl rand -hex 32`
 3. Appends the new target entry to `main/targets.auto.tfvars`
-4. Prints remaining manual steps (Claude App install, workflow file, preview contract)
+4. Scaffolds productbuilding files in the target repo:
+   - `.productbuilding/preview/config.yml` — preview contract (starter template)
+   - `.productbuilding/preview/docker-compose.yml` — preview Compose file (starter template)
+   - `.github/workflows/claude.yml` — Claude Code workflow
+   - `CLAUDE.md` — Claude Code project guide (starter template)
+5. Prints remaining manual steps (Claude App install, review + commit scaffolded files)
 
 The **one step that cannot be automated** is installing the Claude GitHub App — it requires an OAuth consent flow in the browser. The script prints the direct link.
 
@@ -406,7 +417,7 @@ CREATE TABLE previews (
 5. Post/update PR comment: "Preview building..." (using target repo's PAT)
 6. Download tarball from GitHub API at head SHA (using target repo's PAT)
 7. Extract to `/opt/orchestrator/workspaces/{repo_name}/preview_pr_{number}/`
-8. Read `preview.yml` contract from extracted source
+8. Read `.productbuilding/preview/config.yml` contract from extracted source
 9. Update status → `building`
 10. Generate `docker-compose.override.yml` with:
     - Traefik labels for routing (`{repo_name}-pr-{number}.productbuilder.luminor-tech.net`)
@@ -523,7 +534,7 @@ volumes:
 The orchestrator generates a `docker-compose.override.yml` for each preview, adding Traefik integration and resource limits:
 
 ```yaml
-# Generated for etfg-app-starter-kit PR 42, placed alongside the repo's docker-compose.preview.yml
+# Generated for etfg-app-starter-kit PR 42, placed alongside the repo's .productbuilding/preview/docker-compose.yml
 
 services:
   app:
@@ -548,13 +559,22 @@ networks:
 
 ### 3.8 Preview Contract (in target repo)
 
-Example `preview.yml` for etfg-app-starter-kit:
+Target repos use a `.productbuilding/` directory for all product building integration files. This is future-proof: additional aspects beyond preview (e.g., seeding, benchmarking) can live as sibling directories.
+
+```
+.productbuilding/
+  preview/
+    config.yml              # Preview contract — how to build and run a preview
+    docker-compose.yml      # Production-oriented Compose file for previews
+```
+
+Example `.productbuilding/preview/config.yml` for etfg-app-starter-kit:
 
 ```yaml
 version: 1
 
 compose:
-  file: docker-compose.preview.yml
+  file: .productbuilding/preview/docker-compose.yml
   service: app
 
 runtime:
@@ -566,7 +586,7 @@ database:
   migrate_command: go run ./cmd/migrate business up && go run ./cmd/migrate rag up
 ```
 
-The target repo also provides `docker-compose.preview.yml` — a production-oriented Compose file (using the prod Dockerfile, no hot reload, no host volume mounts) with all required services.
+The target repo also provides `.productbuilding/preview/docker-compose.yml` — a production-oriented Compose file (using the prod Dockerfile, no hot reload, no host volume mounts) with all required services.
 
 ---
 
@@ -757,7 +777,7 @@ mise run all-checks     # Everything
 
 1. Preview domain: entity, state machine, repository (SQLite)
 2. Tarball download via GitHub API
-3. Preview contract parser (`preview.yml`)
+3. Preview contract parser (`.productbuilding/preview/config.yml`)
 4. Compose override generator (Traefik labels, network, resource limits)
 5. Docker Compose execution (`build`, `up`, `down`)
 6. Health check polling with timeout
@@ -783,19 +803,22 @@ mise run all-checks     # Everything
 
 **Goal:** The target repo has its preview contract and Claude Code workflow, tested end-to-end.
 
+**Tasks (onboarding + infra):**
+
+1. Run `mise run onboard-target` for etfg-app-starter-kit — creates tfvars entry and scaffolds `.productbuilding/preview/`, `.github/workflows/claude.yml`, `CLAUDE.md` in the target repo
+2. `mise run infra-apply` — creates webhook, Secrets Manager entry, `ANTHROPIC_API_KEY` GitHub Actions secret
+3. Install the Claude GitHub App ([github.com/apps/claude](https://github.com/apps/claude)) on etfg-app-starter-kit (manual, one-time)
+
 **Tasks (preview contract):**
 
-1. Create `preview.yml` in etfg-app-starter-kit
-2. Create `docker-compose.preview.yml` in etfg-app-starter-kit (prod Dockerfile, all services, preview-appropriate env)
-3. Add `/healthz` endpoint verification
-4. Open a test PR, verify full preview lifecycle
+4. Customize `.productbuilding/preview/config.yml` for etfg-app-starter-kit (ports, healthcheck, migrations)
+5. Customize `.productbuilding/preview/docker-compose.yml` for etfg-app-starter-kit (prod Dockerfile, all services, preview-appropriate env)
+6. Add `/healthz` endpoint verification
+7. Open a test PR, verify full preview lifecycle
 
-**Tasks (Claude Code GitHub Actions):**
+**Tasks (Claude Code):**
 
-5. Run `mise run onboard-target` for etfg-app-starter-kit (creates tfvars entry), then `mise run infra-apply` (creates webhook, Secrets Manager entry, `ANTHROPIC_API_KEY` GitHub Actions secret)
-6. Install the Claude GitHub App ([github.com/apps/claude](https://github.com/apps/claude)) on etfg-app-starter-kit (manual, one-time)
-7. Create `.github/workflows/claude.yml` in etfg-app-starter-kit (see section 4.2)
-8. Create `CLAUDE.md` in etfg-app-starter-kit with project conventions, architecture rules, coding standards
+8. Customize `CLAUDE.md` in etfg-app-starter-kit with project conventions, architecture rules, coding standards
 9. Test the full workflow: open issue → @claude drafts plan → approve → Claude opens PR → preview deployed → review code + live preview
 
 **Tasks (documentation):**
