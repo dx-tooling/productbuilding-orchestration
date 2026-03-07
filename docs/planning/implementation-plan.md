@@ -67,6 +67,7 @@ infrastructure-mgmt/
     main.tf               # S3 bucket, DynamoDB table
     variables.tf
     outputs.tf
+    providers.tf
     terraform.tfstate     # Local (committed to .gitignore)
   main/                   # Ongoing management, S3 backend
     backend.tf            # S3 + DynamoDB backend config
@@ -76,8 +77,26 @@ infrastructure-mgmt/
     outputs.tf
     cloud-init.yml        # Instance bootstrap script (templatefile)
     providers.tf          # AWS + GitHub providers
+    terraform.tfvars      # Gitignored — mgmt PAT, SSH key
     targets.auto.tfvars   # Gitignored — target repo credentials
-  onboard-target.sh       # Interactive script to add a new target repo
+
+.mise/
+  lib/
+    load-secrets          # Helper: loads AWS + GitHub credentials from secrets.yaml
+  tasks/
+    instance-start        # Start EC2 instance
+    instance-stop         # Stop EC2 instance
+    instance-status       # Show instance state and IP
+    ssh                   # SSH into the instance
+    infra-plan            # tofu plan
+    infra-apply           # tofu apply
+    infra-output          # tofu output
+    onboard-target        # Interactive: add a new target repo
+
+docker-compose.yml        # Orchestrator stack (traefik + orchestrator, once built)
+mise.toml                 # Task runner config
+secrets.yaml              # Gitignored — AWS credentials, management PAT
+secrets.sample.yaml       # Template for secrets.yaml
 ```
 
 ### 2.2 Bootstrap Project (`infrastructure-mgmt/bootstrap/`)
@@ -108,7 +127,7 @@ Uses S3 backend. Manages all ongoing infrastructure.
 - **Elastic IP**: stable public IP for the instance
 - **Security group**: inbound 80, 443, 22; outbound all
 - **IAM instance profile + role**: permissions for Secrets Manager read, Route53 record management (Traefik DNS-01), ECR pull (future)
-- **EC2 instance**: Amazon Linux 2023 or Ubuntu 24.04, variable instance type (default `t3.xlarge`)
+- **EC2 instance**: Ubuntu 24.04, variable instance type (default `t3.xlarge`)
 - **Per-target-repo resources** (via `for_each` over targets):
   - Secrets Manager secret: `productbuilder/targets/{repo_name}` with keys `github_pat`, `webhook_secret`
   - GitHub webhook: PR events, pointing to `https://api.productbuilder.luminor-tech.net/webhook`
@@ -119,7 +138,7 @@ Uses S3 backend. Manages all ongoing infrastructure.
 ```hcl
 targets = {
   "etfg-app-starter-kit" = {
-    repo_owner         = "luminor-tech"
+    repo_owner         = "luminor-project"
     repo_name          = "etfg-app-starter-kit"
     github_pat         = "github_pat_..."
     webhook_secret     = "a1b2c3..."          # openssl rand -hex 32
@@ -129,18 +148,18 @@ targets = {
 }
 ```
 
-OpenTofu iterates over this map to create webhooks, Secrets Manager entries, and GitHub Actions secrets per target. Onboarding a new repo = run `onboard-target.sh` + `tofu apply`.
+OpenTofu iterates over this map to create webhooks, Secrets Manager entries, and GitHub Actions secrets per target. Onboarding a new repo = run `mise run onboard-target` + `tofu apply`.
 
 ### 2.4 Target Repo Onboarding Script
 
-`infrastructure-mgmt/onboard-target.sh` automates the mechanical parts of adding a new target repo:
+`.mise/tasks/onboard-target` (run via `mise run onboard-target`) automates the mechanical parts of adding a new target repo:
 
 ```
-$ ./onboard-target.sh
+$ mise run onboard-target
 
 Target repo onboarding
 ======================
-Repo owner [luminor-tech]: luminor-tech
+Repo owner [luminor-project]: luminor-project
 Repo name: my-new-app
 GitHub PAT (fine-grained, scoped to this repo): github_pat_...
 Anthropic API key (for Claude Code): sk-ant-...
@@ -165,15 +184,16 @@ The script:
 
 The **one step that cannot be automated** is installing the Claude GitHub App — it requires an OAuth consent flow in the browser. The script prints the direct link.
 
-**Cloud-init script** (templated by OpenTofu):
+**Cloud-init script** (templated by OpenTofu, receives region/domain/zone ID/repo clone URL):
 
-1. Install Docker Engine + Docker Compose plugin
+1. Install Docker Engine + Docker Compose plugin, add `ubuntu` user to `docker` group
 2. Create `preview-net` external Docker network
-3. Fetch target secrets from AWS Secrets Manager
-4. Write orchestrator config (`/opt/orchestrator/config.yaml`) including target registry
-5. Pull orchestrator Docker image (or clone repo + build)
-6. `docker compose up -d` the orchestrator stack
-7. Signal completion (optional: CloudWatch or simple health check)
+3. Clone the orchestration repo (using management PAT embedded in clone URL)
+4. Write `.env` file with `AWS_REGION`, `AWS_HOSTED_ZONE_ID`, `PREVIEW_DOMAIN`
+5. Fetch target secrets from AWS Secrets Manager → `/opt/orchestrator/targets.json`
+6. `docker compose up -d` the orchestrator stack (Traefik + orchestrator)
+
+On a fresh provision, Traefik auto-provisions the wildcard Let's Encrypt cert via DNS-01 + Route53 (using the instance's IAM role).
 
 **Manual step (one-time):**
 
@@ -341,7 +361,7 @@ On startup, the orchestrator loads target repo configurations from AWS Secrets M
 
 ```json
 {
-  "repo_owner": "luminor-tech",
+  "repo_owner": "luminor-project",
   "repo_name": "etfg-app-starter-kit",
   "github_pat": "github_pat_...",
   "webhook_secret": "a1b2c3..."
@@ -425,10 +445,12 @@ CREATE TABLE previews (
 
 ```yaml
 # docker-compose.yml (orchestrator stack)
+# Note: Traefik uses the EC2 instance's IAM role for Route53 access (DNS-01 challenge),
+# so no AWS_ACCESS_KEY_ID/SECRET_ACCESS_KEY needed — only region and hosted zone ID.
 
 services:
   traefik:
-    image: traefik:v3
+    image: traefik:v3.6
     command:
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
@@ -440,6 +462,8 @@ services:
       - "--certificatesresolvers.le.acme.dnschallenge.provider=route53"
       - "--certificatesresolvers.le.acme.email=admin@luminor-tech.net"
       - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
+      - "--api.dashboard=true"
+      - "--log.level=INFO"
     ports:
       - "80:80"
       - "443:443"
@@ -449,34 +473,40 @@ services:
     networks:
       - preview-net
     environment:
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_REGION=${AWS_REGION}
-    restart: unless-stopped
-
-  orchestrator:
-    build:
-      context: .
-      dockerfile: docker/prod/Dockerfile
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - orchestrator-data:/data          # SQLite DB
-      - workspaces:/opt/orchestrator/workspaces  # Extracted tarballs
-    networks:
-      - preview-net
+      - AWS_REGION=${AWS_REGION:-eu-central-1}
+      - AWS_HOSTED_ZONE_ID=${AWS_HOSTED_ZONE_ID}
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.orchestrator.rule=Host(`api.productbuilder.luminor-tech.net`)"
-      - "traefik.http.routers.orchestrator.entrypoints=websecure"
-      - "traefik.http.routers.orchestrator.tls.certresolver=le"
-      - "traefik.http.services.orchestrator.loadbalancer.server.port=8080"
-    environment:
-      - DATABASE_PATH=/data/orchestrator.db
-      - TARGETS_CONFIG_PATH=/data/targets.json
-      - PREVIEW_DOMAIN=productbuilder.luminor-tech.net
-      - WORKSPACE_DIR=/opt/orchestrator/workspaces
-      - AWS_REGION=${AWS_REGION}
+      - "traefik.http.routers.traefik-dashboard.rule=Host(`api.${PREVIEW_DOMAIN}`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`))"
+      - "traefik.http.routers.traefik-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.traefik-dashboard.tls.certresolver=le"
+      - "traefik.http.routers.traefik-dashboard.service=api@internal"
     restart: unless-stopped
+
+  # orchestrator service will be added in Phase 2:
+  # orchestrator:
+  #   build:
+  #     context: .
+  #     dockerfile: docker/prod/Dockerfile
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #     - orchestrator-data:/data          # SQLite DB
+  #     - workspaces:/opt/orchestrator/workspaces  # Extracted tarballs
+  #   networks:
+  #     - preview-net
+  #   labels:
+  #     - "traefik.enable=true"
+  #     - "traefik.http.routers.orchestrator.rule=Host(`api.${PREVIEW_DOMAIN}`) && PathPrefix(`/`)"
+  #     - "traefik.http.routers.orchestrator.entrypoints=websecure"
+  #     - "traefik.http.routers.orchestrator.tls.certresolver=le"
+  #     - "traefik.http.services.orchestrator.loadbalancer.server.port=8080"
+  #   environment:
+  #     - DATABASE_PATH=/data/orchestrator.db
+  #     - TARGETS_CONFIG_PATH=/data/targets.json
+  #     - PREVIEW_DOMAIN=${PREVIEW_DOMAIN}
+  #     - WORKSPACE_DIR=/opt/orchestrator/workspaces
+  #     - AWS_REGION=${AWS_REGION:-eu-central-1}
+  #   restart: unless-stopped
 
 networks:
   preview-net:
@@ -484,8 +514,8 @@ networks:
 
 volumes:
   letsencrypt:
-  orchestrator-data:
-  workspaces:
+  # orchestrator-data:   # Phase 2
+  # workspaces:          # Phase 2
 ```
 
 ### 3.7 Generated Preview Compose Override
@@ -695,15 +725,13 @@ mise run all-checks     # Everything
 
 1. Create `infrastructure-mgmt/bootstrap/` OpenTofu project
    - S3 bucket + DynamoDB lock table
-   - Secrets Manager secret (placeholder values)
 2. Create `infrastructure-mgmt/main/` OpenTofu project
    - Route53 hosted zone + wildcard record
    - EC2 + EIP + security group + IAM role
    - Cloud-init template
 3. Manual step: NS delegation at apex domain hoster
-4. Manual step: populate Secrets Manager values
-5. `tofu apply` — verify instance boots, Traefik starts, wildcard cert is issued
-6. Verify: `https://api.productbuilder.luminor-tech.net` returns Traefik 404
+4. `tofu apply` — verify instance boots, Traefik starts, wildcard cert is issued
+5. Verify: `https://api.productbuilder.luminor-tech.net` returns Traefik 404
 
 ### Phase 2 — Orchestrator Skeleton
 
@@ -764,7 +792,7 @@ mise run all-checks     # Everything
 
 **Tasks (Claude Code GitHub Actions):**
 
-5. Run `onboard-target.sh` for etfg-app-starter-kit (creates tfvars entry), then `tofu apply` (creates webhook, Secrets Manager entry, `ANTHROPIC_API_KEY` GitHub Actions secret)
+5. Run `mise run onboard-target` for etfg-app-starter-kit (creates tfvars entry), then `mise run infra-apply` (creates webhook, Secrets Manager entry, `ANTHROPIC_API_KEY` GitHub Actions secret)
 6. Install the Claude GitHub App ([github.com/apps/claude](https://github.com/apps/claude)) on etfg-app-starter-kit (manual, one-time)
 7. Create `.github/workflows/claude.yml` in etfg-app-starter-kit (see section 4.2)
 8. Create `CLAUDE.md` in etfg-app-starter-kit with project conventions, architecture rules, coding standards
