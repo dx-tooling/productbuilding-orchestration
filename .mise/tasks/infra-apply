@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Run tofu apply on the main infrastructure project"
+set -euo pipefail
+
+eval "$($(dirname "$0")/../lib/load-secrets)"
+
+cd "$(dirname "$0")/../../infrastructure-mgmt/main"
+tofu apply "$@"

@@ -1,0 +1,5 @@
+# Prerequisites: mise, opentofu, aws cli
+# Secrets are loaded from secrets.yaml via the helper script.
+
+[task_config]
+includes = [".mise/tasks"]

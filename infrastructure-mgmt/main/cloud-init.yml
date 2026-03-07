@@ -1,0 +1,90 @@
+#cloud-config
+
+package_update: true
+
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - jq
+  - unzip
+  - git
+
+write_files:
+  - path: /opt/orchestrator/install-docker.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      # Install Docker using official convenience script
+      curl -fsSL https://get.docker.com | sh
+
+      # Enable and start Docker
+      systemctl enable docker
+      systemctl start docker
+
+      # Add ubuntu user to docker group
+      usermod -aG docker ubuntu
+
+      # Verify
+      docker compose version
+
+  - path: /opt/orchestrator/setup.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      AWS_REGION="${aws_region}"
+      PROJECT_PREFIX="${project_prefix}"
+      PREVIEW_DOMAIN="${preview_domain}"
+      HOSTED_ZONE_ID="${hosted_zone_id}"
+      REPO_CLONE_URL="${repo_clone_url}"
+
+      echo "=== Creating shared Docker network ==="
+      docker network create preview-net 2>/dev/null || true
+
+      echo "=== Cloning orchestration repo ==="
+      if [[ -d /opt/orchestrator/repo ]]; then
+        cd /opt/orchestrator/repo && git pull
+      else
+        git clone "$REPO_CLONE_URL" /opt/orchestrator/repo
+      fi
+
+      echo "=== Writing .env for Compose stack ==="
+      cat > /opt/orchestrator/repo/.env <<ENVEOF
+AWS_REGION=$AWS_REGION
+AWS_HOSTED_ZONE_ID=$HOSTED_ZONE_ID
+PREVIEW_DOMAIN=$PREVIEW_DOMAIN
+ENVEOF
+
+      echo "=== Fetching target secrets from Secrets Manager ==="
+      TARGETS="[]"
+      for secret_name in $(aws secretsmanager list-secrets \
+        --region "$AWS_REGION" \
+        --filters "Key=name,Values=$PROJECT_PREFIX/targets/" \
+        --query "SecretList[].Name" \
+        --output text); do
+
+        SECRET_VALUE=$(aws secretsmanager get-secret-value \
+          --region "$AWS_REGION" \
+          --secret-id "$secret_name" \
+          --query "SecretString" \
+          --output text)
+
+        TARGETS=$(echo "$TARGETS" | jq --argjson item "$SECRET_VALUE" '. + [$item]')
+      done
+
+      echo "$TARGETS" > /opt/orchestrator/targets.json
+      echo "=== Loaded $(echo "$TARGETS" | jq length) target(s) ==="
+
+      echo "=== Starting Compose stack ==="
+      cd /opt/orchestrator/repo
+      docker compose up -d
+
+      echo "=== Setup complete ==="
+
+runcmd:
+  - /opt/orchestrator/install-docker.sh
+  - /opt/orchestrator/setup.sh

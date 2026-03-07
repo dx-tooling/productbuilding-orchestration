@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+#MISE description="Show EC2 instance status and public IP"
+set -euo pipefail
+
+eval "$($(dirname "$0")/../lib/load-secrets)"
+
+INSTANCE_ID=$(cd "$(dirname "$0")/../../infrastructure-mgmt/main" && tofu output -raw instance_id 2>/dev/null)
+
+if [[ -z "$INSTANCE_ID" ]]; then
+    echo "Error: Could not determine instance ID from tofu output" >&2
+    exit 1
+fi
+
+aws ec2 describe-instances \
+    --instance-ids "$INSTANCE_ID" \
+    --query 'Reservations[0].Instances[0].{State:State.Name,PublicIP:PublicIpAddress,InstanceType:InstanceType,LaunchTime:LaunchTime}' \
+    --output table

@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+#MISE description="Onboard a new target repo (interactive)"
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+TFVARS_FILE="$PROJECT_DIR/infrastructure-mgmt/main/targets.auto.tfvars"
+
+echo "Target repo onboarding"
+echo "======================"
+echo ""
+
+read -rp "Repo owner [luminor-project]: " REPO_OWNER
+REPO_OWNER="${REPO_OWNER:-luminor-project}"
+
+read -rp "Repo name: " REPO_NAME
+if [[ -z "$REPO_NAME" ]]; then
+    echo "Error: Repo name is required" >&2
+    exit 1
+fi
+
+read -rp "GitHub PAT (fine-grained, scoped to this repo): " GITHUB_PAT
+if [[ -z "$GITHUB_PAT" ]]; then
+    echo "Error: GitHub PAT is required" >&2
+    exit 1
+fi
+
+read -rp "Anthropic API key (for Claude Code): " ANTHROPIC_API_KEY
+if [[ -z "$ANTHROPIC_API_KEY" ]]; then
+    echo "Error: Anthropic API key is required" >&2
+    exit 1
+fi
+
+WEBHOOK_SECRET=$(openssl rand -hex 32)
+echo ""
+echo "Generated webhook secret: $WEBHOOK_SECRET"
+
+# Create or append to targets.auto.tfvars
+if [[ ! -f "$TFVARS_FILE" ]]; then
+    echo 'targets = {' > "$TFVARS_FILE"
+    echo '}' >> "$TFVARS_FILE"
+fi
+
+# Insert the new target before the closing brace
+# Using a temp file for portable sed behavior
+ENTRY="  \"$REPO_NAME\" = {
+    repo_owner        = \"$REPO_OWNER\"
+    repo_name         = \"$REPO_NAME\"
+    github_pat        = \"$GITHUB_PAT\"
+    webhook_secret    = \"$WEBHOOK_SECRET\"
+    anthropic_api_key = \"$ANTHROPIC_API_KEY\"
+  }"
+
+# Remove trailing } , add the entry, re-add }
+sed -i.bak '$ d' "$TFVARS_FILE"
+echo "$ENTRY" >> "$TFVARS_FILE"
+echo "}" >> "$TFVARS_FILE"
+rm -f "$TFVARS_FILE.bak"
+
+echo ""
+echo "Appended to $TFVARS_FILE"
+echo ""
+echo "Next steps:"
+echo "  1. mise run infra-apply"
+echo "  2. Install the Claude GitHub App on the repo:"
+echo "     https://github.com/apps/claude"
+echo "  3. Add .github/workflows/claude.yml to the repo"
+echo "  4. Add CLAUDE.md to the repo"
+echo "  5. Add preview.yml + docker-compose.preview.yml to the repo"

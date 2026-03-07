@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+#MISE description="SSH into the orchestrator instance"
+set -euo pipefail
+
+eval "$($(dirname "$0")/../lib/load-secrets)"
+
+IP=$(cd "$(dirname "$0")/../../infrastructure-mgmt/main" && tofu output -raw instance_public_ip 2>/dev/null)
+
+if [[ -z "$IP" ]]; then
+    echo "Error: Could not determine instance IP from tofu output" >&2
+    exit 1
+fi
+
+exec ssh -o StrictHostKeyChecking=accept-new "ubuntu@$IP" "$@"

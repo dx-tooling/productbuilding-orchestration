@@ -1,0 +1,46 @@
+# Per-target-repo resources: Secrets Manager secrets, GitHub webhooks, GitHub Actions secrets
+
+# Store each target's credentials in Secrets Manager
+resource "aws_secretsmanager_secret" "target" {
+  for_each = var.targets
+
+  name = "${var.project_prefix}/targets/${each.value.repo_name}"
+}
+
+resource "aws_secretsmanager_secret_version" "target" {
+  for_each = var.targets
+
+  secret_id = aws_secretsmanager_secret.target[each.key].id
+  secret_string = jsonencode({
+    repo_owner     = each.value.repo_owner
+    repo_name      = each.value.repo_name
+    github_pat     = each.value.github_pat
+    webhook_secret = each.value.webhook_secret
+  })
+}
+
+# Create webhook on each target repo for PR events
+resource "github_repository_webhook" "preview" {
+  for_each = var.targets
+
+  repository = each.value.repo_name
+
+  configuration {
+    url          = "https://api.${var.preview_domain}/webhook"
+    content_type = "json"
+    secret       = each.value.webhook_secret
+    insecure_ssl = false
+  }
+
+  active = true
+  events = ["pull_request"]
+}
+
+# Set ANTHROPIC_API_KEY as a GitHub Actions secret on each target repo
+resource "github_actions_secret" "anthropic_api_key" {
+  for_each = var.targets
+
+  repository      = each.value.repo_name
+  secret_name     = "ANTHROPIC_API_KEY"
+  plaintext_value = each.value.anthropic_api_key
+}
