@@ -65,15 +65,27 @@ func (s *Service) GetPreview(ctx context.Context, repoOwner, repoName string, pr
 // DeployPreview handles the full lifecycle: download → build → deploy → healthcheck.
 // Runs synchronously; callers should invoke in a goroutine for async processing.
 func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat string) {
+	log := slog.With("repo", req.RepoOwner+"/"+req.RepoName, "pr", req.PRNumber, "sha", req.HeadSHA[:8])
+
+	// 1. Post acknowledgment comment immediately (before acquiring mutex)
+	previewURL := fmt.Sprintf("https://%s-pr-%d.%s", req.RepoName, req.PRNumber, s.previewDomain)
+	ackBody := fmt.Sprintf(
+		"### Preview deployment queued\n\nCommit `%s` on `%s` → [%s](%s)\n\nWaiting to start...",
+		req.HeadSHA[:8], req.Branch, previewURL, previewURL,
+	)
+	commentID, err := s.commenter.CreateComment(ctx, req.RepoOwner, req.RepoName, req.PRNumber, ackBody, pat)
+	if err != nil {
+		log.Warn("failed to post ack comment", "error", err)
+	}
+
 	lockKey := fmt.Sprintf("%s/%s#%d", req.RepoOwner, req.RepoName, req.PRNumber)
 	mu := s.getLock(lockKey)
 	mu.Lock()
 	defer mu.Unlock()
 
-	log := slog.With("repo", req.RepoOwner+"/"+req.RepoName, "pr", req.PRNumber, "sha", req.HeadSHA[:8])
 	log.Info("starting preview deployment")
 
-	// 1. Upsert preview record (pending)
+	// 2. Upsert preview record (pending)
 	preview := NewPreview(req.RepoOwner, req.RepoName, req.PRNumber, req.Branch, req.HeadSHA, s.previewDomain)
 
 	existing, _ := s.repo.FindByRepoPR(ctx, req.RepoOwner, req.RepoName, req.PRNumber)
@@ -82,30 +94,21 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 		preview.ComposeProject = existing.ComposeProject
 		preview.PreviewURL = existing.PreviewURL
 		preview.CreatedAt = existing.CreatedAt
-		preview.GithubCommentID = existing.GithubCommentID
 	}
+
+	// Store the new comment ID on the preview
+	preview.GithubCommentID = commentID
 
 	if err := s.repo.Upsert(ctx, preview); err != nil {
 		log.Error("failed to upsert preview", "error", err)
 		return
 	}
 
-	// 2. Post or update PR comment
-	commentBody := fmt.Sprintf(
-		"**Preview deploying** for `%s`...\n\nBuilding from commit `%s`",
-		req.Branch, req.HeadSHA[:8],
-	)
-	if preview.GithubCommentID > 0 {
-		_ = s.commenter.UpdateComment(ctx, req.RepoOwner, req.RepoName, preview.GithubCommentID, commentBody, pat)
-	} else {
-		commentID, err := s.commenter.CreateComment(ctx, req.RepoOwner, req.RepoName, req.PRNumber, commentBody, pat)
-		if err != nil {
-			log.Warn("failed to create PR comment", "error", err)
-		} else {
-			preview.GithubCommentID = commentID
-			_ = s.repo.Update(ctx, preview)
-		}
-	}
+	// Update ack comment to show we've started
+	s.updateComment(ctx, &preview, fmt.Sprintf(
+		"### Preview deploying\n\nCommit `%s` on `%s` → [%s](%s)\n\nDownloading source...",
+		req.HeadSHA[:8], req.Branch, preview.PreviewURL, preview.PreviewURL,
+	), pat, log)
 
 	// 3. Download source (status: building)
 	s.setStatus(ctx, &preview, StatusBuilding, log)
@@ -146,8 +149,8 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	// 6. Docker compose up (status: deploying)
 	s.setStatus(ctx, &preview, StatusDeploying, log)
 	s.updateComment(ctx, &preview, fmt.Sprintf(
-		"**Building preview** for `%s`...\n\nStarting containers from commit `%s`",
-		req.Branch, req.HeadSHA[:8],
+		"### Preview deploying\n\nCommit `%s` on `%s` → [%s](%s)\n\nStarting containers...",
+		req.HeadSHA[:8], req.Branch, preview.PreviewURL, preview.PreviewURL,
 	), pat, log)
 
 	if err := s.compose.Up(ctx, preview.ComposeProject, workDir, []string{composeFile, overrideRel}); err != nil {
@@ -173,8 +176,8 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	_ = s.repo.Update(ctx, preview)
 
 	readyComment := fmt.Sprintf(
-		"**Preview ready!**\n\n[%s](%s)\n\nDeployed from commit `%s` on branch `%s`",
-		preview.PreviewURL, preview.PreviewURL, req.HeadSHA[:8], req.Branch,
+		"### Preview ready\n\nCommit `%s` on `%s` → **[%s](%s)**",
+		req.HeadSHA[:8], req.Branch, preview.PreviewURL, preview.PreviewURL,
 	)
 	s.updateComment(ctx, &preview, readyComment, pat, log)
 
@@ -209,7 +212,10 @@ func (s *Service) DeletePreview(ctx context.Context, req DeployRequest, pat stri
 	preview.Status = StatusDeleted
 	_ = s.repo.Update(ctx, *preview)
 
-	s.updateComment(ctx, preview, "**Preview removed.**", pat, log)
+	_, err = s.commenter.CreateComment(ctx, req.RepoOwner, req.RepoName, req.PRNumber, "### Preview removed", pat)
+	if err != nil {
+		log.Warn("failed to post removal comment", "error", err)
+	}
 
 	log.Info("preview deleted")
 }
@@ -228,7 +234,7 @@ func (s *Service) failPreview(ctx context.Context, p *Preview, stage, message, p
 	p.ErrorMessage = message
 	_ = s.repo.Update(ctx, *p)
 
-	failComment := fmt.Sprintf("**Preview failed** at stage `%s`\n\n```\n%s\n```", stage, message)
+	failComment := fmt.Sprintf("### Preview failed\n\nFailed at stage `%s`:\n\n```\n%s\n```", stage, message)
 	s.updateComment(ctx, p, failComment, pat, log)
 }
 
