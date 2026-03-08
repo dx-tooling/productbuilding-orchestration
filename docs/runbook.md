@@ -23,7 +23,7 @@ Paste the age secret key from 1Password into `secrets/.key`, then decrypt:
 
 ```bash
 # Paste age secret key (AGE-SECRET-KEY-...) into secrets/.key
-./decrypt-secrets.sh
+mise run secrets-decrypt
 ```
 
 This produces the gitignored plaintext files: `secrets.yaml`, `infrastructure-mgmt/main/terraform.tfvars`, and `infrastructure-mgmt/main/targets.auto.tfvars`.
@@ -100,7 +100,7 @@ For each target repository:
 ```bash
 mise run onboard-target     # Interactive — prompts for repo details, credentials, and local clone path
                             # Registers the target AND scaffolds .productbuilding/, workflow, CLAUDE.md
-./encrypt-secrets.sh        # Re-encrypt updated targets.auto.tfvars
+mise run secrets-encrypt     # Re-encrypt updated targets.auto.tfvars
 mise run infra-apply        # Creates webhook, Secrets Manager entry, GitHub Actions secret
 ```
 
@@ -154,7 +154,7 @@ The Elastic IP remains stable, so DNS continues to work.
 
 ```bash
 mise run onboard-target     # Registers target + scaffolds files in target repo
-./encrypt-secrets.sh        # Re-encrypt updated targets.auto.tfvars
+mise run secrets-encrypt    # Re-encrypt updated targets.auto.tfvars
 mise run infra-apply
 # Then: install Claude GitHub App, customize scaffolded files, commit + push
 # Don't forget to commit the updated secrets/*.enc files

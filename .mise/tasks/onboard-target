@@ -197,7 +197,7 @@ fi
 
 echo ""
 echo "Next steps:"
-echo "  1. mise run infra-apply"
+echo "  1. mise run secrets-encrypt && mise run infra-apply"
 echo "  2. Install the Claude GitHub App on the repo:"
 echo "     https://github.com/apps/claude"
 if [[ -n "$TARGET_REPO_PATH" ]]; then
