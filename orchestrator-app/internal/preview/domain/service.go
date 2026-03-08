@@ -6,9 +6,24 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
+
+// Deploy step indices for the progress checklist.
+const (
+	stepDownload   = 0
+	stepContainers = 1
+	stepHealth     = 2
+	numSteps       = 3
+)
+
+var stepLabels = [numSteps]string{
+	"Download source",
+	"Build and start containers",
+	"Health check",
+}
 
 type Service struct {
 	repo          Repository
@@ -66,13 +81,11 @@ func (s *Service) GetPreview(ctx context.Context, repoOwner, repoName string, pr
 // Runs synchronously; callers should invoke in a goroutine for async processing.
 func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat string) {
 	log := slog.With("repo", req.RepoOwner+"/"+req.RepoName, "pr", req.PRNumber, "sha", req.HeadSHA[:8])
+	sha8 := req.HeadSHA[:8]
+	previewURL := fmt.Sprintf("https://%s-pr-%d.%s", req.RepoName, req.PRNumber, s.previewDomain)
 
 	// 1. Post acknowledgment comment immediately (before acquiring mutex)
-	previewURL := fmt.Sprintf("https://%s-pr-%d.%s", req.RepoName, req.PRNumber, s.previewDomain)
-	ackBody := fmt.Sprintf(
-		"### Preview deployment queued\n\nCommit `%s` on `%s` → [%s](%s)\n\nWaiting to start...",
-		req.HeadSHA[:8], req.Branch, previewURL, previewURL,
-	)
+	ackBody := progressComment("Preview deploying", sha8, req.Branch, previewURL, 0, "Queued, waiting to start...")
 	commentID, err := s.commenter.CreateComment(ctx, req.RepoOwner, req.RepoName, req.PRNumber, ackBody, pat)
 	if err != nil {
 		log.Warn("failed to post ack comment", "error", err)
@@ -104,32 +117,28 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 		return
 	}
 
-	// Update ack comment to show we've started
-	s.updateComment(ctx, &preview, fmt.Sprintf(
-		"### Preview deploying\n\nCommit `%s` on `%s` → [%s](%s)\n\nDownloading source...",
-		req.HeadSHA[:8], req.Branch, preview.PreviewURL, preview.PreviewURL,
-	), pat, log)
-
 	// 3. Download source (status: building)
 	s.setStatus(ctx, &preview, StatusBuilding, log)
+	s.updateComment(ctx, &preview,
+		progressComment("Preview deploying", sha8, req.Branch, previewURL, 0, "Downloading source..."),
+		pat, log)
 
 	workDir := filepath.Join(s.workspaceDir, preview.ComposeProject)
-	// Clean previous source to avoid stale files
 	_ = os.RemoveAll(workDir)
 	if err := os.MkdirAll(workDir, 0755); err != nil {
-		s.failPreview(ctx, &preview, "workspace", fmt.Sprintf("create workspace: %v", err), pat, log)
+		s.failPreview(ctx, &preview, stepDownload, "workspace", fmt.Sprintf("create workspace: %v", err), pat, log)
 		return
 	}
 
 	if _, err := s.downloader.DownloadSource(ctx, req.RepoOwner, req.RepoName, req.HeadSHA, pat, workDir); err != nil {
-		s.failPreview(ctx, &preview, "download", fmt.Sprintf("download source: %v", err), pat, log)
+		s.failPreview(ctx, &preview, stepDownload, "download", fmt.Sprintf("download source: %v", err), pat, log)
 		return
 	}
 
 	// 4. Parse preview contract
 	contract, err := ParseContract(workDir)
 	if err != nil {
-		s.failPreview(ctx, &preview, "contract", fmt.Sprintf("parse contract: %v", err), pat, log)
+		s.failPreview(ctx, &preview, stepDownload+1, "contract", fmt.Sprintf("parse contract: %v", err), pat, log)
 		return
 	}
 
@@ -140,31 +149,33 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	composeFile := contract.Compose.File
 	overridePath, err := s.compose.GenerateOverride(workDir, contract.Compose.Service, routerName, host, contract.Runtime.InternalPort)
 	if err != nil {
-		s.failPreview(ctx, &preview, "override", fmt.Sprintf("generate override: %v", err), pat, log)
+		s.failPreview(ctx, &preview, stepDownload+1, "override", fmt.Sprintf("generate override: %v", err), pat, log)
 		return
 	}
-	// Make override path relative to workDir for docker compose -f
 	overrideRel, _ := filepath.Rel(workDir, overridePath)
 
 	// 6. Docker compose up (status: deploying)
 	s.setStatus(ctx, &preview, StatusDeploying, log)
-	s.updateComment(ctx, &preview, fmt.Sprintf(
-		"### Preview deploying\n\nCommit `%s` on `%s` → [%s](%s)\n\nStarting containers...",
-		req.HeadSHA[:8], req.Branch, preview.PreviewURL, preview.PreviewURL,
-	), pat, log)
+	s.updateComment(ctx, &preview,
+		progressComment("Preview deploying", sha8, req.Branch, previewURL, stepDownload+1, "Building and starting containers..."),
+		pat, log)
 
 	if err := s.compose.Up(ctx, preview.ComposeProject, workDir, []string{composeFile, overrideRel}); err != nil {
-		s.failPreview(ctx, &preview, "compose_up", fmt.Sprintf("compose up: %v", err), pat, log)
+		s.failPreview(ctx, &preview, stepContainers, "compose_up", fmt.Sprintf("compose up: %v", err), pat, log)
 		return
 	}
 
-	// 7. Health check — reach the container via Docker network
+	// 7. Health check
+	s.updateComment(ctx, &preview,
+		progressComment("Preview deploying", sha8, req.Branch, previewURL, stepContainers+1, "Running health check..."),
+		pat, log)
+
 	containerName := fmt.Sprintf("%s-%s-1", preview.ComposeProject, contract.Compose.Service)
 	healthURL := fmt.Sprintf("http://%s:%d%s", containerName, contract.Runtime.InternalPort, contract.Runtime.HealthcheckPath)
 	timeout := time.Duration(contract.Runtime.StartupTimeout) * time.Second
 
 	if err := s.healthChecker.WaitForHealthy(ctx, healthURL, timeout); err != nil {
-		s.failPreview(ctx, &preview, "healthcheck", fmt.Sprintf("health check: %v", err), pat, log)
+		s.failPreview(ctx, &preview, stepHealth, "healthcheck", fmt.Sprintf("health check: %v", err), pat, log)
 		return
 	}
 
@@ -175,11 +186,9 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	preview.ErrorMessage = ""
 	_ = s.repo.Update(ctx, preview)
 
-	readyComment := fmt.Sprintf(
-		"### Preview ready\n\nCommit `%s` on `%s` → **[%s](%s)**",
-		req.HeadSHA[:8], req.Branch, preview.PreviewURL, preview.PreviewURL,
-	)
-	s.updateComment(ctx, &preview, readyComment, pat, log)
+	s.updateComment(ctx, &preview,
+		progressComment("Preview ready", sha8, req.Branch, previewURL, numSteps, fmt.Sprintf("**[%s](%s)**", previewURL, previewURL)),
+		pat, log)
 
 	log.Info("preview ready", "url", preview.PreviewURL)
 }
@@ -227,15 +236,15 @@ func (s *Service) setStatus(ctx context.Context, p *Preview, status Status, log 
 	}
 }
 
-func (s *Service) failPreview(ctx context.Context, p *Preview, stage, message, pat string, log *slog.Logger) {
+func (s *Service) failPreview(ctx context.Context, p *Preview, completedSteps int, stage, message, pat string, log *slog.Logger) {
 	log.Error("preview failed", "stage", stage, "error", message)
 	p.Status = StatusFailed
 	p.ErrorStage = stage
 	p.ErrorMessage = message
 	_ = s.repo.Update(ctx, *p)
 
-	failComment := fmt.Sprintf("### Preview failed\n\nFailed at stage `%s`:\n\n```\n%s\n```", stage, message)
-	s.updateComment(ctx, p, failComment, pat, log)
+	body := failedProgressComment(p.HeadSHA[:8], p.BranchName, p.PreviewURL, completedSteps, stage, message)
+	s.updateComment(ctx, p, body, pat, log)
 }
 
 func (s *Service) updateComment(ctx context.Context, p *Preview, body, pat string, log *slog.Logger) {
@@ -244,4 +253,40 @@ func (s *Service) updateComment(ctx context.Context, p *Preview, body, pat strin
 			log.Warn("failed to update comment", "error", err)
 		}
 	}
+}
+
+// progressComment builds a markdown comment with a checklist showing deployment progress.
+func progressComment(title, sha, branch, previewURL string, completedSteps int, statusLine string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "### %s\n\n", title)
+	fmt.Fprintf(&b, "Commit `%s` on `%s`\n\n", sha, branch)
+
+	for i := 0; i < numSteps; i++ {
+		if i < completedSteps {
+			fmt.Fprintf(&b, "- [x] %s\n", stepLabels[i])
+		} else {
+			fmt.Fprintf(&b, "- [ ] %s\n", stepLabels[i])
+		}
+	}
+
+	fmt.Fprintf(&b, "\n%s", statusLine)
+	return b.String()
+}
+
+// failedProgressComment builds a markdown comment showing which step failed.
+func failedProgressComment(sha, branch, previewURL string, completedSteps int, stage, message string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "### Preview failed\n\n")
+	fmt.Fprintf(&b, "Commit `%s` on `%s`\n\n", sha, branch)
+
+	for i := 0; i < numSteps; i++ {
+		if i < completedSteps {
+			fmt.Fprintf(&b, "- [x] %s\n", stepLabels[i])
+		} else {
+			fmt.Fprintf(&b, "- [ ] %s\n", stepLabels[i])
+		}
+	}
+
+	fmt.Fprintf(&b, "\nFailed at `%s`:\n\n```\n%s\n```", stage, message)
+	return b.String()
 }
