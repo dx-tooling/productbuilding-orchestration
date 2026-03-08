@@ -228,90 +228,79 @@ No manual intervention needed after the one-time NS delegation and secret popula
 
 ### 3.1 Project Structure
 
+All Go application source lives under `orchestrator-app/`, keeping infrastructure and app code cleanly separated. No Go toolchain is needed on the host — everything runs inside the dev Docker container via `mise run app-*` tasks.
+
 ```
-cmd/
-  server/
-    main.go               # Entry point, DI wiring
-  cli/
-    main.go               # CLI commands (reconcile, status, etc.)
+orchestrator-app/             # Go application source
+  cmd/
+    server/
+      main.go                 # Entry point, DI wiring
 
-internal/
-  preview/                # Core domain vertical
-    domain/
-      preview.go          # Preview entity, state machine
-      service.go          # Preview lifecycle logic
-      repository.go       # Repository interface
-      service_test.go
-    facade/
-      dto.go              # DTOs for cross-vertical use
-      events.go           # PreviewCreated, PreviewReady, PreviewFailed, etc.
-    infra/
-      sqlite_repository.go
-    web/
-      handlers.go         # GET /previews, GET /previews/{id}
-      routes.go
-    testharness/
-      factories.go
+  internal/
+    preview/                  # Core domain vertical
+      domain/
+        preview.go            # Preview entity, state machine
+        statemachine.go       # State transition validation
+        service.go            # Preview lifecycle logic
+        repository.go         # Repository interface
+        service_test.go
+      facade/
+        dto.go                # DTOs for cross-vertical use
+      infra/
+        sqlite_repository.go
+      web/
+        handlers.go           # GET /previews
+        routes.go
+      testharness/
+        factories.go
 
-  github/                 # GitHub integration vertical
-    domain/
-      webhook.go          # Webhook payload parsing + signature validation
-      comment.go          # PR comment management logic
-      tarball.go          # Repo tarball download logic
-      service.go
-      service_test.go
-    facade/
-      dto.go              # PREvent, CommentUpdate, etc.
-    infra/
-      github_client.go    # HTTP client for GitHub API
-    web/
-      handlers.go         # POST /webhook
-      routes.go
-    testharness/
-      factories.go
+    github/                   # GitHub integration vertical
+      domain/
+        webhook.go            # Webhook payload parsing + signature validation
+        webhook_test.go
+      facade/
+        dto.go                # PREvent DTO
+      web/
+        handlers.go           # POST /webhook
+        routes.go
 
-  orchestration/          # Docker/Compose management vertical
-    domain/
-      deployer.go         # Compose project lifecycle
-      network.go          # Shared network management
-      healthcheck.go      # Container health polling
-      labels.go           # Traefik label generation
-      service.go
-      service_test.go
-    facade/
-      dto.go              # DeploymentResult, ContainerStatus, etc.
-    infra/
-      docker_client.go    # Docker Engine API client
-      compose.go          # Shell out to docker compose
-    testharness/
-      factories.go
+    orchestration/            # Docker/Compose management vertical (Phase 3)
+      domain/
+        deployer.go           # Compose project lifecycle
+        healthcheck.go        # Container health polling
+        labels.go             # Traefik label generation
+        service.go
+      facade/
+        dto.go                # DeploymentResult, ContainerStatus, etc.
+      infra/
+        compose.go            # Shell out to docker compose
 
-  dashboard/              # Web UI vertical
-    web/
-      handlers.go         # GET / (dashboard page)
-      routes.go
-      templates/          # templ templates
+    dashboard/                # Web UI vertical
+      web/
+        handlers.go           # GET / (dashboard page, html/template)
+        routes.go
 
-  platform/               # Shared infrastructure
-    config/               # App configuration (env-based)
-    database/             # SQLite connection, migrations
-    http/                 # Server setup, middleware
-    logging/              # Structured logging (slog)
+    platform/                 # Shared infrastructure
+      config/                 # App configuration (env-based, caarlos0/env)
+      database/               # SQLite connection (modernc.org/sqlite), migrations
+      logging/                # Structured logging (slog)
+      server/                 # HTTP server with graceful shutdown
 
-migrations/
-  001_create_previews.up.sql
-  001_create_previews.down.sql
+  migrations/
+    001_create_previews.up.sql
+    001_create_previews.down.sql
 
-docker/
-  prod/
-    Dockerfile            # Multi-stage: build + distroless runtime
+  docker/
+    dev/
+      Dockerfile              # golang:1.26 + air, for local dev
+    prod/
+      Dockerfile              # Multi-stage: build + distroless runtime
 
-docker-compose.yml        # Orchestrator stack (orchestrator + traefik)
-docker-compose.dev.yml    # Development overrides
+  go.mod
+  .air.toml                   # Hot reload config
 
-mise.toml                 # Task runner
-.golangci.yml             # Linter config
-.air.toml                 # Hot reload (dev)
+docker-compose.yml            # Production stack (Traefik + orchestrator, runs on EC2)
+docker-compose.dev.yml        # Dev stack (source mount + air, runs locally)
 
 docs/
   archbook.md
@@ -704,14 +693,29 @@ This means:
 
 ### 5.2 Mise Tasks
 
+App development tasks (all run inside the Docker container — no host Go needed):
+
 ```
-mise run setup          # Build containers, run checks
-mise run dev            # Hot reload development
-mise run quality        # Lint, format check, archtest
-mise run tests          # Unit tests with coverage
-mise run tests-integ    # Integration tests (needs Docker)
-mise run security       # govulncheck
-mise run all-checks     # Everything
+mise run app-setup      # Build containers, download deps, run tests, start dev
+mise run app-dev        # Hot reload development (air)
+mise run app-build      # Build Go binary
+mise run app-quality    # go vet, gofmt check
+mise run app-tests      # Unit tests with race detector
+mise run app-exec ...   # Run any command in the app container
+mise run app-compose .. # Run docker compose for the dev stack
+```
+
+Infrastructure tasks (existing):
+
+```
+mise run infra-plan     # OpenTofu plan
+mise run infra-apply    # OpenTofu apply
+mise run infra-output   # OpenTofu output
+mise run instance-start # Start EC2 instance
+mise run instance-stop  # Stop EC2 instance
+mise run instance-status # Show instance state
+mise run ssh            # SSH into instance
+mise run onboard-target # Add new target repo
 ```
 
 ### 5.3 CI Pipeline

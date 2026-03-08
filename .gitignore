@@ -9,3 +9,10 @@ infrastructure-mgmt/main/.terraform/
 infrastructure-mgmt/main/targets.auto.tfvars
 infrastructure-mgmt/main/terraform.tfvars
 **/.terraform.lock.hcl
+
+# Go / orchestrator app
+orchestrator-app/bin/
+orchestrator-app/tmp/
+orchestrator-app/data/
+*.test
+coverage.out

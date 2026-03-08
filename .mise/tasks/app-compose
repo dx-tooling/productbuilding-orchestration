@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#MISE description="Run docker compose for the dev stack"
+set -euo pipefail
+
+need_sudo=false
+
+if [[ "$(uname -s)" == "Linux" ]]; then
+    context="$(docker context show 2>/dev/null || true)"
+    if [[ "${context}" != "desktop-linux" ]] && [[ "${EUID}" -ne 0 ]]; then
+        if [[ -S /var/run/docker.sock && ! -w /var/run/docker.sock ]]; then
+            need_sudo=true
+        fi
+    fi
+fi
+
+project_dir="$(cd "$(dirname "$0")/../.." && pwd)"
+
+if [[ "${need_sudo}" == "true" ]]; then
+    exec sudo docker compose -f "${project_dir}/docker-compose.dev.yml" --project-directory "${project_dir}" "$@"
+fi
+
+exec docker compose -f "${project_dir}/docker-compose.dev.yml" --project-directory "${project_dir}" "$@"

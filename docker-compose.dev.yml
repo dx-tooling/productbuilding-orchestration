@@ -1,0 +1,28 @@
+# Development compose — orchestrator app with source mount + hot reload.
+# No Traefik here; dev runs on localhost:8080.
+
+services:
+  app:
+    build:
+      context: ./orchestrator-app
+      dockerfile: docker/dev/Dockerfile
+    volumes:
+      - ./orchestrator-app:/app:z
+      - go_mod_cache:/root/go/pkg/mod
+      - go_build_cache:/root/.cache/go-build
+    ports:
+      - "127.0.0.1:8090:8080"
+    environment:
+      APP_ENV: development
+      PORT: "8080"
+      DATABASE_PATH: /app/data/orchestrator.db
+      PREVIEW_DOMAIN: productbuilder.luminor-tech.net
+      WORKSPACE_DIR: /app/data/workspaces
+      TARGETS_CONFIG_PATH: /app/data/targets.json
+    restart: unless-stopped
+
+volumes:
+  go_mod_cache:
+    name: orchestrator_go_mod_cache
+  go_build_cache:
+    name: orchestrator_go_build_cache

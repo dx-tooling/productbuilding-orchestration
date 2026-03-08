@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#MISE description="Run lint and format checks"
+set -euo pipefail
+
+echo "==> Running go vet..."
+mise run app-exec go vet ./cmd/... ./internal/...
+
+echo "==> Checking formatting..."
+UNFORMATTED=$(mise run app-exec gofmt -l . 2>/dev/null || true)
+if [ -n "$UNFORMATTED" ]; then
+    echo "The following files are not formatted:"
+    echo "$UNFORMATTED"
+    exit 1
+fi
+
+echo "Quality checks passed."

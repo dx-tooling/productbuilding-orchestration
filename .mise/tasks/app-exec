@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Run a command in the app container"
+
+mise run app-compose -- exec -T app "$@"

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Run air (Go hot reload) inside the app container"
+set -euo pipefail
+
+mise run app-compose -- exec app air

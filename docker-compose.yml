@@ -34,9 +34,37 @@ services:
       - "traefik.http.routers.traefik-dashboard.service=api@internal"
     restart: unless-stopped
 
+  orchestrator:
+    build:
+      context: ./orchestrator-app
+      dockerfile: docker/prod/Dockerfile
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - orchestrator-data:/data
+      - workspaces:/opt/orchestrator/workspaces
+    networks:
+      - preview-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.orchestrator.rule=Host(`api.${PREVIEW_DOMAIN}`) && !PathPrefix(`/api`) && !PathPrefix(`/dashboard`)"
+      - "traefik.http.routers.orchestrator.entrypoints=websecure"
+      - "traefik.http.routers.orchestrator.tls.certresolver=le"
+      - "traefik.http.services.orchestrator.loadbalancer.server.port=8080"
+    environment:
+      - APP_ENV=production
+      - PORT=8080
+      - DATABASE_PATH=/data/orchestrator.db
+      - PREVIEW_DOMAIN=${PREVIEW_DOMAIN}
+      - WORKSPACE_DIR=/opt/orchestrator/workspaces
+      - TARGETS_CONFIG_PATH=/data/targets.json
+      - AWS_REGION=${AWS_REGION:-eu-central-1}
+    restart: unless-stopped
+
 networks:
   preview-net:
     external: true
 
 volumes:
   letsencrypt:
+  orchestrator-data:
+  workspaces:

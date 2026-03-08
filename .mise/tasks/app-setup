@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#MISE description="Bootstrap local development environment for the orchestrator app"
+set -e
+
+echo "==> Building Docker containers..."
+mise run app-compose -- build
+
+echo "==> Starting Docker containers..."
+mise run app-compose -- up -d
+
+echo "==> Downloading Go dependencies..."
+mise run app-exec go mod download all
+
+echo "==> Running tests..."
+mise run app-tests || true
+
+echo "==> Starting dev server..."
+mise run app-dev

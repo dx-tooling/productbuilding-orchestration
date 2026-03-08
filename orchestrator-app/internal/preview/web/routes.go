@@ -1,0 +1,12 @@
+package web
+
+import (
+	"net/http"
+
+	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/preview/domain"
+)
+
+func RegisterRoutes(mux *http.ServeMux, service *domain.Service) {
+	h := NewHandler(service)
+	mux.HandleFunc("GET /previews", h.ListPreviews)
+}
