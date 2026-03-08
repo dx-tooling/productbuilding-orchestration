@@ -51,7 +51,8 @@ Internet
 | GitHub feedback | PR comment (updated in place) | Visible, simple, no deployment API complexity |
 | Docker access | Socket mount | Single-purpose server, admin party |
 | IaC | OpenTofu | Declarative, S3 backend, GitHub provider for webhooks |
-| Secrets | AWS Secrets Manager | Automated provisioning, no manual SCP |
+| Secrets (repo) | age encryption (asymmetric) | Encrypted in git, only `.key` from 1Password needed |
+| Secrets (runtime) | AWS Secrets Manager | Automated provisioning, no manual SCP |
 | TLS | Traefik ACME + Route53 DNS-01 | Wildcard cert, fully automated |
 | Startup resilience | Reconciliation loop | Self-healing after re-provisioning |
 
@@ -77,8 +78,16 @@ infrastructure-mgmt/
     outputs.tf
     cloud-init.yml        # Instance bootstrap script (templatefile)
     providers.tf          # AWS + GitHub providers
-    terraform.tfvars      # Gitignored — mgmt PAT, SSH key
-    targets.auto.tfvars   # Gitignored — target repo credentials
+    terraform.tfvars      # Gitignored — decrypted from secrets/
+    targets.auto.tfvars   # Gitignored — decrypted from secrets/
+
+secrets/                    # age-encrypted secrets (committed to git)
+  README.md                 # Setup instructions (1Password link, age install)
+  public-key.txt            # age public key (committed — anyone can encrypt)
+  .key                      # age secret key (GITIGNORED — from 1Password)
+  secrets.yaml.enc          # AWS creds, management PAT → decrypts to secrets.yaml
+  terraform.tfvars.enc      # mgmt PAT, SSH key → decrypts to infrastructure-mgmt/main/terraform.tfvars
+  targets.auto.tfvars.enc   # target repo credentials → decrypts to infrastructure-mgmt/main/targets.auto.tfvars
 
 .mise/
   lib/
@@ -92,11 +101,14 @@ infrastructure-mgmt/
     infra-apply           # tofu apply
     infra-output          # tofu output
     onboard-target        # Interactive: add a new target repo
+    deploy                # Deploy latest code to EC2
 
-docker-compose.yml        # Orchestrator stack (traefik + orchestrator, once built)
-mise.toml                 # Task runner config
-secrets.yaml              # Gitignored — AWS credentials, management PAT
-secrets.sample.yaml       # Template for secrets.yaml
+orchestrator-app/           # Go application source (see section 3.1)
+docker-compose.yml          # Production stack (Traefik + orchestrator, runs on EC2)
+docker-compose.dev.yml      # Dev stack (source mount + air, runs locally)
+mise.toml                   # Task runner config
+encrypt-secrets.sh          # Encrypt plaintext secrets → secrets/*.enc
+decrypt-secrets.sh          # Decrypt secrets/*.enc → plaintext files
 ```
 
 ### 2.2 Bootstrap Project (`infrastructure-mgmt/bootstrap/`)
@@ -111,8 +123,8 @@ Creates the prerequisites for the main project. Run once manually with local sta
 
 **Recipe:**
 
-1. `cd infrastructure-mgmt/bootstrap`
-2. Fill in AWS credentials (from `secrets.yaml`)
+1. `./decrypt-secrets.sh` (decrypts `secrets.yaml`, `terraform.tfvars`, `targets.auto.tfvars`)
+2. `cd infrastructure-mgmt/bootstrap`
 3. `tofu init && tofu apply`
 4. Commit `outputs.tf` values, never commit `terraform.tfstate`
 
