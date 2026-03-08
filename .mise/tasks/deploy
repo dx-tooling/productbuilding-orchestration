@@ -9,9 +9,11 @@ echo "==> Rebuilding and restarting orchestrator..."
 mise run ssh -- "cd /opt/orchestrator/repo && docker compose up -d --build orchestrator"
 
 echo "==> Waiting for health check..."
+# Verify via Traefik — the orchestrator has no published ports, only preview-net.
+DOMAIN=$(mise run ssh -- "grep PREVIEW_DOMAIN /opt/orchestrator/repo/.env | cut -d= -f2" 2>/dev/null || echo "productbuilder.luminor-tech.net")
 for i in $(seq 1 30); do
-    if mise run ssh -- "curl -sf http://localhost:8080/healthz" >/dev/null 2>&1; then
-        echo "Deploy complete — orchestrator is healthy."
+    if curl -sf "https://api.${DOMAIN}/healthz" >/dev/null 2>&1; then
+        echo "Deploy complete — orchestrator is healthy at https://api.${DOMAIN}/"
         exit 0
     fi
     sleep 2

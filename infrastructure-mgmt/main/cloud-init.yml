@@ -51,6 +51,10 @@ write_files:
       else
         git clone "$REPO_CLONE_URL" /opt/orchestrator/repo
       fi
+      chown -R ubuntu:ubuntu /opt/orchestrator
+      # Set safe.directory for both root (cloud-init/docker) and ubuntu (SSH deploys)
+      git config --global --add safe.directory /opt/orchestrator/repo
+      su - ubuntu -c "git config --global --add safe.directory /opt/orchestrator/repo"
 
       echo "=== Writing .env for Compose stack ==="
       cat > /opt/orchestrator/repo/.env <<ENVEOF
