@@ -90,7 +90,7 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 		SHA:          req.HeadSHA,
 		Branch:       req.Branch,
 		PreviewURL:   fmt.Sprintf("https://%s-pr-%d.%s", req.RepoName, req.PRNumber, s.previewDomain),
-		AnimationURL: "https://github.com/luminor-project/assets/raw/refs/heads/main/preview-bot/blocks-animation.mp4",
+		AnimationURL: "https://raw.githubusercontent.com/luminor-project/assets/main/preview-bot/blendertimer-load-35_256.gif",
 	}
 
 	// 1. Delete previous bot comment and post new acknowledgment (before acquiring mutex)
@@ -326,7 +326,7 @@ func progressComment(title string, meta commentMeta, completedSteps int, statusL
 	fmt.Fprintf(&b, "\n%s", statusLine)
 
 	if completedSteps < numSteps && meta.AnimationURL != "" {
-		fmt.Fprintf(&b, "\n\n<video src=\"%s\" width=\"300\" autoplay loop muted playsinline></video>", meta.AnimationURL)
+		fmt.Fprintf(&b, "\n\n<img src=\"%s\" width=\"256\" />", meta.AnimationURL)
 	}
 
 	return b.String()
