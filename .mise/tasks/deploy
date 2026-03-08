@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#MISE description="Deploy latest code to the EC2 instance"
+set -euo pipefail
+
+echo "==> Pulling latest code on server..."
+mise run ssh -- "cd /opt/orchestrator/repo && git pull"
+
+echo "==> Rebuilding and restarting orchestrator..."
+mise run ssh -- "cd /opt/orchestrator/repo && docker compose up -d --build orchestrator"
+
+echo "==> Waiting for health check..."
+for i in $(seq 1 30); do
+    if mise run ssh -- "curl -sf http://localhost:8080/healthz" >/dev/null 2>&1; then
+        echo "Deploy complete — orchestrator is healthy."
+        exit 0
+    fi
+    sleep 2
+done
+
+echo "Warning: orchestrator did not become healthy within 60 seconds."
+echo "Check logs: mise run ssh -- docker compose logs orchestrator"
+exit 1
