@@ -91,5 +91,11 @@ ENVEOF
       echo "=== Setup complete ==="
 
 runcmd:
+  - |
+    # Install AWS CLI v2
+    curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscli.zip
+    unzip -qo /tmp/awscli.zip -d /tmp
+    /tmp/aws/install
+    rm -rf /tmp/awscli.zip /tmp/aws
   - /opt/orchestrator/install-docker.sh
   - /opt/orchestrator/setup.sh

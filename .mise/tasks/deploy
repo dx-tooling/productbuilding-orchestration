@@ -6,7 +6,7 @@ echo "==> Pulling latest code on server..."
 mise run ssh -- "cd /opt/orchestrator/repo && git pull"
 
 echo "==> Refreshing target configs from Secrets Manager..."
-mise run ssh -- 'bash -c "
+mise run ssh -- 'sudo bash -c "
   REGION=\$(grep AWS_REGION /opt/orchestrator/repo/.env | cut -d= -f2)
   PREFIX=productbuilder/targets/
   TARGETS=\"[]\"
@@ -17,6 +17,7 @@ mise run ssh -- 'bash -c "
     TARGETS=\$(echo \"\$TARGETS\" | jq --argjson item \"\$VAL\" \". + [\\\$item]\")
   done
   echo \"\$TARGETS\" > /opt/orchestrator/targets.json
+  chmod 644 /opt/orchestrator/targets.json
   echo \"Loaded \$(echo \"\$TARGETS\" | jq length) target(s)\"
 "'
 

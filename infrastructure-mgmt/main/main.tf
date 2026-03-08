@@ -103,6 +103,11 @@ resource "aws_iam_role_policy" "orchestrator_secrets" {
           "secretsmanager:DescribeSecret"
         ]
         Resource = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.project_prefix}/targets/*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = "secretsmanager:ListSecrets"
+        Resource = "*"
       }
     ]
   })
