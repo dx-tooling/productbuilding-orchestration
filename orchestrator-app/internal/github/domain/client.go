@@ -180,3 +180,28 @@ func (c *Client) UpdateComment(ctx context.Context, owner, repo string, commentI
 
 	return nil
 }
+
+// DeleteComment removes a PR comment.
+func (c *Client) DeleteComment(ctx context.Context, owner, repo string, commentID int64, pat string) error {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/comments/%d", owner, repo, commentID)
+
+	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete comment: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("delete comment: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	return nil
+}

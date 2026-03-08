@@ -83,12 +83,23 @@ func (s *Service) GetPreview(ctx context.Context, repoOwner, repoName string, pr
 // Runs synchronously; callers should invoke in a goroutine for async processing.
 func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat string) {
 	log := slog.With("repo", req.RepoOwner+"/"+req.RepoName, "pr", req.PRNumber, "sha", req.HeadSHA[:8])
-	sha8 := req.HeadSHA[:8]
-	previewURL := fmt.Sprintf("https://%s-pr-%d.%s", req.RepoName, req.PRNumber, s.previewDomain)
-	animationURL := fmt.Sprintf("https://api.%s/static/blocks-animation.mp4", s.previewDomain)
 
-	// 1. Post acknowledgment comment immediately (before acquiring mutex)
-	ackBody := progressComment("Preview deploying", sha8, req.Branch, previewURL, animationURL, 0, "Queued, waiting to start...")
+	meta := commentMeta{
+		Owner:        req.RepoOwner,
+		Repo:         req.RepoName,
+		SHA:          req.HeadSHA,
+		Branch:       req.Branch,
+		PreviewURL:   fmt.Sprintf("https://%s-pr-%d.%s", req.RepoName, req.PRNumber, s.previewDomain),
+		AnimationURL: fmt.Sprintf("https://api.%s/static/blocks-animation.mp4", s.previewDomain),
+	}
+
+	// 1. Delete previous bot comment and post new acknowledgment (before acquiring mutex)
+	existing, _ := s.repo.FindByRepoPR(ctx, req.RepoOwner, req.RepoName, req.PRNumber)
+	if existing != nil && existing.GithubCommentID > 0 {
+		_ = s.commenter.DeleteComment(ctx, req.RepoOwner, req.RepoName, existing.GithubCommentID, pat)
+	}
+
+	ackBody := progressComment("Preview deploying", meta, 0, "Queued, waiting to start...")
 	commentID, err := s.commenter.CreateComment(ctx, req.RepoOwner, req.RepoName, req.PRNumber, ackBody, pat)
 	if err != nil {
 		log.Warn("failed to post ack comment", "error", err)
@@ -104,7 +115,6 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	// 2. Upsert preview record (pending)
 	preview := NewPreview(req.RepoOwner, req.RepoName, req.PRNumber, req.Branch, req.HeadSHA, s.previewDomain)
 
-	existing, _ := s.repo.FindByRepoPR(ctx, req.RepoOwner, req.RepoName, req.PRNumber)
 	if existing != nil {
 		preview.ID = existing.ID
 		preview.ComposeProject = existing.ComposeProject
@@ -123,7 +133,7 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	// 3. Download source (status: building)
 	s.setStatus(ctx, &preview, StatusBuilding, log)
 	s.updateComment(ctx, &preview,
-		progressComment("Preview deploying", sha8, req.Branch, previewURL, animationURL, 0, "Downloading source..."),
+		progressComment("Preview deploying", meta, 0, "Downloading source..."),
 		pat, log)
 
 	workDir := filepath.Join(s.workspaceDir, preview.ComposeProject)
@@ -160,7 +170,7 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	// 6. Docker compose up (status: deploying)
 	s.setStatus(ctx, &preview, StatusDeploying, log)
 	s.updateComment(ctx, &preview,
-		progressComment("Preview deploying", sha8, req.Branch, previewURL, animationURL, stepDownload+1, "Building and starting containers..."),
+		progressComment("Preview deploying", meta, stepDownload+1, "Building and starting containers..."),
 		pat, log)
 
 	if err := s.compose.Up(ctx, preview.ComposeProject, workDir, []string{composeFile, overrideRel}); err != nil {
@@ -170,7 +180,7 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 
 	// 7. Health check
 	s.updateComment(ctx, &preview,
-		progressComment("Preview deploying", sha8, req.Branch, previewURL, animationURL, stepContainers+1, "Running health check..."),
+		progressComment("Preview deploying", meta, stepContainers+1, "Running health check..."),
 		pat, log)
 
 	containerName := fmt.Sprintf("%s-%s-1", preview.ComposeProject, contract.Compose.Service)
@@ -184,11 +194,11 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 
 	// 8. TLS certificate readiness (wait for Traefik to provision via Let's Encrypt)
 	s.updateComment(ctx, &preview,
-		progressComment("Preview deploying", sha8, req.Branch, previewURL, animationURL, stepHealth+1, "Waiting for TLS certificate..."),
+		progressComment("Preview deploying", meta, stepHealth+1, "Waiting for TLS certificate..."),
 		pat, log)
 
 	tlsTimeout := 120 * time.Second
-	if err := s.healthChecker.WaitForTLS(ctx, previewURL, tlsTimeout); err != nil {
+	if err := s.healthChecker.WaitForTLS(ctx, meta.PreviewURL, tlsTimeout); err != nil {
 		s.failPreview(ctx, &preview, stepTLS, "tls", fmt.Sprintf("TLS readiness: %v", err), pat, log)
 		return
 	}
@@ -201,7 +211,7 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	_ = s.repo.Update(ctx, preview)
 
 	s.updateComment(ctx, &preview,
-		progressComment("Preview ready", sha8, req.Branch, previewURL, animationURL, numSteps, fmt.Sprintf("**[%s](%s)**", previewURL, previewURL)),
+		progressComment("Preview ready", meta, numSteps, fmt.Sprintf("**[%s](%s)**", meta.PreviewURL, meta.PreviewURL)),
 		pat, log)
 
 	log.Info("preview ready", "url", preview.PreviewURL)
@@ -232,6 +242,11 @@ func (s *Service) DeletePreview(ctx context.Context, req DeployRequest, pat stri
 		log.Warn("failed to remove workspace", "error", err)
 	}
 
+	// Delete old bot comment before posting removal notice
+	if preview.GithubCommentID > 0 {
+		_ = s.commenter.DeleteComment(ctx, req.RepoOwner, req.RepoName, preview.GithubCommentID, pat)
+	}
+
 	preview.Status = StatusDeleted
 	_ = s.repo.Update(ctx, *preview)
 
@@ -257,7 +272,13 @@ func (s *Service) failPreview(ctx context.Context, p *Preview, completedSteps in
 	p.ErrorMessage = message
 	_ = s.repo.Update(ctx, *p)
 
-	body := failedProgressComment(p.HeadSHA[:8], p.BranchName, p.PreviewURL, completedSteps, stage, message)
+	meta := commentMeta{
+		Owner:  p.RepoOwner,
+		Repo:   p.RepoName,
+		SHA:    p.HeadSHA,
+		Branch: p.BranchName,
+	}
+	body := failedProgressComment(meta, completedSteps, stage, message)
 	s.updateComment(ctx, p, body, pat, log)
 }
 
@@ -269,12 +290,30 @@ func (s *Service) updateComment(ctx context.Context, p *Preview, body, pat strin
 	}
 }
 
+// commentMeta holds the repo context needed to build GitHub links in comments.
+type commentMeta struct {
+	Owner        string
+	Repo         string
+	SHA          string // full SHA
+	Branch       string
+	PreviewURL   string
+	AnimationURL string
+}
+
+func (m commentMeta) commitLink() string {
+	return fmt.Sprintf("[`%s`](https://github.com/%s/%s/commit/%s)", m.SHA[:8], m.Owner, m.Repo, m.SHA)
+}
+
+func (m commentMeta) branchLink() string {
+	return fmt.Sprintf("[`%s`](https://github.com/%s/%s/tree/%s)", m.Branch, m.Owner, m.Repo, m.Branch)
+}
+
 // progressComment builds a markdown comment with a checklist showing deployment progress.
 // In-progress comments include an animation; the final "ready" comment does not.
-func progressComment(title, sha, branch, previewURL, animationURL string, completedSteps int, statusLine string) string {
+func progressComment(title string, meta commentMeta, completedSteps int, statusLine string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "### %s\n\n", title)
-	fmt.Fprintf(&b, "Commit `%s` on `%s`\n\n", sha, branch)
+	fmt.Fprintf(&b, "Commit %s on %s\n\n", meta.commitLink(), meta.branchLink())
 
 	for i := 0; i < numSteps; i++ {
 		if i < completedSteps {
@@ -286,18 +325,18 @@ func progressComment(title, sha, branch, previewURL, animationURL string, comple
 
 	fmt.Fprintf(&b, "\n%s", statusLine)
 
-	if completedSteps < numSteps && animationURL != "" {
-		fmt.Fprintf(&b, "\n\n<img src=\"%s\" width=\"300\" />", animationURL)
+	if completedSteps < numSteps && meta.AnimationURL != "" {
+		fmt.Fprintf(&b, "\n\n<img src=\"%s\" width=\"300\" />", meta.AnimationURL)
 	}
 
 	return b.String()
 }
 
 // failedProgressComment builds a markdown comment showing which step failed.
-func failedProgressComment(sha, branch, previewURL string, completedSteps int, stage, message string) string {
+func failedProgressComment(meta commentMeta, completedSteps int, stage, message string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "### Preview failed\n\n")
-	fmt.Fprintf(&b, "Commit `%s` on `%s`\n\n", sha, branch)
+	fmt.Fprintf(&b, "Commit %s on %s\n\n", meta.commitLink(), meta.branchLink())
 
 	for i := 0; i < numSteps; i++ {
 		if i < completedSteps {
