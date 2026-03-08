@@ -1,7 +1,6 @@
 package main
 
 import (
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -24,9 +23,6 @@ import (
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/logging"
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/server"
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
-
-	// Embedded static assets
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/static"
 )
 
 func main() {
@@ -87,10 +83,6 @@ func main() {
 	dashboardweb.RegisterRoutes(mux, previewService)
 	previewweb.RegisterRoutes(mux, previewService)
 	githubweb.RegisterRoutes(mux, registry, previewService)
-
-	// Serve embedded static assets at /static/
-	staticFS, _ := fs.Sub(static.Assets, ".")
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 
 	// ── Health Endpoints (outside application middleware) ───────────────
 	topMux := http.NewServeMux()
