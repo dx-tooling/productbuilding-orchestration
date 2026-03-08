@@ -51,6 +51,7 @@ write_files:
       else
         git clone "$REPO_CLONE_URL" /opt/orchestrator/repo
       fi
+      mkdir -p /opt/orchestrator/workspaces
       chown -R ubuntu:ubuntu /opt/orchestrator
       # Set safe.directory for both root (cloud-init/docker) and ubuntu (SSH deploys)
       git config --global --add safe.directory /opt/orchestrator/repo

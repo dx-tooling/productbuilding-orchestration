@@ -41,7 +41,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - orchestrator-data:/data
-      - workspaces:/opt/orchestrator/workspaces
+      - /opt/orchestrator/workspaces:/opt/orchestrator/workspaces
+      - /opt/orchestrator/targets.json:/opt/orchestrator/targets.json:ro
     networks:
       - preview-net
     labels:
@@ -56,7 +57,7 @@ services:
       - DATABASE_PATH=/data/orchestrator.db
       - PREVIEW_DOMAIN=${PREVIEW_DOMAIN}
       - WORKSPACE_DIR=/opt/orchestrator/workspaces
-      - TARGETS_CONFIG_PATH=/data/targets.json
+      - TARGETS_CONFIG_PATH=/opt/orchestrator/targets.json
       - AWS_REGION=${AWS_REGION:-eu-central-1}
     restart: unless-stopped
 
@@ -67,4 +68,3 @@ networks:
 volumes:
   letsencrypt:
   orchestrator-data:
-  workspaces:

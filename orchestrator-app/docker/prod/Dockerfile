@@ -13,8 +13,8 @@ COPY . .
 # Build the server binary (pure Go, no CGO needed thanks to modernc.org/sqlite)
 RUN CGO_ENABLED=0 GOOS=linux go build -o /app/bin/server ./cmd/server
 
-# Runtime stage — distroless for minimal attack surface
-FROM gcr.io/distroless/static-debian12
+# Runtime stage — docker:cli for Docker Compose access (orchestrator shells out to compose)
+FROM docker:27-cli
 
 WORKDIR /app
 

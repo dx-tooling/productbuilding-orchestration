@@ -9,6 +9,7 @@ import (
 	dashboardweb "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/dashboard/web"
 
 	// GitHub vertical
+	githubdomain "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/github/domain"
 	githubweb "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/github/web"
 
 	// Preview vertical
@@ -21,6 +22,7 @@ import (
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/database"
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/logging"
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/server"
+	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
 )
 
 func main() {
@@ -49,9 +51,30 @@ func main() {
 		os.Exit(1)
 	}
 
-	// ── Build Preview Vertical ─────────────────────────────────────────
+	// ── Load Target Registry ───────────────────────────────────────────
+	registry := targets.NewRegistry()
+	if err := registry.LoadFromFile(cfg.TargetsConfigPath); err != nil {
+		slog.Warn("failed to load targets config", "path", cfg.TargetsConfigPath, "error", err)
+	} else {
+		slog.Info("targets loaded", "count", registry.Count())
+	}
+
+	// ── Build Infrastructure ───────────────────────────────────────────
 	previewRepo := previewinfra.NewSQLiteRepository(db)
-	previewService := previewdomain.NewService(previewRepo)
+	githubClient := githubdomain.NewClient()
+	composeRunner := previewinfra.NewComposeRunner()
+	healthChecker := previewinfra.NewHealthChecker()
+
+	// ── Build Preview Vertical ─────────────────────────────────────────
+	previewService := previewdomain.NewService(
+		previewRepo,
+		githubClient,  // SourceDownloader
+		composeRunner, // ComposeManager
+		healthChecker, // HealthChecker
+		githubClient,  // PRCommenter
+		cfg.PreviewDomain,
+		cfg.WorkspaceDir,
+	)
 
 	// ── Build HTTP Routes ──────────────────────────────────────────────
 	mux := http.NewServeMux()
@@ -59,7 +82,7 @@ func main() {
 	// Register vertical routes
 	dashboardweb.RegisterRoutes(mux, previewService)
 	previewweb.RegisterRoutes(mux, previewService)
-	githubweb.RegisterRoutes(mux, "" /* webhook secret — loaded per-target in Phase 3 */)
+	githubweb.RegisterRoutes(mux, registry, previewService)
 
 	// ── Health Endpoints (outside application middleware) ───────────────
 	topMux := http.NewServeMux()

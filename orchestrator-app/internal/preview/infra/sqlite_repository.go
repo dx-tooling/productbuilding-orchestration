@@ -87,6 +87,24 @@ func (r *SQLiteRepository) UpdateStatus(ctx context.Context, id string, status d
 	return nil
 }
 
+func (r *SQLiteRepository) Update(ctx context.Context, p domain.Preview) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE previews SET
+			branch_name = ?, head_sha = ?, status = ?, updated_at = ?,
+			last_successful_sha = CASE WHEN ? != '' THEN ? ELSE last_successful_sha END,
+			error_stage = ?, error_message = ?, github_comment_id = ?
+		WHERE id = ?`,
+		p.BranchName, p.HeadSHA, string(p.Status), time.Now(),
+		p.LastSuccessfulSHA, p.LastSuccessfulSHA,
+		p.ErrorStage, p.ErrorMessage, p.GithubCommentID,
+		p.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("update preview: %w", err)
+	}
+	return nil
+}
+
 type scanner interface {
 	Scan(dest ...any) error
 }

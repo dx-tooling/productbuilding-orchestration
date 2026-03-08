@@ -17,3 +17,4 @@ orchestrator-app/tmp/
 orchestrator-app/data/
 *.test
 coverage.out
+orchestrator-app/server

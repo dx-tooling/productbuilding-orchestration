@@ -13,7 +13,7 @@ type Config struct {
 	DatabasePath      string `env:"DATABASE_PATH" envDefault:"data/orchestrator.db"`
 	PreviewDomain     string `env:"PREVIEW_DOMAIN" envDefault:"productbuilder.luminor-tech.net"`
 	WorkspaceDir      string `env:"WORKSPACE_DIR" envDefault:"/opt/orchestrator/workspaces"`
-	TargetsConfigPath string `env:"TARGETS_CONFIG_PATH" envDefault:"data/targets.json"`
+	TargetsConfigPath string `env:"TARGETS_CONFIG_PATH" envDefault:"/opt/orchestrator/targets.json"`
 	AWSRegion         string `env:"AWS_REGION" envDefault:"eu-central-1"`
 }
 

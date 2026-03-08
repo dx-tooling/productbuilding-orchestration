@@ -5,6 +5,21 @@ set -euo pipefail
 echo "==> Pulling latest code on server..."
 mise run ssh -- "cd /opt/orchestrator/repo && git pull"
 
+echo "==> Refreshing target configs from Secrets Manager..."
+mise run ssh -- 'bash -c "
+  REGION=\$(grep AWS_REGION /opt/orchestrator/repo/.env | cut -d= -f2)
+  PREFIX=productbuilder/targets/
+  TARGETS=\"[]\"
+  for name in \$(aws secretsmanager list-secrets --region \"\$REGION\" \
+    --filters \"Key=name,Values=\$PREFIX\" --query \"SecretList[].Name\" --output text); do
+    VAL=\$(aws secretsmanager get-secret-value --region \"\$REGION\" \
+      --secret-id \"\$name\" --query SecretString --output text)
+    TARGETS=\$(echo \"\$TARGETS\" | jq --argjson item \"\$VAL\" \". + [\\\$item]\")
+  done
+  echo \"\$TARGETS\" > /opt/orchestrator/targets.json
+  echo \"Loaded \$(echo \"\$TARGETS\" | jq length) target(s)\"
+"'
+
 echo "==> Rebuilding and restarting orchestrator..."
 mise run ssh -- "cd /opt/orchestrator/repo && docker compose up -d --build orchestrator"
 
