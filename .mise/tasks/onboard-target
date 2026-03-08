@@ -9,6 +9,8 @@ echo "Target repo onboarding"
 echo "======================"
 echo ""
 
+# --- Repo identity ---
+
 read -rp "Repo owner [luminor-project]: " REPO_OWNER
 REPO_OWNER="${REPO_OWNER:-luminor-project}"
 
@@ -18,18 +20,55 @@ if [[ -z "$REPO_NAME" ]]; then
     exit 1
 fi
 
-read -rp "GitHub PAT (fine-grained, scoped to this repo): " GITHUB_PAT
+# --- GitHub PAT (per-target, for orchestrator runtime) ---
+
+echo ""
+echo "  GitHub PAT — fine-grained, for the orchestrator to interact with this repo."
+echo ""
+echo "  The orchestrator uses this PAT to clone the repo and post PR comments."
+echo "  Create one at: https://github.com/settings/personal-access-tokens/new"
+echo ""
+echo "  Settings:"
+echo "    - Token name:       productbuilder-${REPO_NAME}"
+echo "    - Expiration:       90 days (or longer; you'll rotate later)"
+echo "    - Resource owner:   ${REPO_OWNER}"
+echo "    - Repository access: Only select repositories → ${REPO_NAME}"
+echo "    - Permissions (Repository):"
+echo "        Contents:       Read        (clone the repo)"
+echo "        Pull requests:  Read+Write  (post preview URL comments)"
+echo "        Metadata:       Read        (required by default)"
+echo ""
+read -rp "GitHub PAT (github_pat_...): " GITHUB_PAT
 if [[ -z "$GITHUB_PAT" ]]; then
     echo "Error: GitHub PAT is required" >&2
     exit 1
 fi
 
-read -rp "Anthropic API key (for Claude Code): " ANTHROPIC_API_KEY
+# --- Anthropic API key (for Claude Code GitHub Actions) ---
+
+echo ""
+echo "  Anthropic API key — for the Claude Code GitHub Actions workflow."
+echo ""
+echo "  This key is set as the ANTHROPIC_API_KEY secret on the target repo"
+echo "  so that the .github/workflows/claude.yml action can call the Claude API."
+echo "  Get one at: https://console.anthropic.com/settings/keys"
+echo ""
+echo "  You can reuse the same key across multiple target repos."
+echo ""
+read -rp "Anthropic API key (sk-ant-...): " ANTHROPIC_API_KEY
 if [[ -z "$ANTHROPIC_API_KEY" ]]; then
     echo "Error: Anthropic API key is required" >&2
     exit 1
 fi
 
+# --- Local clone path (optional, for scaffolding) ---
+
+echo ""
+echo "  Local clone path — the local checkout of ${REPO_OWNER}/${REPO_NAME}."
+echo "  If provided, the script will scaffold .productbuilding/, CLAUDE.md,"
+echo "  and .github/workflows/claude.yml in that directory."
+echo "  Leave empty to skip scaffolding."
+echo ""
 read -rp "Local repo clone path: " TARGET_REPO_PATH
 if [[ -n "$TARGET_REPO_PATH" && ! -d "$TARGET_REPO_PATH" ]]; then
     echo "Error: Directory does not exist: $TARGET_REPO_PATH" >&2
