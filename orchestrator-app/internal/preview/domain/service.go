@@ -16,13 +16,15 @@ const (
 	stepDownload   = 0
 	stepContainers = 1
 	stepHealth     = 2
-	numSteps       = 3
+	stepTLS        = 3
+	numSteps       = 4
 )
 
 var stepLabels = [numSteps]string{
 	"Download source",
 	"Build and start containers",
 	"Health check",
+	"TLS certificate",
 }
 
 type Service struct {
@@ -179,7 +181,18 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 		return
 	}
 
-	// 8. Ready!
+	// 8. TLS certificate readiness (wait for Traefik to provision via Let's Encrypt)
+	s.updateComment(ctx, &preview,
+		progressComment("Preview deploying", sha8, req.Branch, previewURL, stepHealth+1, "Waiting for TLS certificate..."),
+		pat, log)
+
+	tlsTimeout := 120 * time.Second
+	if err := s.healthChecker.WaitForTLS(ctx, previewURL, tlsTimeout); err != nil {
+		s.failPreview(ctx, &preview, stepTLS, "tls", fmt.Sprintf("TLS readiness: %v", err), pat, log)
+		return
+	}
+
+	// 9. Ready!
 	preview.Status = StatusReady
 	preview.LastSuccessfulSHA = req.HeadSHA
 	preview.ErrorStage = ""

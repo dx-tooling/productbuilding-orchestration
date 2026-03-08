@@ -17,9 +17,10 @@ type ComposeManager interface {
 	Down(ctx context.Context, projectName, workDir string) error
 }
 
-// HealthChecker polls an HTTP endpoint until it responds successfully.
+// HealthChecker polls endpoints until they respond successfully.
 type HealthChecker interface {
 	WaitForHealthy(ctx context.Context, url string, timeout time.Duration) error
+	WaitForTLS(ctx context.Context, url string, timeout time.Duration) error
 }
 
 // PRCommenter manages PR comments for status updates.
