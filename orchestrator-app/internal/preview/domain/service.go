@@ -85,9 +85,10 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	log := slog.With("repo", req.RepoOwner+"/"+req.RepoName, "pr", req.PRNumber, "sha", req.HeadSHA[:8])
 	sha8 := req.HeadSHA[:8]
 	previewURL := fmt.Sprintf("https://%s-pr-%d.%s", req.RepoName, req.PRNumber, s.previewDomain)
+	animationURL := fmt.Sprintf("https://api.%s/static/blocks-animation.mp4", s.previewDomain)
 
 	// 1. Post acknowledgment comment immediately (before acquiring mutex)
-	ackBody := progressComment("Preview deploying", sha8, req.Branch, previewURL, 0, "Queued, waiting to start...")
+	ackBody := progressComment("Preview deploying", sha8, req.Branch, previewURL, animationURL, 0, "Queued, waiting to start...")
 	commentID, err := s.commenter.CreateComment(ctx, req.RepoOwner, req.RepoName, req.PRNumber, ackBody, pat)
 	if err != nil {
 		log.Warn("failed to post ack comment", "error", err)
@@ -122,7 +123,7 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	// 3. Download source (status: building)
 	s.setStatus(ctx, &preview, StatusBuilding, log)
 	s.updateComment(ctx, &preview,
-		progressComment("Preview deploying", sha8, req.Branch, previewURL, 0, "Downloading source..."),
+		progressComment("Preview deploying", sha8, req.Branch, previewURL, animationURL, 0, "Downloading source..."),
 		pat, log)
 
 	workDir := filepath.Join(s.workspaceDir, preview.ComposeProject)
@@ -159,7 +160,7 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	// 6. Docker compose up (status: deploying)
 	s.setStatus(ctx, &preview, StatusDeploying, log)
 	s.updateComment(ctx, &preview,
-		progressComment("Preview deploying", sha8, req.Branch, previewURL, stepDownload+1, "Building and starting containers..."),
+		progressComment("Preview deploying", sha8, req.Branch, previewURL, animationURL, stepDownload+1, "Building and starting containers..."),
 		pat, log)
 
 	if err := s.compose.Up(ctx, preview.ComposeProject, workDir, []string{composeFile, overrideRel}); err != nil {
@@ -169,7 +170,7 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 
 	// 7. Health check
 	s.updateComment(ctx, &preview,
-		progressComment("Preview deploying", sha8, req.Branch, previewURL, stepContainers+1, "Running health check..."),
+		progressComment("Preview deploying", sha8, req.Branch, previewURL, animationURL, stepContainers+1, "Running health check..."),
 		pat, log)
 
 	containerName := fmt.Sprintf("%s-%s-1", preview.ComposeProject, contract.Compose.Service)
@@ -183,7 +184,7 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 
 	// 8. TLS certificate readiness (wait for Traefik to provision via Let's Encrypt)
 	s.updateComment(ctx, &preview,
-		progressComment("Preview deploying", sha8, req.Branch, previewURL, stepHealth+1, "Waiting for TLS certificate..."),
+		progressComment("Preview deploying", sha8, req.Branch, previewURL, animationURL, stepHealth+1, "Waiting for TLS certificate..."),
 		pat, log)
 
 	tlsTimeout := 120 * time.Second
@@ -200,7 +201,7 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	_ = s.repo.Update(ctx, preview)
 
 	s.updateComment(ctx, &preview,
-		progressComment("Preview ready", sha8, req.Branch, previewURL, numSteps, fmt.Sprintf("**[%s](%s)**", previewURL, previewURL)),
+		progressComment("Preview ready", sha8, req.Branch, previewURL, animationURL, numSteps, fmt.Sprintf("**[%s](%s)**", previewURL, previewURL)),
 		pat, log)
 
 	log.Info("preview ready", "url", preview.PreviewURL)
@@ -269,7 +270,8 @@ func (s *Service) updateComment(ctx context.Context, p *Preview, body, pat strin
 }
 
 // progressComment builds a markdown comment with a checklist showing deployment progress.
-func progressComment(title, sha, branch, previewURL string, completedSteps int, statusLine string) string {
+// In-progress comments include an animation; the final "ready" comment does not.
+func progressComment(title, sha, branch, previewURL, animationURL string, completedSteps int, statusLine string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "### %s\n\n", title)
 	fmt.Fprintf(&b, "Commit `%s` on `%s`\n\n", sha, branch)
@@ -283,6 +285,11 @@ func progressComment(title, sha, branch, previewURL string, completedSteps int, 
 	}
 
 	fmt.Fprintf(&b, "\n%s", statusLine)
+
+	if completedSteps < numSteps && animationURL != "" {
+		fmt.Fprintf(&b, "\n\n<img src=\"%s\" width=\"300\" />", animationURL)
+	}
+
 	return b.String()
 }
 
