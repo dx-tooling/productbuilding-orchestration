@@ -90,7 +90,7 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 		SHA:          req.HeadSHA,
 		Branch:       req.Branch,
 		PreviewURL:   fmt.Sprintf("https://%s-pr-%d.%s", req.RepoName, req.PRNumber, s.previewDomain),
-		AnimationURL: fmt.Sprintf("https://api.%s/static/blocks-animation.mp4", s.previewDomain),
+		AnimationURL: "https://github.com/luminor-project/luminor-productbuilding-orchestration/raw/refs/heads/main/orchestrator-app/static/blocks-animation.mp4",
 	}
 
 	// 1. Delete previous bot comment and post new acknowledgment (before acquiring mutex)
