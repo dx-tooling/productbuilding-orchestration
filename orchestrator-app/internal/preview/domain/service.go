@@ -324,9 +324,10 @@ func progressComment(title string, meta commentMeta, completedSteps int, statusL
 	}
 
 	if completedSteps < numSteps && meta.AnimationURL != "" {
-		fmt.Fprintf(&b, "\n<img src=\"%s\" width=\"32\" height=\"32\" />\n", meta.AnimationURL)
+		fmt.Fprintf(&b, "\n<table><tr><td><img src=\"%s\" width=\"64\" height=\"64\" /></td><td valign=\"middle\">%s</td></tr></table>", meta.AnimationURL, statusLine)
+	} else {
+		fmt.Fprintf(&b, "\n%s", statusLine)
 	}
-	fmt.Fprintf(&b, "\n%s", statusLine)
 
 	return b.String()
 }
