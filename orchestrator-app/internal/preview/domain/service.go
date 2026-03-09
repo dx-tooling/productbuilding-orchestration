@@ -313,9 +313,6 @@ func (m commentMeta) branchLink() string {
 func progressComment(title string, meta commentMeta, completedSteps int, statusLine string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "### %s\n\n", title)
-	if completedSteps < numSteps && meta.AnimationURL != "" {
-		fmt.Fprintf(&b, "<img src=\"%s\" width=\"32\" height=\"32\" />\n\n", meta.AnimationURL)
-	}
 	fmt.Fprintf(&b, "Commit %s on %s\n\n", meta.commitLink(), meta.branchLink())
 
 	for i := 0; i < numSteps; i++ {
@@ -326,6 +323,9 @@ func progressComment(title string, meta commentMeta, completedSteps int, statusL
 		}
 	}
 
+	if completedSteps < numSteps && meta.AnimationURL != "" {
+		fmt.Fprintf(&b, "\n<img src=\"%s\" width=\"32\" height=\"32\" />\n", meta.AnimationURL)
+	}
 	fmt.Fprintf(&b, "\n%s", statusLine)
 
 	return b.String()
