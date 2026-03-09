@@ -312,10 +312,9 @@ func (m commentMeta) branchLink() string {
 // In-progress comments include an animation; the final "ready" comment does not.
 func progressComment(title string, meta commentMeta, completedSteps int, statusLine string) string {
 	var b strings.Builder
+	fmt.Fprintf(&b, "### %s\n\n", title)
 	if completedSteps < numSteps && meta.AnimationURL != "" {
-		fmt.Fprintf(&b, "### %s <img src=\"%s\" width=\"64\" height=\"64\" />\n\n", title, meta.AnimationURL)
-	} else {
-		fmt.Fprintf(&b, "### %s\n\n", title)
+		fmt.Fprintf(&b, "<img src=\"%s\" width=\"32\" height=\"32\" />\n\n", meta.AnimationURL)
 	}
 	fmt.Fprintf(&b, "Commit %s on %s\n\n", meta.commitLink(), meta.branchLink())
 
