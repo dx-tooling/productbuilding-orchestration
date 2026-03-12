@@ -10,12 +10,20 @@ import (
 
 // PreviewContract describes how to build and run a preview for a target repo.
 type PreviewContract struct {
-	Version        int             `yaml:"version"`
-	Compose        ComposeConfig   `yaml:"compose"`
-	Runtime        RuntimeConfig   `yaml:"runtime"`
-	Database       *DatabaseConfig `yaml:"database"`
-	Logging        *LoggingConfig  `yaml:"logging"`
-	UserFacingNote string          `yaml:"user_facing_note"`
+	Version            int                 `yaml:"version"`
+	Compose            ComposeConfig       `yaml:"compose"`
+	Runtime            RuntimeConfig       `yaml:"runtime"`
+	Database           *DatabaseConfig     `yaml:"database"`
+	Logging            *LoggingConfig      `yaml:"logging"`
+	UserFacingNote     string              `yaml:"user_facing_note"`
+	PostDeployCommands []PostDeployCommand `yaml:"post_deploy_commands"`
+}
+
+// PostDeployCommand describes a command to run after the preview is deployed and healthy.
+type PostDeployCommand struct {
+	Service     string `yaml:"service"`     // Compose service to run in (defaults to compose.service)
+	Command     string `yaml:"command"`     // Command to execute (required)
+	Description string `yaml:"description"` // Human-readable description for logs (optional)
 }
 
 type ComposeConfig struct {

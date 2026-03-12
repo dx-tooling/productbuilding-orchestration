@@ -19,7 +19,8 @@ const (
 	stepMigrations = 2
 	stepHealth     = 3
 	stepTLS        = 4
-	numSteps       = 5
+	stepPostDeploy = 5
+	numSteps       = 6
 )
 
 var stepLabels = [numSteps]string{
@@ -28,6 +29,7 @@ var stepLabels = [numSteps]string{
 	"Run database migrations",
 	"Health check",
 	"TLS certificate",
+	"Post-deploy setup",
 }
 
 type Service struct {
@@ -265,7 +267,34 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 		return
 	}
 
-	// 9. Ready!
+	// 9. Run post-deploy commands (if configured)
+	if len(contract.PostDeployCommands) > 0 {
+		s.updateComment(ctx, &preview,
+			progressComment("Preview deploying", meta, stepTLS+1, "Running post-deploy commands..."),
+			pat, log)
+
+		for _, cmd := range contract.PostDeployCommands {
+			service := cmd.Service
+			if service == "" {
+				service = contract.Compose.Service
+			}
+
+			desc := cmd.Description
+			if desc == "" {
+				desc = cmd.Command
+			}
+
+			log.Info("running post-deploy command", "service", service, "cmd", cmd.Command, "desc", desc)
+
+			execCmd := []string{"sh", "-c", cmd.Command}
+			if err := s.compose.Exec(ctx, preview.ComposeProject, service, workDir, execCmd); err != nil {
+				s.failPreview(ctx, &preview, stepPostDeploy, "post_deploy", fmt.Sprintf("post-deploy command '%s': %v", desc, err), pat, log)
+				return
+			}
+		}
+	}
+
+	// 10. Ready!
 	preview.Status = StatusReady
 	preview.LastSuccessfulSHA = req.HeadSHA
 	preview.ErrorStage = ""

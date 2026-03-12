@@ -135,6 +135,12 @@ runtime:
 
 # Optional: add a note that will be shown in PR comments (e.g., test credentials, important info)
 # user_facing_note: "Test login: admin / secret"
+
+# Optional: run commands after preview is deployed and healthy (e.g., seed data)
+# post_deploy_commands:
+#   - service: app           # Which compose service to run in (default: compose.service)
+#     command: echo "Hello" # Command to execute
+#     description: Say hi   # Description for logs (optional)
 CONFIGEOF
         echo "  Created .productbuilding/preview/config.yml"
     else
