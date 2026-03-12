@@ -184,4 +184,35 @@ curl "https://api.productbuilder.luminor-tech.net/previews/owner/repo/pr/logs?ta
 
 **Note:** A "View Logs" link is automatically included in all PR comments when previews are ready.
 
+### Preview Contract Options
+
+Target repos can customize their preview deployment via `.productbuilding/preview/config.yml`:
+
+**Database Migrations:**
+```yaml
+database:
+  migrate_command: /app/migrate up
+```
+
+**Post-Deploy Commands** (run after preview is healthy):
+```yaml
+post_deploy_commands:
+  - service: app
+    command: /app/seed-data
+    description: Seed demo data
+```
+
+**User-Facing Notes** (shown in PR comments):
+```yaml
+user_facing_note: "Test login: admin / secret"
+```
+
+**Logging Configuration** (for non-Docker stdout logging):
+```yaml
+logging:
+  service: app
+  type: file
+  path: /var/log/app/*.log
+```
+
 **Important:** The orchestrator caches target configuration at startup. After adding a new target, you **must** run `mise run deploy` to restart the orchestrator with the updated configuration. Without this step, webhooks from the new repo will be rejected as "unknown repository".
