@@ -657,7 +657,7 @@ jobs:
           FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          model: fireworks/kimi-k2-5
+          model: accounts/fireworks/models/kimi-k2p
 ```
 
 **4. Create an AGENTS.md in the target repo**
