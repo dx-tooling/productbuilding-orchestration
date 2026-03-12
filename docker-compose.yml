@@ -60,6 +60,7 @@ services:
       - TARGETS_CONFIG_PATH=/opt/orchestrator/targets.json
       - AWS_REGION=${AWS_REGION:-eu-central-1}
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
+      - SLACK_WORKSPACE=${SLACK_WORKSPACE:-}
     restart: unless-stopped
 
 networks:

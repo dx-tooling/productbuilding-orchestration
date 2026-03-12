@@ -39,6 +39,12 @@ variable "ssh_public_key" {
   type        = string
 }
 
+variable "slack_workspace" {
+  description = "Slack workspace subdomain (e.g. 'luminor-tech' for luminor-tech.slack.com) for deep links"
+  type        = string
+  default     = ""
+}
+
 variable "slack_signing_secret" {
   description = "Slack app signing secret (from Basic Information page) for verifying Events API requests"
   type        = string

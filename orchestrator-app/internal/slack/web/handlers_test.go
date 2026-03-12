@@ -94,7 +94,7 @@ func makeSignedRequest(t *testing.T, body []byte) *http.Request {
 // --- Tests ---
 
 func TestHandleEvent_URLVerification(t *testing.T) {
-	h := NewHandler(nil, nil, nil, nil, testSigningSecret)
+	h := NewHandler(nil, nil, nil, nil, testSigningSecret, "")
 
 	payload := map[string]string{
 		"type":      "url_verification",
@@ -120,7 +120,7 @@ func TestHandleEvent_URLVerification(t *testing.T) {
 }
 
 func TestHandleEvent_BadSignature(t *testing.T) {
-	h := NewHandler(nil, nil, nil, nil, testSigningSecret)
+	h := NewHandler(nil, nil, nil, nil, testSigningSecret, "")
 
 	body := []byte(`{"type":"url_verification","challenge":"test"}`)
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
@@ -137,7 +137,7 @@ func TestHandleEvent_BadSignature(t *testing.T) {
 }
 
 func TestHandleEvent_StaleTimestamp(t *testing.T) {
-	h := NewHandler(nil, nil, nil, nil, testSigningSecret)
+	h := NewHandler(nil, nil, nil, nil, testSigningSecret, "")
 
 	body := []byte(`{"type":"url_verification","challenge":"test"}`)
 	// Timestamp 10 minutes ago
@@ -161,7 +161,7 @@ func TestHandleEvent_StaleTimestamp(t *testing.T) {
 }
 
 func TestHandleEvent_MissingSignatureHeaders(t *testing.T) {
-	h := NewHandler(nil, nil, nil, nil, testSigningSecret)
+	h := NewHandler(nil, nil, nil, nil, testSigningSecret, "")
 
 	body := []byte(`{"type":"url_verification","challenge":"test"}`)
 	req := httptest.NewRequest("POST", "/slack/events", bytes.NewReader(body))
@@ -177,7 +177,7 @@ func TestHandleEvent_MissingSignatureHeaders(t *testing.T) {
 
 func TestHandleEvent_AppMentionWithoutThreadTs(t *testing.T) {
 	github := &mockGitHubCommenter{}
-	h := NewHandler(&mockThreadFinder{}, github, &mockUserInfoResolver{}, &mockTargetRegistry{}, testSigningSecret)
+	h := NewHandler(&mockThreadFinder{}, github, &mockUserInfoResolver{}, &mockTargetRegistry{}, testSigningSecret, "")
 
 	payload := map[string]interface{}{
 		"type": "event_callback",
@@ -212,7 +212,7 @@ func TestHandleEvent_AppMentionWithoutThreadTs(t *testing.T) {
 func TestHandleEvent_AppMentionInUntrackedThread(t *testing.T) {
 	github := &mockGitHubCommenter{}
 	threadFinder := &mockThreadFinder{err: fmt.Errorf("thread not found")}
-	h := NewHandler(threadFinder, github, &mockUserInfoResolver{}, &mockTargetRegistry{}, testSigningSecret)
+	h := NewHandler(threadFinder, github, &mockUserInfoResolver{}, &mockTargetRegistry{}, testSigningSecret, "")
 
 	payload := map[string]interface{}{
 		"type": "event_callback",
@@ -265,7 +265,7 @@ func TestHandleEvent_AppMentionInTrackedThread(t *testing.T) {
 		found: true,
 	}
 
-	h := NewHandler(threadFinder, github, userResolver, registry, testSigningSecret)
+	h := NewHandler(threadFinder, github, userResolver, registry, testSigningSecret, "test-workspace")
 
 	payload := map[string]interface{}{
 		"type": "event_callback",
@@ -307,7 +307,7 @@ func TestHandleEvent_AppMentionInTrackedThread(t *testing.T) {
 	}
 
 	// Verify comment format (includes deep link to Slack message)
-	expectedBody := "**Alice Smith** [via Slack](https://slack.com/archives/C123/p2222222222222222):\n\nplease fix the alignment\n\n<!-- via-slack -->"
+	expectedBody := "**Alice Smith** [via Slack](https://test-workspace.slack.com/archives/C123/p2222222222222222?thread_ts=1111111111.111111&cid=C123):\n\nplease fix the alignment\n\n<!-- via-slack -->"
 	if github.body != expectedBody {
 		t.Errorf("Unexpected comment body:\ngot:  %q\nwant: %q", github.body, expectedBody)
 	}
@@ -336,7 +336,7 @@ func TestHandleEvent_AppMentionInTrackedThread_UsesPRID(t *testing.T) {
 		found: true,
 	}
 
-	h := NewHandler(threadFinder, github, userResolver, registry, testSigningSecret)
+	h := NewHandler(threadFinder, github, userResolver, registry, testSigningSecret, "test-workspace")
 
 	payload := map[string]interface{}{
 		"type": "event_callback",
@@ -385,7 +385,7 @@ func TestHandleEvent_BotMentionStripped(t *testing.T) {
 		found: true,
 	}
 
-	h := NewHandler(threadFinder, github, userResolver, registry, testSigningSecret)
+	h := NewHandler(threadFinder, github, userResolver, registry, testSigningSecret, "test-workspace")
 
 	// Text with bot mention at different positions
 	payload := map[string]interface{}{
@@ -413,7 +413,7 @@ func TestHandleEvent_BotMentionStripped(t *testing.T) {
 	}
 
 	// The mention should be stripped; text should just be "hey  do the thing" trimmed
-	expectedBody := "**Charlie** [via Slack](https://slack.com/archives/C123/p2222222222222222):\n\nhey  do the thing\n\n<!-- via-slack -->"
+	expectedBody := "**Charlie** [via Slack](https://test-workspace.slack.com/archives/C123/p2222222222222222?thread_ts=1111111111.111111&cid=C123):\n\nhey  do the thing\n\n<!-- via-slack -->"
 	if github.body != expectedBody {
 		t.Errorf("Unexpected comment body:\ngot:  %q\nwant: %q", github.body, expectedBody)
 	}

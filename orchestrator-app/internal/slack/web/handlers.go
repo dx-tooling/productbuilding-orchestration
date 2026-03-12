@@ -47,6 +47,7 @@ type Handler struct {
 	slackClient    UserInfoResolver
 	registry       TargetRegistry
 	signingSecret  string
+	slackWorkspace string // workspace subdomain, e.g. "luminor-tech"
 }
 
 // NewHandler creates a new Slack event handler
@@ -56,13 +57,15 @@ func NewHandler(
 	slackClient UserInfoResolver,
 	registry TargetRegistry,
 	signingSecret string,
+	slackWorkspace string,
 ) *Handler {
 	return &Handler{
-		threadFinder:  threadFinder,
-		githubClient:  githubClient,
-		slackClient:   slackClient,
-		registry:      registry,
-		signingSecret: signingSecret,
+		threadFinder:   threadFinder,
+		githubClient:   githubClient,
+		slackClient:    slackClient,
+		registry:       registry,
+		signingSecret:  signingSecret,
+		slackWorkspace: slackWorkspace,
 	}
 }
 
@@ -184,7 +187,12 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 	}
 
 	// Format the comment with a deep link back to the Slack message
-	slackLink := fmt.Sprintf("https://slack.com/archives/%s/p%s", event.Channel, strings.ReplaceAll(event.Ts, ".", ""))
+	slackHost := "slack.com"
+	if h.slackWorkspace != "" {
+		slackHost = h.slackWorkspace + ".slack.com"
+	}
+	slackLink := fmt.Sprintf("https://%s/archives/%s/p%s?thread_ts=%s&cid=%s",
+		slackHost, event.Channel, strings.ReplaceAll(event.Ts, ".", ""), event.ThreadTs, event.Channel)
 	comment := fmt.Sprintf("**%s** [via Slack](%s):\n\n%s\n\n<!-- via-slack -->", displayName, slackLink, text)
 
 	// Post to GitHub

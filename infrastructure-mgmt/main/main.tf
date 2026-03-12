@@ -181,11 +181,12 @@ resource "aws_instance" "orchestrator" {
   vpc_security_group_ids = [aws_security_group.orchestrator.id]
 
   user_data = templatefile("${path.module}/cloud-init.yml", {
-    aws_region     = var.aws_region
-    project_prefix = var.project_prefix
-    preview_domain = var.preview_domain
-    hosted_zone_id = aws_route53_zone.preview.zone_id
-    repo_clone_url = "https://x-access-token:${var.github_mgmt_pat}@github.com/${var.github_org}/luminor-productbuilding-orchestration.git"
+    aws_region      = var.aws_region
+    project_prefix  = var.project_prefix
+    preview_domain  = var.preview_domain
+    hosted_zone_id  = aws_route53_zone.preview.zone_id
+    slack_workspace = var.slack_workspace
+    repo_clone_url  = "https://x-access-token:${var.github_mgmt_pat}@github.com/${var.github_org}/luminor-productbuilding-orchestration.git"
   })
 
   root_block_device {

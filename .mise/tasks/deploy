@@ -27,14 +27,16 @@ mise run ssh -- 'sudo bash -c "
   SECRET=\$(aws secretsmanager get-secret-value --region \"\$REGION\" \
     --secret-id productbuilder/slack-signing-secret \
     --query SecretString --output text 2>/dev/null || echo \"\")
-  # Remove old value (if any) and append current
+  # Remove old values (if any) and append current
   sed -i /^SLACK_SIGNING_SECRET=/d /opt/orchestrator/repo/.env
+  sed -i /^SLACK_WORKSPACE=/d /opt/orchestrator/repo/.env
   if [ -n \"\$SECRET\" ]; then
     echo \"SLACK_SIGNING_SECRET=\$SECRET\" >> /opt/orchestrator/repo/.env
     echo \"Slack signing secret loaded\"
   else
     echo \"No Slack signing secret configured (skipped)\"
   fi
+  echo \"SLACK_WORKSPACE=luminor-tech\" >> /opt/orchestrator/repo/.env
 "'
 
 echo "==> Rebuilding and restarting orchestrator..."

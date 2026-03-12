@@ -16,6 +16,7 @@ type Config struct {
 	TargetsConfigPath string `env:"TARGETS_CONFIG_PATH" envDefault:"/opt/orchestrator/targets.json"`
 	AWSRegion          string `env:"AWS_REGION" envDefault:"eu-central-1"`
 	SlackSigningSecret string `env:"SLACK_SIGNING_SECRET"`
+	SlackWorkspace     string `env:"SLACK_WORKSPACE"` // Slack workspace subdomain (e.g. "luminor-tech")
 }
 
 func (c Config) IsProduction() bool {

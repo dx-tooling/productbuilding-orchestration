@@ -98,7 +98,7 @@ func main() {
 	githubweb.RegisterRoutes(mux, registry, previewService, slackNotifier)
 
 	// Register Slack Events API routes (for @mention → GitHub comment bridge)
-	slackHandler := slackweb.NewHandler(slackRepo, githubClient, slackClient, registry, cfg.SlackSigningSecret)
+	slackHandler := slackweb.NewHandler(slackRepo, githubClient, slackClient, registry, cfg.SlackSigningSecret, cfg.SlackWorkspace)
 	slackweb.RegisterRoutes(mux, slackHandler)
 
 	// ── Health Endpoints (outside application middleware) ───────────────

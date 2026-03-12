@@ -41,6 +41,7 @@ write_files:
       PREVIEW_DOMAIN="${preview_domain}"
       HOSTED_ZONE_ID="${hosted_zone_id}"
       REPO_CLONE_URL="${repo_clone_url}"
+      SLACK_WORKSPACE="${slack_workspace}"
 
       echo "=== Creating shared Docker network ==="
       docker network create preview-net 2>/dev/null || true
@@ -62,6 +63,7 @@ write_files:
 AWS_REGION=$AWS_REGION
 AWS_HOSTED_ZONE_ID=$HOSTED_ZONE_ID
 PREVIEW_DOMAIN=$PREVIEW_DOMAIN
+SLACK_WORKSPACE=$SLACK_WORKSPACE
 ENVEOF
 
       echo "=== Fetching Slack signing secret (if configured) ==="
