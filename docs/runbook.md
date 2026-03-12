@@ -105,7 +105,14 @@ mise run infra-apply        # Creates webhook, Secrets Manager entry, GitHub Act
 mise run deploy             # Redeploy orchestrator to load new target (REQUIRED)
 ```
 
-If you want Slack-to-GitHub comment bridging (@mention forwarding), also ensure `SLACK_SIGNING_SECRET` is set on the orchestrator host (the signing secret from the Slack app's Basic Information page). See `orchestrator-app/docs/SLACK_INTEGRATION.md` for full Slack app setup including Event Subscriptions.
+**Slack integration setup** (if using Slack):
+
+- Ensure `SLACK_SIGNING_SECRET` and `SLACK_WORKSPACE` are set on the orchestrator host (managed via Terraform / Secrets Manager / deploy task)
+- The Slack app needs these Bot Token Scopes: `chat:write`, `chat:write.public`, `reactions:write`, `channels:read`, `app_mentions:read`, `users:read`
+- Enable Event Subscriptions with `app_mention` event, Request URL: `https://api.{domain}/slack/events`
+- Slack channels **must** follow the naming convention `#productbuilding-{repo-name}` (the system uses this to match channels to repos)
+- After adding scopes or event subscriptions, **reinstall the app** to the workspace
+- See `orchestrator-app/docs/SLACK_INTEGRATION.md` for the complete setup guide
 
 Then manually:
 

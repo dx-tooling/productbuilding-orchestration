@@ -7,8 +7,8 @@ The ProductBuilder orchestrator integrates with **Slack** to mirror GitHub activ
 ### Architecture Principles
 
 1. **GitHub is the Source of Truth** - Slack is a "thin facade". All actions originate from GitHub.
-2. **Bi-Directional When Requested** - @mentioning the bot in a tracked thread forwards the message to GitHub as a comment. Plain thread replies are ignored.
-3. **One Channel Per Repository** - Manual setup: `#productbuilding-{repo-name}`
+2. **Bi-Directional When Requested** - @mentioning the bot in a tracked thread forwards the message to GitHub as a comment. @mentioning the bot in the channel (top-level) creates a new GitHub issue. Plain thread replies are ignored.
+3. **One Channel Per Repository** - Channel must be named `#productbuilding-{repo-name}` (this naming convention is enforced by the system for issue creation)
 4. **One Thread Per Issue/PR** - All activity (comments, status updates) posts to the same thread
 5. **Non-Blocking** - Slack failures log warnings only, never block the main orchestrator flow
 6. **Debounced Updates** - Rapid changes are batched (2-second window) to avoid spam
@@ -40,7 +40,7 @@ Before you begin, ensure you have:
    - `chat:write` - Post messages to channels
    - `chat:write.public` - Post to public channels
    - `reactions:write` - Add emoji reactions
-   - `channels:read` - Read channel information
+   - `channels:read` - Resolve channel names (required for issue creation from @mentions)
    - `app_mentions:read` - Receive @mention events (for Slack-to-GitHub bridge)
    - `users:read` - Resolve user display names (for GitHub comment attribution)
 7. Navigate to **Event Subscriptions**:
@@ -67,9 +67,9 @@ For each repository you want to integrate:
 
 1. In Slack, create a new channel: `#productbuilding-{repo-name}`
    - Example: For `mycompany/webapp`, create `#productbuilding-webapp`
+   - **Important**: The channel name **must** follow this exact pattern. The system uses the naming convention `productbuilding-{repo_name}` to match channels to repositories (e.g. for creating issues from @mentions). The `{repo-name}` part must match the `repo_name` field in the target config exactly.
 2. Invite the ProductBuilder bot to the channel:
    - Type: `/invite @ProductBuilder Bot`
-3. Note the exact channel name (case-sensitive)
 
 **Why manual?** We intentionally don't auto-create channels to respect your Slack workspace organization and naming conventions.
 
@@ -188,32 +188,49 @@ sqlite3 /path/to/orchestrator.db ".tables"
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `SLACK_SIGNING_SECRET` | For Slack-to-GitHub bridge | Signing secret from Slack app's Basic Information page. Used to verify incoming Events API requests. If empty, the `/slack/events` endpoint rejects all requests. |
+| `SLACK_WORKSPACE` | For deep links | Slack workspace subdomain (e.g. `luminor-tech` for `luminor-tech.slack.com`). Used to build deep links from GitHub comments back to the originating Slack messages. If empty, links default to `slack.com`. |
 
-Set this on the orchestrator host (e.g. in the systemd unit or cloud-init).
+Set these on the orchestrator host (e.g. in the `.env` file consumed by Docker Compose, or in cloud-init).
 
 ---
 
-## Bi-Directional Flow: Slack-to-GitHub Comments
+## Bi-Directional Flow: Slack-to-GitHub
 
-When a user **@mentions the ProductBuilder bot** in a tracked Slack thread, the message is forwarded as a GitHub comment on the linked Issue or PR.
+The bot supports two @mention flows:
 
-### How it works
+### 1. In-thread @mention → GitHub comment
+
+When a user @mentions the bot **inside a tracked thread** (one created by the bot for an Issue or PR), the message is forwarded as a GitHub comment.
 
 ```
 Slack thread (tracked)                GitHub Issue/PR
-  @ProductBuilder fix alignment  -->  Comment: "@Alice via Slack: fix alignment"
+  @ProductBuilder fix alignment  -->  Comment: "Alice via Slack: fix alignment"
   (plain reply without @mention) -->  (ignored, stays in Slack only)
 ```
 
-- Only `@ProductBuilder` mentions in **tracked threads** (threads created by the bot for an Issue/PR) are forwarded.
+- Only `@ProductBuilder` mentions in **tracked threads** are forwarded.
 - Plain thread replies without a bot mention are never forwarded — the team can discuss freely in Slack.
 - The bot mention (`<@UBOTID>`) is stripped from the text before posting to GitHub.
-- The GitHub comment includes attribution (`**@DisplayName** via Slack:`) and a `<!-- via-slack -->` marker.
-- The marker prevents the resulting GitHub webhook from echoing back to Slack (loop prevention).
+- The GitHub comment includes attribution (`**DisplayName** [via Slack](link):`) where the link deep-links back to the exact Slack message.
+- A `<!-- via-slack -->` marker prevents the resulting GitHub webhook from echoing back to Slack (loop prevention).
 
-### Which GitHub number is used?
+**Which GitHub number is used?** The thread's `slack_threads` record tracks both `github_issue_id` and `github_pr_id`. When both are set (PR phase), the comment is posted on the PR. Otherwise it goes to the Issue.
 
-The thread's `slack_threads` record tracks both `github_issue_id` and `github_pr_id`. When both are set (PR phase), the comment is posted on the PR. Otherwise it goes to the Issue.
+### 2. Top-level @mention → New GitHub issue
+
+When a user @mentions the bot **directly in the channel** (not in a thread), a new GitHub issue is created in the linked repository.
+
+```
+Slack channel #productbuilding-webapp
+  @ProductBuilder Add dark mode    -->  New Issue: "Add dark mode"
+                                        Body: "Requested by Alice via Slack"
+```
+
+- The channel must follow the naming convention `#productbuilding-{repo-name}` — the system resolves the channel ID to its name via the Slack API, then extracts the repo name.
+- The issue title is the message text (with the bot mention stripped).
+- The issue body includes who requested it (Slack display name, no `@` prefix) and a deep link back to the Slack message.
+- The `<!-- via-slack -->` marker is included to prevent echo loops.
+- @mentions in channels that don't match the naming convention are silently ignored.
 
 ---
 
@@ -227,10 +244,10 @@ The thread's `slack_threads` record tracks both `github_issue_id` and `github_pr
 | `repo_name` | ✅ | Repository name |
 | `github_pat` | ✅ | GitHub Personal Access Token |
 | `webhook_secret` | ✅ | Secret from GitHub webhook setup |
-| `slack_channel` | ❌ | Slack channel name (omit to disable Slack) |
-| `slack_bot_token` | ❌ | Bot token (omit to disable Slack) |
+| `slack_channel` | ❌ | Slack channel name for outbound notifications (omit to disable Slack). Must match the channel naming convention `#productbuilding-{repo_name}`. |
+| `slack_bot_token` | ❌ | Bot token (omit to disable Slack). Also used for resolving channel names and user display names. |
 
-**Note**: If `slack_channel` or `slack_bot_token` is empty/omitted, Slack integration is disabled for that repo (silently, no errors).
+**Note**: If `slack_channel` or `slack_bot_token` is empty/omitted, Slack integration is disabled for that repo (silently, no errors). Inbound @mentions (issue creation) rely on the channel naming convention, not this field.
 
 ---
 
@@ -331,10 +348,16 @@ n.debouncer.Debounce(key, 2*time.Second, func() { ... })
 A: Not currently. One channel per repo handles both.
 
 **Q: Can I post comments from Slack to GitHub?**
-A: Yes. @mention the ProductBuilder bot in a tracked thread and the message (minus the mention) is posted as a GitHub comment with your Slack display name. Plain thread replies are not forwarded.
+A: Yes. @mention the ProductBuilder bot in a tracked thread and the message (minus the mention) is posted as a GitHub comment with your Slack display name and a deep link back to the Slack message. Plain thread replies are not forwarded.
+
+**Q: Can I create issues from Slack?**
+A: Yes. @mention the bot in the channel (not in a thread): `@ProductBuilder Add a login page`. The message text becomes the issue title, and the body includes your name and a link back to the Slack message.
 
 **Q: Will Slack-to-GitHub comments echo back to Slack?**
-A: No. Comments posted from Slack include a `<!-- via-slack -->` marker. The GitHub webhook handler detects this marker and skips the Slack notification, preventing loops.
+A: No. Comments and issues posted from Slack include a `<!-- via-slack -->` marker. The GitHub webhook handler detects this marker and skips the Slack notification, preventing loops.
+
+**Q: What if I recreate a Slack channel (same name, new ID)?**
+A: The system resolves channel IDs to names via the Slack API at runtime, so a recreated channel with the same name works automatically. No config changes needed.
 
 **Q: Can I thread comments from PR reviews?**
 A: Currently only handles `issue_comment` events (which includes PR comments). Review comments are not yet supported.

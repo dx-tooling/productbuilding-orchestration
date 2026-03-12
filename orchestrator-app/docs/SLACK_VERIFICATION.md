@@ -11,7 +11,7 @@ Before testing, confirm these are in place:
 - [ ] GitHub webhook configured with `issues`, `pull_request`, and `issue_comment` events
 - [ ] `targets.json` includes `slack_channel` and `slack_bot_token`
 - [ ] Orchestrator deployed with latest migrations (includes `slack_threads` table)
-- [ ] Bot token has required scopes: `chat:write`, `chat:write.public`, `reactions:write`, `app_mentions:read`, `users:read`
+- [ ] Bot token has required scopes: `chat:write`, `chat:write.public`, `reactions:write`, `channels:read`, `app_mentions:read`, `users:read`
 - [ ] Event Subscriptions enabled with `app_mention` event subscribed
 - [ ] `SLACK_SIGNING_SECRET` env var set on the orchestrator host
 
@@ -179,7 +179,8 @@ Before testing, confirm these are in place:
 
 **Expected Result**:
 - [ ] A new comment appears on the GitHub Issue/PR
-- [ ] Comment format: `**@YourDisplayName** via Slack:` followed by the message text
+- [ ] Comment format: `**YourDisplayName** [via Slack](link):` followed by the message text
+- [ ] The "via Slack" text is a clickable deep link back to the Slack message
 - [ ] The bot mention is NOT included in the GitHub comment text
 - [ ] The comment contains a `<!-- via-slack -->` HTML marker (view source)
 - [ ] The GitHub comment does NOT echo back to Slack (loop prevention)
@@ -187,7 +188,6 @@ Before testing, confirm these are in place:
 **Negative Cases**:
 - [ ] A plain thread reply (no @mention) does NOT create a GitHub comment
 - [ ] An @mention in a non-tracked thread does NOT create a GitHub comment
-- [ ] An @mention outside a thread (top-level channel mention) does NOT create a GitHub comment
 
 **Troubleshooting**:
 - Check orchestrator logs for "posted github comment from slack" or errors
@@ -197,7 +197,34 @@ Before testing, confirm these are in place:
 
 ---
 
-### Test 9: Multiple Repos (if applicable)
+### Test 9: Issue Creation from Slack (@mention in channel)
+**Purpose**: Verify @mentioning the bot in the channel (not in a thread) creates a GitHub issue
+
+**Steps**:
+1. Go to the `#productbuilding-{repo-name}` channel
+2. Post a message: `@ProductBuilder Add a contact page`
+3. Check the GitHub repo's Issues page
+
+**Expected Result**:
+- [ ] A new Issue is created on GitHub
+- [ ] Issue title: "Add a contact page" (bot mention stripped)
+- [ ] Issue body includes: "Requested by YourDisplayName [via Slack](link)"
+- [ ] The "via Slack" text is a clickable deep link back to the Slack message
+- [ ] Issue body contains `<!-- via-slack -->` marker
+- [ ] The resulting GitHub webhook does NOT echo the issue back to Slack as a duplicate
+
+**Negative Cases**:
+- [ ] An @mention in a channel that does NOT follow the `#productbuilding-{repo-name}` convention is silently ignored
+
+**Troubleshooting**:
+- Check orchestrator logs for "created github issue from slack" or errors
+- Verify bot has `channels:read` scope (required to resolve channel ID → name)
+- Verify channel name matches the convention exactly: `productbuilding-{repo_name}` where `{repo_name}` matches the target config
+- Verify at least one target has a `slack_bot_token` configured
+
+---
+
+### Test 10: Multiple Repos (if applicable)
 **Purpose**: Verify isolation between repos
 
 **Steps**:
@@ -310,7 +337,8 @@ Once all tests pass, have team lead sign off:
 | PR Closure | ✅ / ❌ | |
 | Debouncing | ✅ / ❌ | |
 | Issue Closure | ✅ / ❌ | |
-| Slack-to-GitHub @mention | ✅ / ❌ | |
+| Slack-to-GitHub @mention (thread) | ✅ / ❌ | |
+| Slack-to-GitHub issue (@mention in channel) | ✅ / ❌ | |
 | Multi-Repo | ✅ / ❌ | (if applicable) |
 
 **Integration Verified By**: _________________  **Date**: _________

@@ -13,13 +13,13 @@ This directory contains comprehensive documentation for integrating Slack with t
 
 ### 1. Create Slack Bot
 - Go to https://api.slack.com/apps
-- Create app, add scopes: `chat:write`, `chat:write.public`, `reactions:write`, `app_mentions:read`, `users:read`
+- Create app, add scopes: `chat:write`, `chat:write.public`, `reactions:write`, `channels:read`, `app_mentions:read`, `users:read`
 - Enable Event Subscriptions: subscribe to `app_mention`, set Request URL to `https://api.{domain}/slack/events`
 - Copy **Signing Secret** from Basic Information (set as `SLACK_SIGNING_SECRET` env var)
 - Install to workspace, copy bot token (starts with `xoxb-`)
 
 ### 2. Create Channel
-- In Slack: `#productbuilding-{your-repo-name}`
+- In Slack: `#productbuilding-{your-repo-name}` (the naming convention is enforced — the `{repo-name}` part must match `repo_name` in the target config exactly)
 - Invite bot: `/invite @ProductBuilder Bot`
 
 ### 3. Run Onboarding
@@ -51,11 +51,16 @@ GitHub Webhook → Orchestrator → Slack API
 Slack @mention → Orchestrator → GitHub API
      ↓                ↓              ↓
   app_mention    Event Handler   Issue/PR Comment
-  (in thread)    Signature Check  (with attribution)
+  (in thread)    Signature Check  (with attribution + deep link)
+
+Slack @mention → Orchestrator → GitHub API
+     ↓                ↓              ↓
+  app_mention    Channel Name     New Issue
+  (top-level)    Resolution       (title from message)
 ```
 
 **Key Features**:
-- **Bi-Directional**: GitHub → Slack (automatic), Slack → GitHub (via @mention)
+- **Bi-Directional**: GitHub → Slack (automatic), Slack → GitHub (via @mention: thread reply → comment, top-level → new issue)
 - **One Channel Per Repo**: Manual setup for control
 - **One Thread Per Issue/PR**: All activity grouped
 - **Debounced Updates**: 2-second window prevents spam
@@ -98,6 +103,7 @@ Follow the comprehensive test suite in [SLACK_VERIFICATION.md](./SLACK_VERIFICAT
 | Missing emoji reactions | Add `reactions:write` scope |
 | Webhook errors | Verify secret in targets.json |
 | @mention not forwarding | Check `SLACK_SIGNING_SECRET` env var and `app_mentions:read` scope |
+| @mention not creating issue | Check `channels:read` scope and channel naming convention `productbuilding-{repo_name}` |
 
 See [SLACK_VERIFICATION.md](./SLACK_VERIFICATION.md) for full troubleshooting guide.
 
