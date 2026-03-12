@@ -111,7 +111,7 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 		SHA:          req.HeadSHA,
 		Branch:       req.Branch,
 		PreviewURL:   fmt.Sprintf("https://%s-pr-%d.%s", req.RepoName, req.PRNumber, s.previewDomain),
-		LogsURL:      fmt.Sprintf("https://api.%s/api/v1/previews/%s/%s/%d/logs", s.previewDomain, req.RepoOwner, req.RepoName, req.PRNumber),
+		LogsURL:      fmt.Sprintf("https://api.%s/previews/%s/%s/%d/logs", s.previewDomain, req.RepoOwner, req.RepoName, req.PRNumber),
 		AnimationURL: "https://raw.githubusercontent.com/luminor-project/assets/refs/heads/main/productbuilding/crane-building-animation-128x128.gif",
 	}
 

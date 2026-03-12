@@ -9,5 +9,5 @@ import (
 func RegisterRoutes(mux *http.ServeMux, service *domain.Service) {
 	h := NewHandler(service)
 	mux.HandleFunc("GET /previews", h.ListPreviews)
-	mux.HandleFunc("GET /api/v1/previews/{owner}/{repo}/{pr}/logs", h.GetLogs)
+	mux.HandleFunc("GET /previews/{owner}/{repo}/{pr}/logs", h.GetLogs)
 }
