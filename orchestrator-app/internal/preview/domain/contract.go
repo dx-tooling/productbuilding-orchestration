@@ -14,6 +14,7 @@ type PreviewContract struct {
 	Compose  ComposeConfig   `yaml:"compose"`
 	Runtime  RuntimeConfig   `yaml:"runtime"`
 	Database *DatabaseConfig `yaml:"database"`
+	Logging  *LoggingConfig  `yaml:"logging"`
 }
 
 type ComposeConfig struct {
@@ -29,6 +30,23 @@ type RuntimeConfig struct {
 
 type DatabaseConfig struct {
 	MigrateCommand string `yaml:"migrate_command"`
+}
+
+// LoggingConfig defines how to access application logs.
+// If not specified, defaults to docker compose logs from the main service.
+type LoggingConfig struct {
+	// Service is the compose service name to get logs from.
+	// Defaults to compose.service if not specified.
+	Service string `yaml:"service"`
+
+	// Type is the log source type: "docker" (default) or "file"
+	// - "docker": Uses docker compose logs (stdout/stderr)
+	// - "file": Tails log files inside the container
+	Type string `yaml:"type"`
+
+	// Path is the log file path (required when type="file")
+	// Can be a single file or a glob pattern (e.g., "/var/log/app/*.log")
+	Path string `yaml:"path"`
 }
 
 // ParseContract reads and validates the preview contract from a repo checkout.
@@ -61,6 +79,19 @@ func ParseContract(repoDir string) (*PreviewContract, error) {
 	}
 	if c.Runtime.StartupTimeout == 0 {
 		c.Runtime.StartupTimeout = 300
+	}
+
+	// Set logging defaults
+	if c.Logging != nil {
+		if c.Logging.Service == "" {
+			c.Logging.Service = c.Compose.Service
+		}
+		if c.Logging.Type == "" {
+			c.Logging.Type = "docker"
+		}
+		if c.Logging.Type == "file" && c.Logging.Path == "" {
+			return nil, fmt.Errorf("preview contract: logging.path is required when logging.type is 'file'")
+		}
 	}
 
 	return &c, nil

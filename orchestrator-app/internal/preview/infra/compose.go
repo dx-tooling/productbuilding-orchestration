@@ -158,3 +158,28 @@ func (r *ComposeRunner) Logs(ctx context.Context, projectName, serviceName strin
 
 	return nil
 }
+
+// LogsFromFile streams logs from files inside a container using tail.
+func (r *ComposeRunner) LogsFromFile(ctx context.Context, projectName, serviceName, workDir, logPath string, tail int, follow bool, w io.Writer) error {
+	tailArgs := []string{"tail", "-n", strconv.Itoa(tail)}
+	if follow {
+		tailArgs = append(tailArgs, "-f")
+	}
+	tailArgs = append(tailArgs, logPath)
+
+	args := []string{"compose", "-p", projectName, "exec", serviceName}
+	args = append(args, tailArgs...)
+
+	slog.Info("compose logs from file", "project", projectName, "service", serviceName, "path", logPath, "tail", tail, "follow", follow)
+
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Dir = workDir
+	cmd.Stdout = w
+	cmd.Stderr = w
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("compose logs from file failed: %w", err)
+	}
+
+	return nil
+}

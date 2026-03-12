@@ -82,7 +82,7 @@ func (s *Service) GetPreview(ctx context.Context, repoOwner, repoName string, pr
 	return s.repo.FindByRepoPR(ctx, repoOwner, repoName, prNumber)
 }
 
-// GetPreviewLogs streams logs from a preview's app container.
+// GetPreviewLogs streams logs from a preview based on its logging configuration.
 func (s *Service) GetPreviewLogs(ctx context.Context, repoOwner, repoName string, prNumber int, tail int, follow bool, w io.Writer) error {
 	preview, err := s.repo.FindByRepoPR(ctx, repoOwner, repoName, prNumber)
 	if err != nil {
@@ -91,13 +91,37 @@ func (s *Service) GetPreviewLogs(ctx context.Context, repoOwner, repoName string
 
 	workDir := filepath.Join(s.workspaceDir, preview.ComposeProject)
 
-	// Parse the contract to get the service name
+	// Parse the contract to get logging configuration
 	contract, err := ParseContract(workDir)
 	if err != nil {
 		return fmt.Errorf("failed to parse contract: %w", err)
 	}
 
-	return s.compose.Logs(ctx, preview.ComposeProject, contract.Compose.Service, tail, follow, w)
+	// Determine logging configuration
+	logType := "docker"
+	logService := contract.Compose.Service
+	logPath := ""
+
+	if contract.Logging != nil {
+		logType = contract.Logging.Type
+		if contract.Logging.Service != "" {
+			logService = contract.Logging.Service
+		}
+		logPath = contract.Logging.Path
+	}
+
+	// Stream logs based on type
+	switch logType {
+	case "file":
+		if logPath == "" {
+			return fmt.Errorf("logging.path is required when logging.type is 'file'")
+		}
+		return s.compose.LogsFromFile(ctx, preview.ComposeProject, logService, workDir, logPath, tail, follow, w)
+	case "docker", "":
+		return s.compose.Logs(ctx, preview.ComposeProject, logService, tail, follow, w)
+	default:
+		return fmt.Errorf("unsupported logging type: %s", logType)
+	}
 }
 
 // DeployPreview handles the full lifecycle: download → build → deploy → healthcheck.

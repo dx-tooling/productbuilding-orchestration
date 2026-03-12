@@ -609,9 +609,28 @@ runtime:
 
 database:
   migrate_command: go run ./cmd/migrate business up && go run ./cmd/migrate rag up
+
+# Optional: configure log access for debugging (defaults to docker compose logs)
+logging:
+  service: app           # Which compose service to get logs from (defaults to compose.service)
+  type: docker         # "docker" (default) for stdout/stderr, or "file" for file-based logs
+  # path: /var/log/app/*.log  # Required when type="file" - path to log files inside container
 ```
 
 The target repo also provides `.productbuilding/preview/docker-compose.yml` — a production-oriented Compose file (using the prod Dockerfile, no hot reload, no host volume mounts) with all required services.
+
+**Logging Configuration:**
+
+The orchestrator exposes a logs endpoint for debugging. By default, it streams Docker compose logs (container stdout/stderr). For applications that log to files instead, specify `logging.type: file` and the path:
+
+```yaml
+logging:
+  service: app
+  type: file
+  path: /var/log/nginx/access.log
+```
+
+The logs endpoint works with any tech stack - it simply needs to know how to access the logs (Docker stdout or files inside the container).
 
 ---
 

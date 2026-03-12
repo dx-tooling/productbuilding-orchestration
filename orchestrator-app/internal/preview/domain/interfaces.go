@@ -20,6 +20,8 @@ type ComposeManager interface {
 	Exec(ctx context.Context, projectName, serviceName, workDir string, command []string) error
 	// Logs streams container logs to the provided writer
 	Logs(ctx context.Context, projectName, serviceName string, tail int, follow bool, w io.Writer) error
+	// LogsFromFile streams logs from files inside a container using tail
+	LogsFromFile(ctx context.Context, projectName, serviceName, workDir, logPath string, tail int, follow bool, w io.Writer) error
 }
 
 // HealthChecker polls endpoints until they respond successfully.

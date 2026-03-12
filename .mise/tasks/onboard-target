@@ -126,6 +126,12 @@ runtime:
 
 # database:
 #   migrate_command: <your migration command here>
+
+# Optional: configure log access (defaults to docker compose logs from the main service)
+# logging:
+#   service: app           # Which compose service has the logs
+#   type: docker           # "docker" for stdout/stderr (default), "file" for file-based logs
+#   path: /var/log/*.log   # Required when type="file" - path inside container
 CONFIGEOF
         echo "  Created .productbuilding/preview/config.yml"
     else
