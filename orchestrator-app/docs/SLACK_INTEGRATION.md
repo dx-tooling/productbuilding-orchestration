@@ -300,9 +300,11 @@ journalctl -u orchestrator -f | grep -i slack
    - GitHub PAT: every 90 days
    - Slack bot token: every 180 days
 
-2. **Use least-privilege** - GitHub PAT should have minimal scopes:
-   - `repo` (for private repos)
-   - `read:org` (if using org-level webhooks)
+2. **Use least-privilege** - GitHub PAT should be fine-grained with minimal permissions:
+   - `Contents: Read` (clone the repo)
+   - `Issues: Read+Write` (create issues, post comments)
+   - `Pull requests: Read+Write` (post preview URL comments)
+   - `Metadata: Read` (required by default)
 
 3. **Secure secrets storage** - Never commit tokens to git:
    - ✅ AWS Secrets Manager
