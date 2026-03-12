@@ -232,11 +232,15 @@ func (h *Handler) notifySlackPR(eventType slackfacade.EventType, event *domain.P
 
 	ctx := context.Background()
 	slackEvent := slackfacade.NotificationEvent{
-		Type:        eventType,
-		RepoOwner:   event.RepoOwner,
-		RepoName:    event.RepoName,
-		IssueNumber: event.PRNumber,
-		URL:         fmt.Sprintf("https://github.com/%s/%s/pull/%d", event.RepoOwner, event.RepoName, event.PRNumber),
+		Type:              eventType,
+		RepoOwner:         event.RepoOwner,
+		RepoName:          event.RepoName,
+		IssueNumber:       event.PRNumber,
+		Title:             event.Title,
+		Body:              event.Body,
+		Author:            event.Author,
+		LinkedIssueNumber: domain.ExtractLinkedIssue(event.Body),
+		URL:               fmt.Sprintf("https://github.com/%s/%s/pull/%d", event.RepoOwner, event.RepoName, event.PRNumber),
 	}
 
 	if err := h.notifier.Notify(ctx, slackEvent, target); err != nil {

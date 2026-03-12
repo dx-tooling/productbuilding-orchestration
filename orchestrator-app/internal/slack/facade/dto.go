@@ -37,9 +37,10 @@ type NotificationEvent struct {
 	PreviewURL  string
 	LogsURL     string
 	UserNote    string
-	CommentID   int64
-	ThreadTs    string // For emoji reactions
-	Emoji       string // Emoji to add as reaction
+	CommentID         int64
+	ThreadTs          string // For emoji reactions
+	Emoji             string // Emoji to add as reaction
+	LinkedIssueNumber int    // Issue number linked from PR body (e.g. "Fixes #16")
 }
 
 // IsPR returns true if the event is related to a pull request

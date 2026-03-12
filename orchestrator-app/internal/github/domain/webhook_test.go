@@ -82,3 +82,72 @@ func TestParsePREvent_NotPR(t *testing.T) {
 		t.Error("expected error for non-PR event")
 	}
 }
+
+func TestParsePREvent_ExtractsBodyTitleAuthor(t *testing.T) {
+	payload := []byte(`{
+		"action": "opened",
+		"pull_request": {
+			"number": 17,
+			"title": "Added tech/arch section to homepage",
+			"body": "Fixes #16\n\nAdded technical architecture section",
+			"user": {"login": "opencode-agent[bot]"},
+			"head": {
+				"sha": "c07b81d7",
+				"ref": "feature/homepage-tech"
+			}
+		},
+		"repository": {
+			"owner": {"login": "luminor-project"},
+			"name": "playground"
+		}
+	}`)
+
+	event, err := ParsePREvent(payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if event.Title != "Added tech/arch section to homepage" {
+		t.Errorf("Title = %q, want %q", event.Title, "Added tech/arch section to homepage")
+	}
+	if event.Body != "Fixes #16\n\nAdded technical architecture section" {
+		t.Errorf("Body = %q, want body with 'Fixes #16'", event.Body)
+	}
+	if event.Author != "opencode-agent[bot]" {
+		t.Errorf("Author = %q, want %q", event.Author, "opencode-agent[bot]")
+	}
+}
+
+func TestExtractLinkedIssue(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"Fixes #N", "Fixes #16", 16},
+		{"fixes lowercase", "fixes #42", 42},
+		{"Closes #N", "Closes #99", 99},
+		{"closes lowercase", "closes #7", 7},
+		{"Resolves #N", "Resolves #123", 123},
+		{"Fix #N", "Fix #5", 5},
+		{"Close #N", "Close #10", 10},
+		{"Resolve #N", "Resolve #3", 3},
+		{"Fixed #N", "Fixed #8", 8},
+		{"Closed #N", "Closed #11", 11},
+		{"Resolved #N", "Resolved #12", 12},
+		{"in longer text", "This PR implements the feature.\n\nFixes #16\n\nAdded technical architecture section", 16},
+		{"no linked issue", "Just a regular PR body without any closing references", 0},
+		{"empty body", "", 0},
+		{"hash without keyword", "See issue #16 for details", 0},
+		{"multiple - takes first", "Fixes #10 and Closes #20", 10},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractLinkedIssue(tt.body)
+			if got != tt.want {
+				t.Errorf("ExtractLinkedIssue(%q) = %d, want %d", tt.body, got, tt.want)
+			}
+		})
+	}
+}

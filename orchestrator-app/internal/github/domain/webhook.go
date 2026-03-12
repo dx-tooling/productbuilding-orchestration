@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -34,14 +36,22 @@ type PREvent struct {
 	PRNumber  int
 	Branch    string
 	HeadSHA   string
+	Title     string
+	Body      string
+	Author    string
 }
 
 // webhookPayload mirrors the relevant fields of a GitHub PR webhook.
 type webhookPayload struct {
 	Action      string `json:"action"`
 	PullRequest struct {
-		Number int `json:"number"`
-		Head   struct {
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
+		User   struct {
+			Login string `json:"login"`
+		} `json:"user"`
+		Head struct {
 			SHA string `json:"sha"`
 			Ref string `json:"ref"`
 		} `json:"head"`
@@ -72,6 +82,9 @@ func ParsePREvent(payload []byte) (*PREvent, error) {
 		PRNumber:  p.PullRequest.Number,
 		Branch:    p.PullRequest.Head.Ref,
 		HeadSHA:   p.PullRequest.Head.SHA,
+		Title:     p.PullRequest.Title,
+		Body:      p.PullRequest.Body,
+		Author:    p.PullRequest.User.Login,
 	}, nil
 }
 
@@ -206,4 +219,21 @@ func ParseIssueCommentEvent(payload []byte) (*IssueCommentEvent, error) {
 			Name:  p.Repository.Name,
 		},
 	}, nil
+}
+
+// closingKeywordRe matches GitHub closing keywords: Fixes #N, Closes #N, Resolves #N (and variants)
+var closingKeywordRe = regexp.MustCompile(`(?i)\b(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?)\s+#(\d+)\b`)
+
+// ExtractLinkedIssue parses a PR body for GitHub closing keywords (e.g. "Fixes #16")
+// and returns the first linked issue number, or 0 if none found.
+func ExtractLinkedIssue(body string) int {
+	match := closingKeywordRe.FindStringSubmatch(body)
+	if match == nil {
+		return 0
+	}
+	n, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0
+	}
+	return n
 }

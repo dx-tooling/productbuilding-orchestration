@@ -196,6 +196,79 @@ func TestHandleWebhook_IssueCommentCreated(t *testing.T) {
 	}
 }
 
+func TestHandleWebhook_PROpened_PassesLinkedIssueNumber(t *testing.T) {
+	previewSvc := &mockPreviewService{}
+	slackNotifier := &mockSlackNotifier{}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:     "luminor-project",
+			RepoName:      "playground",
+			GitHubPAT:     "github_pat_test",
+			WebhookSecret: "secret123",
+			SlackChannel:  "#productbuilding",
+			SlackBotToken: "xoxb-test",
+		},
+		found: true,
+	}
+
+	handler := NewHandler(registry, previewSvc, slackNotifier)
+
+	// PR #17 with "Fixes #16" in body
+	payload := map[string]interface{}{
+		"action": "opened",
+		"pull_request": map[string]interface{}{
+			"number": 17,
+			"title":  "Added tech/arch section to homepage",
+			"body":   "Fixes #16\n\nAdded technical architecture section",
+			"user":   map[string]string{"login": "opencode-agent[bot]"},
+			"head": map[string]string{
+				"sha": "c07b81d7",
+				"ref": "feature/homepage-tech",
+			},
+		},
+		"repository": map[string]interface{}{
+			"owner": map[string]string{"login": "luminor-project"},
+			"name":  "playground",
+		},
+	}
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(body))
+	req.Header.Set("X-GitHub-Event", "pull_request")
+	req.Header.Set("X-Hub-Signature-256", generateSignature(body, "secret123"))
+
+	rec := httptest.NewRecorder()
+	handler.HandleWebhook(rec, req)
+
+	// Wait for async notification
+	time.Sleep(100 * time.Millisecond)
+
+	if !slackNotifier.notifyCalled {
+		t.Fatal("Expected Slack notification to be sent for PR opened")
+	}
+
+	if len(slackNotifier.events) < 1 {
+		t.Fatal("Expected at least 1 Slack event")
+	}
+
+	event := slackNotifier.events[0]
+	if event.Type != facade.EventPROpened {
+		t.Errorf("Expected event type %s, got %s", facade.EventPROpened, event.Type)
+	}
+	if event.IssueNumber != 17 {
+		t.Errorf("Expected IssueNumber 17, got %d", event.IssueNumber)
+	}
+	if event.LinkedIssueNumber != 16 {
+		t.Errorf("Expected LinkedIssueNumber 16 (from 'Fixes #16' in body), got %d", event.LinkedIssueNumber)
+	}
+	if event.Title != "Added tech/arch section to homepage" {
+		t.Errorf("Expected Title to be set, got %q", event.Title)
+	}
+	if event.Author != "opencode-agent[bot]" {
+		t.Errorf("Expected Author to be set, got %q", event.Author)
+	}
+}
+
 func TestHandleWebhook_UnknownRepo(t *testing.T) {
 	previewSvc := &mockPreviewService{}
 	slackNotifier := &mockSlackNotifier{}

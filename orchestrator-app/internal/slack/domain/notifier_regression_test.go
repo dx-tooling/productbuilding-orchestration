@@ -560,6 +560,129 @@ func TestNotifier_HandlesThreadNotFoundError(t *testing.T) {
 	t.Log("   - Comment posted as reply (no duplicate thread)")
 }
 
+// TestNotifier_PRWithDifferentNumber_ThreadsToLinkedIssue verifies that when
+// a PR has a different number than the issue it was created from, the PR
+// notification is posted as a reply in the existing issue's thread.
+//
+// This is the real-world scenario: Issue #16 is created, then someone runs
+// /opencode which creates PR #17. GitHub assigns different sequential numbers
+// to issues and PRs. The PR body contains "Fixes #16" which links them.
+//
+// Bug scenario (before fix):
+//  1. Issue #16 created → Thread saved with GithubIssueID=16
+//  2. PR #17 opened (body: "Fixes #16") → FindThreadByNumber(17) → NOT FOUND
+//  3. Creates new parent message for PR #17 → Duplicate thread in Slack
+//
+// Fixed behavior:
+//  1. Issue #16 created → Thread saved with GithubIssueID=16
+//  2. PR #17 opened (LinkedIssueNumber=16) → FindThreadByNumber(17) → not found
+//  3. Falls back to FindThreadByNumber(16) → FOUND → Posts reply to issue #16's thread
+func TestNotifier_PRWithDifferentNumber_ThreadsToLinkedIssue(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer)
+
+	target := targets.TargetConfig{
+		RepoOwner:     "luminor-project",
+		RepoName:      "playground",
+		SlackChannel:  "#productbuilding",
+		SlackBotToken: "xoxb-test",
+	}
+
+	ctx := context.Background()
+
+	// Step 1: Issue #16 is created
+	issueEvent := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventIssueOpened,
+		RepoOwner:   "luminor-project",
+		RepoName:    "playground",
+		IssueNumber: 16,
+		Title:       "Explain technical details on homepage",
+		Body:        "Please add tech info",
+		Author:      "manuelkiessling",
+	}
+
+	if err := notifier.Notify(ctx, issueEvent, target); err != nil {
+		t.Fatalf("Failed to notify for issue: %v", err)
+	}
+	debouncer.executeAll()
+
+	// Verify: 1 parent message posted
+	if len(client.postedMessages) != 1 {
+		t.Fatalf("Expected 1 message after issue creation, got %d", len(client.postedMessages))
+	}
+	if client.postedMessages[0].Thread != "" {
+		t.Fatal("First message should be a parent (no thread), but it's a reply")
+	}
+
+	// Step 2: PR #17 is opened, linked to issue #16 via "Fixes #16" in body
+	prEvent := slackfacade.NotificationEvent{
+		Type:              slackfacade.EventPROpened,
+		RepoOwner:         "luminor-project",
+		RepoName:          "playground",
+		IssueNumber:       17, // Different number than the issue!
+		Title:             "Added tech/arch section to homepage",
+		Body:              "Fixes #16\n\nAdded technical architecture section",
+		Author:            "opencode-agent[bot]",
+		LinkedIssueNumber: 16, // Extracted from "Fixes #16" in PR body
+	}
+
+	if err := notifier.Notify(ctx, prEvent, target); err != nil {
+		t.Fatalf("Failed to notify for PR: %v", err)
+	}
+	debouncer.executeAll()
+
+	// CRITICAL: Should be 2 messages total (1 parent + 1 thread reply)
+	// NOT 2 parent messages (which is the bug)
+	if len(client.postedMessages) != 2 {
+		t.Fatalf("Expected 2 messages total (1 parent + 1 reply), got %d", len(client.postedMessages))
+	}
+
+	// The second message MUST be a thread reply, not a new parent
+	prMsg := client.postedMessages[1]
+	if prMsg.Thread == "" {
+		t.Errorf("REGRESSION BUG: PR #17 created a new parent message instead of threading to issue #16's thread.\n"+
+			"Expected Thread to be set (reply), but got empty string (parent).\n"+
+			"The PR should have used LinkedIssueNumber=%d to find the existing thread.", prEvent.LinkedIssueNumber)
+	}
+
+	// Step 3: Comment on PR #17 should also go to the same thread.
+	// NOTE: This comment does NOT have LinkedIssueNumber set — it's a plain
+	// PR comment. It should still thread correctly because Step 2 saved
+	// the PR #17 → thread mapping (GithubPRID=17).
+	commentEvent := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventCommentAdded,
+		RepoOwner:   "luminor-project",
+		RepoName:    "playground",
+		IssueNumber: 17,
+		Body:        "LGTM!",
+		Author:      "manuelkiessling",
+	}
+
+	if err := notifier.Notify(ctx, commentEvent, target); err != nil {
+		t.Fatalf("Failed to notify for comment: %v", err)
+	}
+	debouncer.executeAll()
+
+	// Should be 3 messages total: 1 parent + 2 replies
+	if len(client.postedMessages) != 3 {
+		t.Errorf("Expected 3 messages total, got %d", len(client.postedMessages))
+	}
+
+	// All replies should be in the same thread
+	if len(client.postedMessages) >= 3 {
+		commentMsg := client.postedMessages[2]
+		if commentMsg.Thread == "" {
+			t.Error("Comment on PR #17 should be threaded, but was posted as parent")
+		}
+		if commentMsg.Thread != prMsg.Thread {
+			t.Errorf("Comment and PR should be in the same thread: PR thread=%q, comment thread=%q",
+				prMsg.Thread, commentMsg.Thread)
+		}
+	}
+}
+
 // notFoundErrorRepository wraps a mockRepository and returns "not found" errors
 // like the real SQLite repository does when a thread doesn't exist
 type notFoundErrorRepository struct {
@@ -581,6 +704,15 @@ func (n *notFoundErrorRepository) FindThread(ctx context.Context, repoOwner, rep
 
 func (n *notFoundErrorRepository) FindThreadByPR(ctx context.Context, repoOwner, repoName string, prNumber int) (*SlackThread, error) {
 	thread, _ := n.mockRepo.FindThreadByPR(ctx, repoOwner, repoName, prNumber)
+	if thread == nil {
+		// Return "not found" error like real SQLite repository
+		return nil, fmt.Errorf("thread not found")
+	}
+	return thread, nil
+}
+
+func (n *notFoundErrorRepository) FindThreadByNumber(ctx context.Context, repoOwner, repoName string, number int) (*SlackThread, error) {
+	thread, _ := n.mockRepo.FindThreadByNumber(ctx, repoOwner, repoName, number)
 	if thread == nil {
 		// Return "not found" error like real SQLite repository
 		return nil, fmt.Errorf("thread not found")

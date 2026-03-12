@@ -90,8 +90,14 @@ func newMockRepository() *mockRepository {
 func (m *mockRepository) SaveThread(ctx context.Context, thread *SlackThread) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := fmt.Sprintf("%s/%s#%d", thread.RepoOwner, thread.RepoName, thread.GithubIssueID)
-	m.threads[key] = thread
+	if thread.GithubIssueID > 0 {
+		key := fmt.Sprintf("%s/%s#%d", thread.RepoOwner, thread.RepoName, thread.GithubIssueID)
+		m.threads[key] = thread
+	}
+	if thread.GithubPRID > 0 {
+		key := fmt.Sprintf("%s/%s#%d-pr", thread.RepoOwner, thread.RepoName, thread.GithubPRID)
+		m.threads[key] = thread
+	}
 	return nil
 }
 
@@ -115,6 +121,22 @@ func (m *mockRepository) FindThreadByPR(ctx context.Context, repoOwner, repoName
 		return nil, nil
 	}
 	return thread, nil
+}
+
+func (m *mockRepository) FindThreadByNumber(ctx context.Context, repoOwner, repoName string, number int) (*SlackThread, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Search by issue ID first
+	key := fmt.Sprintf("%s/%s#%d", repoOwner, repoName, number)
+	if thread, ok := m.threads[key]; ok {
+		return thread, nil
+	}
+	// Then search by PR ID
+	key = fmt.Sprintf("%s/%s#%d-pr", repoOwner, repoName, number)
+	if thread, ok := m.threads[key]; ok {
+		return thread, nil
+	}
+	return nil, nil
 }
 
 type mockDebouncer struct {
@@ -144,8 +166,6 @@ func (m *mockDebouncer) Debounce(key string, wait time.Duration, fn func()) {
 		wait time.Duration
 		fn   func()
 	}{key, wait, fn})
-	// Execute immediately for testing (simulating debounce expiration)
-	go fn()
 }
 
 func (m *mockDebouncer) executeAll() {
@@ -190,8 +210,7 @@ func TestNotifier_Notify_NewThread(t *testing.T) {
 		t.Errorf("Notify() error = %v", err)
 	}
 
-	// Wait for debounce
-	time.Sleep(100 * time.Millisecond)
+	debouncer.executeAll()
 
 	// Should create parent message
 	if len(client.postedMessages) != 1 {
@@ -241,7 +260,7 @@ func TestNotifier_Notify_ExistingThread(t *testing.T) {
 		Title:       "Add dark mode",
 	}
 	notifier.Notify(context.Background(), event1, target)
-	time.Sleep(100 * time.Millisecond)
+	debouncer.executeAll()
 
 	// Second message should post to existing thread
 	event2 := slackfacade.NotificationEvent{
@@ -253,7 +272,7 @@ func TestNotifier_Notify_ExistingThread(t *testing.T) {
 		Body:        "Great idea!",
 	}
 	notifier.Notify(context.Background(), event2, target)
-	time.Sleep(100 * time.Millisecond)
+	debouncer.executeAll()
 
 	// Should have 2 messages: parent + reply
 	if len(client.postedMessages) != 2 {
@@ -331,7 +350,7 @@ func TestNotifier_Notify_EmojiReaction(t *testing.T) {
 		Title:       "Add feature",
 	}
 	notifier.Notify(context.Background(), event1, target)
-	time.Sleep(100 * time.Millisecond)
+	debouncer.executeAll()
 
 	// Now send PR ready with emoji reaction (thread exists now)
 	event2 := slackfacade.NotificationEvent{
@@ -346,7 +365,7 @@ func TestNotifier_Notify_EmojiReaction(t *testing.T) {
 	}
 
 	notifier.Notify(context.Background(), event2, target)
-	time.Sleep(100 * time.Millisecond)
+	debouncer.executeAll()
 
 	// Should have added emoji reaction
 	found := false
@@ -460,7 +479,7 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 			client.postedMessages = nil
 
 			notifier.Notify(context.Background(), tt.event, target)
-			time.Sleep(100 * time.Millisecond)
+			debouncer.executeAll()
 
 			if len(client.postedMessages) == 0 {
 				t.Fatal("Expected at least 1 message")

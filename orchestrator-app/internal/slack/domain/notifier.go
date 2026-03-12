@@ -26,6 +26,8 @@ type ThreadRepository interface {
 	SaveThread(ctx context.Context, thread *SlackThread) error
 	FindThread(ctx context.Context, repoOwner, repoName string, issueNumber int) (*SlackThread, error)
 	FindThreadByPR(ctx context.Context, repoOwner, repoName string, prNumber int) (*SlackThread, error)
+	// FindThreadByNumber searches by either issue ID or PR ID (they share numbers in GitHub)
+	FindThreadByNumber(ctx context.Context, repoOwner, repoName string, number int) (*SlackThread, error)
 }
 
 // Debouncer batches rapid events
@@ -98,27 +100,40 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 	}
 
 	// Find or create thread
-	var thread *SlackThread
-	var err error
+	// Use FindThreadByNumber which searches by either issue_id OR pr_id
+	// This is needed because in GitHub, PRs are also issues and share the same numbering
+	thread, err := n.repository.FindThreadByNumber(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
+	if err != nil {
+		// "not found" error is expected for new threads, continue to create
+		thread = nil
+	}
 
-	if event.IsPR() {
-		// First try to find by PR number
-		thread, err = n.repository.FindThreadByPR(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
-		// If not found (including "thread not found" error), check if there's an issue thread
-		// (PRs are also issues in GitHub, so they share the same number)
-		if thread == nil {
-			thread, _ = n.repository.FindThread(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
+	// If no thread found and we have a linked issue (e.g. PR body says "Fixes #16"),
+	// try to find the thread by the linked issue number
+	if thread == nil && event.LinkedIssueNumber > 0 && event.LinkedIssueNumber != event.IssueNumber {
+		thread, err = n.repository.FindThreadByNumber(ctx, event.RepoOwner, event.RepoName, event.LinkedIssueNumber)
+		if err != nil {
+			thread = nil
 		}
-	} else {
-		thread, err = n.repository.FindThread(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
-		// If not found (including "thread not found" error), check if there's a PR thread
-		if thread == nil {
-			thread, _ = n.repository.FindThreadByPR(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
+		if thread != nil {
+			// Found the linked issue's thread — register this PR number so future
+			// events on this PR (comments, merges) find the thread directly
+			if event.IsPR() && thread.GithubPRID == 0 {
+				thread.GithubPRID = event.IssueNumber
+				if err := n.repository.SaveThread(ctx, thread); err != nil {
+					slog.Warn("failed to update thread with PR ID", "error", err)
+				}
+			}
+			slog.Info("linked PR to existing issue thread",
+				"pr", event.IssueNumber,
+				"linkedIssue", event.LinkedIssueNumber,
+				"repo", event.RepoOwner+"/"+event.RepoName,
+			)
 		}
 	}
 
 	newThread := false
-	if err != nil || thread == nil {
+	if thread == nil {
 		newThread = true
 		// Create new thread
 		parentMsg := formatParentMessage(*event)
