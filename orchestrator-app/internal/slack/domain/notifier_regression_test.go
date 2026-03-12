@@ -456,3 +456,134 @@ func (c *trackingThreadRepository) SaveThread(ctx context.Context, thread *Slack
 	c.onSave(thread.ID)
 	return c.mockRepository.SaveThread(ctx, thread)
 }
+
+// TestNotifier_HandlesThreadNotFoundError verifies that the notifier correctly
+// handles the "thread not found" error from the repository and still finds
+// existing threads via fallback lookups.
+//
+// This is a regression test for the bug where all messages created new parent
+// posts instead of threading, because the code checked `err == nil` but the
+// repository returns "thread not found" as an error when a thread doesn't exist.
+//
+// Bug scenario:
+//  1. Issue #5 created → Thread #5 saved to DB
+//  2. Comment on Issue #5 → Repository.FindThread returns: nil, "thread not found"
+//  3. Old code checked: thread == nil && err == nil → FALSE (err was "not found")
+//  4. Code skipped fallback lookup → Created NEW thread → UNIQUE constraint violation
+//  5. Comment appeared as separate parent message in Slack
+//
+// Fixed behavior:
+//  1. Issue #5 created → Thread #5 saved to DB
+//  2. Comment on Issue #5 → Repository.FindThread returns: nil, "thread not found"
+//  3. New code checks: thread == nil → TRUE (ignores the error)
+//  4. Code tries fallback lookup → Finds thread by PR number → Posts to existing thread
+//  5. Comment correctly appears as reply in existing thread
+func TestNotifier_HandlesThreadNotFoundError(t *testing.T) {
+	// Repository that returns "not found" error (like the real SQLite repo)
+	notFoundRepo := &notFoundErrorRepository{
+		mockRepo: newMockRepository(),
+	}
+
+	client := &mockClient{}
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, notFoundRepo, debouncer)
+
+	target := targets.TargetConfig{
+		RepoOwner:     "test-owner",
+		RepoName:      "test-repo",
+		SlackChannel:  "#test-channel",
+		SlackBotToken: "xoxb-test",
+	}
+
+	ctx := context.Background()
+
+	// Step 1: Create Issue #5
+	issueEvent := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventIssueOpened,
+		RepoOwner:   "test-owner",
+		RepoName:    "test-repo",
+		IssueNumber: 5,
+		Title:       "Test Issue",
+		Author:      "developer",
+	}
+
+	if err := notifier.Notify(ctx, issueEvent, target); err != nil {
+		t.Fatalf("Failed to create issue: %v", err)
+	}
+	debouncer.executeAll()
+
+	// Verify thread was created (1 parent message)
+	if len(client.postedMessages) != 1 {
+		t.Fatalf("Expected 1 message after issue creation, got %d", len(client.postedMessages))
+	}
+
+	// Step 2: Add comment to Issue #5
+	// The repository will return "thread not found" error for this lookup
+	// This is where the bug occurred - the code must handle this correctly
+	commentEvent := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventCommentAdded,
+		RepoOwner:   "test-owner",
+		RepoName:    "test-repo",
+		IssueNumber: 5,
+		Title:       "Test Issue",
+		Body:        "This is a comment",
+		Author:      "reviewer",
+	}
+
+	if err := notifier.Notify(ctx, commentEvent, target); err != nil {
+		t.Fatalf("Failed to add comment: %v", err)
+	}
+	debouncer.executeAll()
+
+	// CRITICAL: Should NOT create a new parent message
+	// The bug would cause 3 messages (2 parents + 1 reply)
+	// Fixed: Should be 2 messages (1 parent + 1 reply)
+	if len(client.postedMessages) != 2 {
+		t.Errorf("BUG REGRESSION: Expected 2 messages total (1 parent + 1 reply), got %d\n"+
+			"If >2, the comment created a new thread instead of replying to existing.", len(client.postedMessages))
+	}
+
+	// Verify the second message is a reply (has thread field set)
+	if len(client.postedMessages) >= 2 {
+		reply := client.postedMessages[1]
+		// Reply should have Thread field set (indicating it's a reply, not parent)
+		if reply.Thread == "" {
+			t.Errorf("Comment appears to be a new parent message (Thread=''), not a reply\n" +
+				"The comment should have been threaded under the parent.")
+		}
+	}
+
+	t.Log("✅ PASS: 'thread not found' error handled correctly")
+	t.Log("   - Issue created parent message")
+	t.Log("   - Repository returned 'not found' error on comment lookup")
+	t.Log("   - Code correctly ignored error and found existing thread")
+	t.Log("   - Comment posted as reply (no duplicate thread)")
+}
+
+// notFoundErrorRepository wraps a mockRepository and returns "not found" errors
+// like the real SQLite repository does when a thread doesn't exist
+type notFoundErrorRepository struct {
+	mockRepo *mockRepository
+}
+
+func (n *notFoundErrorRepository) SaveThread(ctx context.Context, thread *SlackThread) error {
+	return n.mockRepo.SaveThread(ctx, thread)
+}
+
+func (n *notFoundErrorRepository) FindThread(ctx context.Context, repoOwner, repoName string, issueNumber int) (*SlackThread, error) {
+	thread, _ := n.mockRepo.FindThread(ctx, repoOwner, repoName, issueNumber)
+	if thread == nil {
+		// Return "not found" error like real SQLite repository
+		return nil, fmt.Errorf("thread not found")
+	}
+	return thread, nil
+}
+
+func (n *notFoundErrorRepository) FindThreadByPR(ctx context.Context, repoOwner, repoName string, prNumber int) (*SlackThread, error) {
+	thread, _ := n.mockRepo.FindThreadByPR(ctx, repoOwner, repoName, prNumber)
+	if thread == nil {
+		// Return "not found" error like real SQLite repository
+		return nil, fmt.Errorf("thread not found")
+	}
+	return thread, nil
+}
