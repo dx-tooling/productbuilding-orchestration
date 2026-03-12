@@ -28,14 +28,22 @@ func NewSQLiteRepository(db *sql.DB) *SQLiteRepository {
 	return &SQLiteRepository{db: db}
 }
 
-// SaveThread persists a SlackThread to the database
+// SaveThread persists or updates a SlackThread in the database.
+// NULLIF ensures 0-valued IDs are stored as NULL so the UNIQUE constraints
+// on (repo_owner, repo_name, github_issue_id) and (repo_owner, repo_name, github_pr_id)
+// allow multiple issues (pr_id NULL) and multiple PRs (issue_id NULL).
 func (r *SQLiteRepository) SaveThread(ctx context.Context, thread *domain.SlackThread) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO slack_threads (
 			id, repo_owner, repo_name, github_issue_id, github_pr_id,
 			slack_channel, slack_thread_ts, slack_parent_ts, thread_type,
 			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, NULLIF(?, 0), NULLIF(?, 0), ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			github_issue_id = NULLIF(excluded.github_issue_id, 0),
+			github_pr_id    = NULLIF(excluded.github_pr_id, 0),
+			thread_type     = excluded.thread_type,
+			updated_at      = excluded.updated_at`,
 		thread.ID,
 		thread.RepoOwner,
 		thread.RepoName,
@@ -100,12 +108,13 @@ func (r *SQLiteRepository) FindThreadByNumber(ctx context.Context, repoOwner, re
 // scanThread scans a database row into a SlackThread
 func scanThread(row *sql.Row) (*domain.SlackThread, error) {
 	var thread domain.SlackThread
+	var issueID, prID sql.NullInt64
 	err := row.Scan(
 		&thread.ID,
 		&thread.RepoOwner,
 		&thread.RepoName,
-		&thread.GithubIssueID,
-		&thread.GithubPRID,
+		&issueID,
+		&prID,
 		&thread.SlackChannel,
 		&thread.SlackThreadTs,
 		&thread.SlackParentTs,
@@ -119,6 +128,8 @@ func scanThread(row *sql.Row) (*domain.SlackThread, error) {
 		}
 		return nil, fmt.Errorf("scan thread: %w", err)
 	}
+	thread.GithubIssueID = int(issueID.Int64)
+	thread.GithubPRID = int(prID.Int64)
 	return &thread, nil
 }
 
