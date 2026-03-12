@@ -295,3 +295,164 @@ func TestSlackThread_UsesCorrectThreadType(t *testing.T) {
 		t.Errorf("IssueOrPR() = %q, want 'Pull Request'", prEvent.IssueOrPR())
 	}
 }
+
+// TestNotifier_PRFromIssue_UsesSameThread verifies that when a PR is created
+// from an existing issue (which share the same number in GitHub), both use
+// the SAME Slack thread instead of creating duplicate parent messages.
+//
+// This is a critical regression test. In GitHub, PRs are also issues and
+// share the same numbering. When you create an issue and then create a PR
+// from it (e.g., via /opencode command), they have the same number but the
+// system must thread them together.
+//
+// Scenario:
+//  1. Issue #42 created → creates Slack thread #42
+//  2. PR #42 created (from Issue #42) → should use thread #42, NOT create new
+//  3. Comments on PR → should go to existing thread #42
+//
+// Without this fix: Two separate parent messages appear in Slack
+// With this fix: One unified thread with all activity
+func TestNotifier_PRFromIssue_UsesSameThread(t *testing.T) {
+	// Track unique thread creations (by thread ID, not saves)
+	threadIDs := make(map[string]bool)
+	repo := newMockRepository()
+
+	// Wrap the repository to track unique thread creations
+	trackingRepo := &trackingThreadRepository{
+		mockRepository: repo,
+		onSave: func(threadID string) {
+			threadIDs[threadID] = true
+		},
+	}
+
+	client := &tokenRecordingClient{}
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, trackingRepo, debouncer)
+
+	target := targets.TargetConfig{
+		RepoOwner:     "test-owner",
+		RepoName:      "test-repo",
+		SlackChannel:  "#test-channel",
+		SlackBotToken: "xoxb-test",
+	}
+
+	// Step 1: Create Issue #42
+	issueEvent := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventIssueOpened,
+		RepoOwner:   "test-owner",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+		Title:       "Add feature X",
+		Body:        "We need feature X for better UX",
+		Author:      "developer",
+	}
+
+	ctx := context.Background()
+	if err := notifier.Notify(ctx, issueEvent, target); err != nil {
+		t.Fatalf("Failed to notify for issue: %v", err)
+	}
+	debouncer.executeAll()
+
+	// Verify thread was created
+	if len(threadIDs) != 1 {
+		t.Fatalf("Expected 1 thread after issue creation, got %d", len(threadIDs))
+	}
+
+	// Verify thread was saved with issue ID
+	thread, err := repo.FindThread(ctx, "test-owner", "test-repo", 42)
+	if err != nil {
+		t.Fatalf("Failed to find issue thread: %v", err)
+	}
+	if thread == nil {
+		t.Fatal("Issue thread was not saved to repository")
+	}
+	if thread.GithubIssueID != 42 {
+		t.Errorf("Thread has wrong issue ID: got %d, want 42", thread.GithubIssueID)
+	}
+	if thread.GithubPRID != 0 {
+		t.Errorf("Thread should have no PR ID yet: got %d", thread.GithubPRID)
+	}
+
+	// Step 2: Create PR #42 (same number as the issue - this is the key test!)
+	// In GitHub, PRs are also issues and share the numbering
+	prEvent := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventPROpened,
+		RepoOwner:   "test-owner",
+		RepoName:    "test-repo",
+		IssueNumber: 42, // Same number!
+		Title:       "Add feature X",
+		Body:        "Implementation of feature X",
+		Author:      "developer",
+	}
+
+	if err := notifier.Notify(ctx, prEvent, target); err != nil {
+		t.Fatalf("Failed to notify for PR: %v", err)
+	}
+	debouncer.executeAll()
+
+	// CRITICAL: Should NOT create a second thread
+	// This was the bug - it would create duplicate parent messages
+	if len(threadIDs) != 1 {
+		t.Errorf("REGRESSION BUG: Expected 1 thread total (issue and PR should share), got %d\n"+
+			"This means the PR created a separate thread instead of using the issue's thread.", len(threadIDs))
+	}
+
+	// Verify the thread was updated to track both issue and PR
+	updatedThread, err := repo.FindThread(ctx, "test-owner", "test-repo", 42)
+	if err != nil {
+		t.Fatalf("Failed to find updated thread: %v", err)
+	}
+	if updatedThread == nil {
+		t.Fatal("Thread disappeared after PR creation")
+	}
+
+	// Thread should now track BOTH IDs
+	if updatedThread.GithubIssueID != 42 {
+		t.Errorf("Thread lost issue ID: got %d, want 42", updatedThread.GithubIssueID)
+	}
+	if updatedThread.GithubPRID != 42 {
+		t.Errorf("Thread should have PR ID added: got %d, want 42\n"+
+			"The PR notification should have updated the existing thread", updatedThread.GithubPRID)
+	}
+	if updatedThread.ThreadType != "pull_request" {
+		t.Errorf("Thread type should be updated to 'pull_request': got %q", updatedThread.ThreadType)
+	}
+
+	// Step 3: Add comment to PR - should go to existing thread
+	commentEvent := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventCommentAdded,
+		RepoOwner:   "test-owner",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+		Title:       "Add feature X",
+		Body:        "This looks great!",
+		Author:      "reviewer",
+	}
+
+	if err := notifier.Notify(ctx, commentEvent, target); err != nil {
+		t.Fatalf("Failed to notify for comment: %v", err)
+	}
+	debouncer.executeAll()
+
+	// Should still only be 1 thread
+	if len(threadIDs) != 1 {
+		t.Errorf("Comment created a new thread! Expected 1, got %d", len(threadIDs))
+	}
+
+	t.Log("✅ PASS: Issue and PR correctly share the same Slack thread")
+	t.Log("   - Issue #42 created thread")
+	t.Log("   - PR #42 used same thread (no duplicate)")
+	t.Log("   - Comment went to existing thread")
+	t.Log("   - Thread correctly tracks both issue and PR IDs")
+}
+
+// trackingThreadRepository wraps a mockRepository to track unique thread creations
+type trackingThreadRepository struct {
+	*mockRepository
+	onSave func(threadID string)
+}
+
+func (c *trackingThreadRepository) SaveThread(ctx context.Context, thread *SlackThread) error {
+	c.onSave(thread.ID)
+	return c.mockRepository.SaveThread(ctx, thread)
+}
