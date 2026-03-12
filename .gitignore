@@ -22,3 +22,4 @@ orchestrator-app/data/
 *.test
 coverage.out
 orchestrator-app/server
+.claude/
