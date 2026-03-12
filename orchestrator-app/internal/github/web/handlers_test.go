@@ -269,6 +269,61 @@ func TestHandleWebhook_PROpened_PassesLinkedIssueNumber(t *testing.T) {
 	}
 }
 
+func TestHandleWebhook_IssueCommentFromSlack_SkipsNotification(t *testing.T) {
+	previewSvc := &mockPreviewService{}
+	slackNotifier := &mockSlackNotifier{}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:     "luminor-project",
+			RepoName:      "test-repo",
+			GitHubPAT:     "github_pat_test",
+			WebhookSecret: "secret123",
+			SlackChannel:  "#productbuilding-test",
+			SlackBotToken: "xoxb-test",
+		},
+		found: true,
+	}
+
+	handler := NewHandler(registry, previewSvc, slackNotifier)
+
+	// Comment body contains the via-slack marker
+	payload := domain.IssueCommentEvent{
+		Action: "created",
+		Comment: domain.Comment{
+			ID:   789,
+			Body: "**@Alice** via Slack:\n\nplease fix the alignment\n\n<!-- via-slack -->",
+			User: domain.User{Login: "luminor-bot"},
+		},
+		Issue: domain.Issue{
+			Number: 42,
+			Title:  "Add dark mode support",
+		},
+		Repository: domain.Repository{
+			Owner: domain.User{Login: "luminor-project"},
+			Name:  "test-repo",
+		},
+	}
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(body))
+	req.Header.Set("X-GitHub-Event", "issue_comment")
+	req.Header.Set("X-Hub-Signature-256", generateSignature(body, "secret123"))
+
+	rec := httptest.NewRecorder()
+	handler.HandleWebhook(rec, req)
+
+	// Wait for async
+	time.Sleep(100 * time.Millisecond)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rec.Code)
+	}
+
+	if slackNotifier.notifyCalled {
+		t.Error("Should NOT send Slack notification for comment originated from Slack (via-slack marker)")
+	}
+}
+
 func TestHandleWebhook_UnknownRepo(t *testing.T) {
 	previewSvc := &mockPreviewService{}
 	slackNotifier := &mockSlackNotifier{}

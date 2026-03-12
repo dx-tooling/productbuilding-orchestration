@@ -169,6 +169,89 @@ func TestClient_PostMessage_SlackError(t *testing.T) {
 	}
 }
 
+func TestClient_GetUserInfo(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			t.Errorf("Expected GET, got %s", r.Method)
+		}
+		if r.URL.Path != "/users.info" {
+			t.Errorf("Expected path /users.info, got %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("user") != "U123ABC" {
+			t.Errorf("Expected user param U123ABC, got %s", r.URL.Query().Get("user"))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok": true,
+			"user": map[string]interface{}{
+				"profile": map[string]interface{}{
+					"display_name": "Alice Smith",
+					"real_name":    "Alice Jane Smith",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClientWithBaseURL(server.URL)
+
+	name, err := client.GetUserInfo(context.Background(), "test-token", "U123ABC")
+	if err != nil {
+		t.Fatalf("GetUserInfo() error = %v", err)
+	}
+	if name != "Alice Smith" {
+		t.Errorf("GetUserInfo() name = %q, want %q", name, "Alice Smith")
+	}
+}
+
+func TestClient_GetUserInfo_FallbackToRealName(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok": true,
+			"user": map[string]interface{}{
+				"profile": map[string]interface{}{
+					"display_name": "",
+					"real_name":    "Bob Jones",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClientWithBaseURL(server.URL)
+
+	name, err := client.GetUserInfo(context.Background(), "test-token", "U456")
+	if err != nil {
+		t.Fatalf("GetUserInfo() error = %v", err)
+	}
+	if name != "Bob Jones" {
+		t.Errorf("GetUserInfo() name = %q, want %q", name, "Bob Jones")
+	}
+}
+
+func TestClient_GetUserInfo_SlackError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":    false,
+			"error": "user_not_found",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClientWithBaseURL(server.URL)
+
+	_, err := client.GetUserInfo(context.Background(), "test-token", "UBAD")
+	if err == nil {
+		t.Error("GetUserInfo() expected error for failed Slack response")
+	}
+}
+
 func TestClient_PostMessage_HTTPError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

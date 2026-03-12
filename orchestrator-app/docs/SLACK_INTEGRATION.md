@@ -7,10 +7,11 @@ The ProductBuilder orchestrator integrates with **Slack** to mirror GitHub activ
 ### Architecture Principles
 
 1. **GitHub is the Source of Truth** - Slack is a "thin facade". All actions originate from GitHub.
-2. **One Channel Per Repository** - Manual setup: `#productbuilding-{repo-name}`
-3. **One Thread Per Issue/PR** - All activity (comments, status updates) posts to the same thread
-4. **Non-Blocking** - Slack failures log warnings only, never block the main orchestrator flow
-5. **Debounced Updates** - Rapid changes are batched (2-second window) to avoid spam
+2. **Bi-Directional When Requested** - @mentioning the bot in a tracked thread forwards the message to GitHub as a comment. Plain thread replies are ignored.
+3. **One Channel Per Repository** - Manual setup: `#productbuilding-{repo-name}`
+4. **One Thread Per Issue/PR** - All activity (comments, status updates) posts to the same thread
+5. **Non-Blocking** - Slack failures log warnings only, never block the main orchestrator flow
+6. **Debounced Updates** - Rapid changes are batched (2-second window) to avoid spam
 
 ---
 
@@ -40,9 +41,20 @@ Before you begin, ensure you have:
    - `chat:write.public` - Post to public channels
    - `reactions:write` - Add emoji reactions
    - `channels:read` - Read channel information
-7. Click **Install to Workspace**
-8. Copy the **Bot User OAuth Token** (starts with `xoxb-`)
-   
+   - `app_mentions:read` - Receive @mention events (for Slack-to-GitHub bridge)
+   - `users:read` - Resolve user display names (for GitHub comment attribution)
+7. Navigate to **Event Subscriptions**:
+   - Enable Events: **On**
+   - Request URL: `https://api.{your-domain}/slack/events` (Slack will send a challenge — the orchestrator responds automatically)
+   - Under **Subscribe to bot events**, add: `app_mention`
+   - Click **Save Changes**
+8. Navigate to **Basic Information** and copy the **Signing Secret**
+
+   ⚠️ **Save this signing secret securely** - you'll need it as the `SLACK_SIGNING_SECRET` env var
+9. Navigate back to **OAuth & Permissions**
+10. Click **Install to Workspace** (or **Reinstall** if updating an existing app)
+11. Copy the **Bot User OAuth Token** (starts with `xoxb-`)
+
    ⚠️ **Save this token securely** - you'll need it in Step 4
 
 ---
@@ -171,6 +183,40 @@ sqlite3 /path/to/orchestrator.db ".tables"
 
 ---
 
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `SLACK_SIGNING_SECRET` | For Slack-to-GitHub bridge | Signing secret from Slack app's Basic Information page. Used to verify incoming Events API requests. If empty, the `/slack/events` endpoint rejects all requests. |
+
+Set this on the orchestrator host (e.g. in the systemd unit or cloud-init).
+
+---
+
+## Bi-Directional Flow: Slack-to-GitHub Comments
+
+When a user **@mentions the ProductBuilder bot** in a tracked Slack thread, the message is forwarded as a GitHub comment on the linked Issue or PR.
+
+### How it works
+
+```
+Slack thread (tracked)                GitHub Issue/PR
+  @ProductBuilder fix alignment  -->  Comment: "@Alice via Slack: fix alignment"
+  (plain reply without @mention) -->  (ignored, stays in Slack only)
+```
+
+- Only `@ProductBuilder` mentions in **tracked threads** (threads created by the bot for an Issue/PR) are forwarded.
+- Plain thread replies without a bot mention are never forwarded — the team can discuss freely in Slack.
+- The bot mention (`<@UBOTID>`) is stripped from the text before posting to GitHub.
+- The GitHub comment includes attribution (`**@DisplayName** via Slack:`) and a `<!-- via-slack -->` marker.
+- The marker prevents the resulting GitHub webhook from echoing back to Slack (loop prevention).
+
+### Which GitHub number is used?
+
+The thread's `slack_threads` record tracks both `github_issue_id` and `github_pr_id`. When both are set (PR phase), the comment is posted on the PR. Otherwise it goes to the Issue.
+
+---
+
 ## Configuration Reference
 
 ### TargetConfig Fields
@@ -284,7 +330,13 @@ n.debouncer.Debounce(key, 2*time.Second, func() { ... })
 **Q: Can I use different channels for Issues vs PRs?**  
 A: Not currently. One channel per repo handles both.
 
-**Q: Can I thread comments from PR reviews?**  
+**Q: Can I post comments from Slack to GitHub?**
+A: Yes. @mention the ProductBuilder bot in a tracked thread and the message (minus the mention) is posted as a GitHub comment with your Slack display name. Plain thread replies are not forwarded.
+
+**Q: Will Slack-to-GitHub comments echo back to Slack?**
+A: No. Comments posted from Slack include a `<!-- via-slack -->` marker. The GitHub webhook handler detects this marker and skips the Slack notification, preventing loops.
+
+**Q: Can I thread comments from PR reviews?**
 A: Currently only handles `issue_comment` events (which includes PR comments). Review comments are not yet supported.
 
 **Q: What happens if Slack is down?**  

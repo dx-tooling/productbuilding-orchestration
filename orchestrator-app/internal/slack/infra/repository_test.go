@@ -202,6 +202,62 @@ func TestRepository_DuplicatePrevention(t *testing.T) {
 	}
 }
 
+func TestRepository_FindThreadBySlackTs(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewSQLiteRepository(db)
+	ctx := context.Background()
+
+	thread := &domain.SlackThread{
+		ID:            "test-id-ts-1",
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		GithubIssueID: 42,
+		SlackChannel:  "#productbuilding-test",
+		SlackThreadTs: "1111111111.111111",
+		ThreadType:    "issue",
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+
+	if err := repo.SaveThread(ctx, thread); err != nil {
+		t.Fatalf("SaveThread() error = %v", err)
+	}
+
+	// Find by Slack thread timestamp
+	found, err := repo.FindThreadBySlackTs(ctx, "1111111111.111111")
+	if err != nil {
+		t.Fatalf("FindThreadBySlackTs() error = %v", err)
+	}
+
+	if found.ID != thread.ID {
+		t.Errorf("ID = %v, want %v", found.ID, thread.ID)
+	}
+	if found.GithubIssueID != 42 {
+		t.Errorf("GithubIssueID = %v, want 42", found.GithubIssueID)
+	}
+	if found.RepoOwner != "luminor-project" {
+		t.Errorf("RepoOwner = %v, want luminor-project", found.RepoOwner)
+	}
+}
+
+func TestRepository_FindThreadBySlackTs_NotFound(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewSQLiteRepository(db)
+	ctx := context.Background()
+
+	found, err := repo.FindThreadBySlackTs(ctx, "9999999999.999999")
+	if err == nil {
+		t.Error("FindThreadBySlackTs() expected error for non-existent thread, got nil")
+	}
+	if found != nil {
+		t.Error("FindThreadBySlackTs() expected nil for non-existent thread")
+	}
+}
+
 func TestRepository_UpdateThread(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()

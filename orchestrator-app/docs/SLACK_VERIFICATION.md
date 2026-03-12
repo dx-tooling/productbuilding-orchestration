@@ -11,7 +11,9 @@ Before testing, confirm these are in place:
 - [ ] GitHub webhook configured with `issues`, `pull_request`, and `issue_comment` events
 - [ ] `targets.json` includes `slack_channel` and `slack_bot_token`
 - [ ] Orchestrator deployed with latest migrations (includes `slack_threads` table)
-- [ ] Bot token has required scopes: `chat:write`, `chat:write.public`, `reactions:write`
+- [ ] Bot token has required scopes: `chat:write`, `chat:write.public`, `reactions:write`, `app_mentions:read`, `users:read`
+- [ ] Event Subscriptions enabled with `app_mention` event subscribed
+- [ ] `SLACK_SIGNING_SECRET` env var set on the orchestrator host
 
 ---
 
@@ -167,7 +169,35 @@ Before testing, confirm these are in place:
 
 ---
 
-### Test 8: Multiple Repos (if applicable)
+### Test 8: Slack-to-GitHub Comment (@mention)
+**Purpose**: Verify @mentioning the bot in a tracked thread posts a GitHub comment
+
+**Steps**:
+1. Find a tracked Slack thread (one created by the bot for an Issue or PR)
+2. Reply in the thread with: `@ProductBuilder please fix the alignment`
+3. Check the GitHub Issue/PR page
+
+**Expected Result**:
+- [ ] A new comment appears on the GitHub Issue/PR
+- [ ] Comment format: `**@YourDisplayName** via Slack:` followed by the message text
+- [ ] The bot mention is NOT included in the GitHub comment text
+- [ ] The comment contains a `<!-- via-slack -->` HTML marker (view source)
+- [ ] The GitHub comment does NOT echo back to Slack (loop prevention)
+
+**Negative Cases**:
+- [ ] A plain thread reply (no @mention) does NOT create a GitHub comment
+- [ ] An @mention in a non-tracked thread does NOT create a GitHub comment
+- [ ] An @mention outside a thread (top-level channel mention) does NOT create a GitHub comment
+
+**Troubleshooting**:
+- Check orchestrator logs for "posted github comment from slack" or errors
+- Verify `SLACK_SIGNING_SECRET` is set and matches the Slack app's signing secret
+- Verify Event Subscriptions are enabled with `app_mention` subscribed
+- Verify bot has `app_mentions:read` and `users:read` scopes
+
+---
+
+### Test 9: Multiple Repos (if applicable)
 **Purpose**: Verify isolation between repos
 
 **Steps**:
@@ -280,6 +310,7 @@ Once all tests pass, have team lead sign off:
 | PR Closure | ✅ / ❌ | |
 | Debouncing | ✅ / ❌ | |
 | Issue Closure | ✅ / ❌ | |
+| Slack-to-GitHub @mention | ✅ / ❌ | |
 | Multi-Repo | ✅ / ❌ | (if applicable) |
 
 **Integration Verified By**: _________________  **Date**: _________

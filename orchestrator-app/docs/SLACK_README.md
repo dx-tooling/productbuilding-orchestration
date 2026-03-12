@@ -13,7 +13,9 @@ This directory contains comprehensive documentation for integrating Slack with t
 
 ### 1. Create Slack Bot
 - Go to https://api.slack.com/apps
-- Create app, add scopes: `chat:write`, `chat:write.public`, `reactions:write`
+- Create app, add scopes: `chat:write`, `chat:write.public`, `reactions:write`, `app_mentions:read`, `users:read`
+- Enable Event Subscriptions: subscribe to `app_mention`, set Request URL to `https://api.{domain}/slack/events`
+- Copy **Signing Secret** from Basic Information (set as `SLACK_SIGNING_SECRET` env var)
 - Install to workspace, copy bot token (starts with `xoxb-`)
 
 ### 2. Create Channel
@@ -45,14 +47,21 @@ GitHub Webhook → Orchestrator → Slack API
      ↓                ↓              ↓
    Issue/PR      Notifier       Channel Thread
    Comment       Debouncer      Emoji Reactions
+
+Slack @mention → Orchestrator → GitHub API
+     ↓                ↓              ↓
+  app_mention    Event Handler   Issue/PR Comment
+  (in thread)    Signature Check  (with attribution)
 ```
 
 **Key Features**:
+- **Bi-Directional**: GitHub → Slack (automatic), Slack → GitHub (via @mention)
 - **One Channel Per Repo**: Manual setup for control
 - **One Thread Per Issue/PR**: All activity grouped
 - **Debounced Updates**: 2-second window prevents spam
 - **Non-Blocking**: Slack failures don't affect orchestrator
 - **Emoji Status**: 🔄 Building → ✅ Ready → ❌ Failed
+- **Loop Prevention**: Comments from Slack include a marker to prevent echo
 
 ## ⚙️ Configuration
 
@@ -88,6 +97,7 @@ Follow the comprehensive test suite in [SLACK_VERIFICATION.md](./SLACK_VERIFICAT
 | Duplicate threads | Run database migrations |
 | Missing emoji reactions | Add `reactions:write` scope |
 | Webhook errors | Verify secret in targets.json |
+| @mention not forwarding | Check `SLACK_SIGNING_SECRET` env var and `app_mentions:read` scope |
 
 See [SLACK_VERIFICATION.md](./SLACK_VERIFICATION.md) for full troubleshooting guide.
 

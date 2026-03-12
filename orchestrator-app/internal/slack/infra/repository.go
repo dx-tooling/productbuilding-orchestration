@@ -16,6 +16,7 @@ type Repository interface {
 	FindThread(ctx context.Context, repoOwner, repoName string, issueNumber int) (*domain.SlackThread, error)
 	FindThreadByPR(ctx context.Context, repoOwner, repoName string, prNumber int) (*domain.SlackThread, error)
 	FindThreadByNumber(ctx context.Context, repoOwner, repoName string, number int) (*domain.SlackThread, error)
+	FindThreadBySlackTs(ctx context.Context, threadTs string) (*domain.SlackThread, error)
 }
 
 // SQLiteRepository implements Repository using SQLite
@@ -100,6 +101,20 @@ func (r *SQLiteRepository) FindThreadByNumber(ctx context.Context, repoOwner, re
 		FROM slack_threads
 		WHERE repo_owner = ? AND repo_name = ? AND (github_issue_id = ? OR github_pr_id = ?)`,
 		repoOwner, repoName, number, number,
+	)
+
+	return scanThread(row)
+}
+
+// FindThreadBySlackTs finds a thread by its Slack thread timestamp
+func (r *SQLiteRepository) FindThreadBySlackTs(ctx context.Context, threadTs string) (*domain.SlackThread, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, repo_owner, repo_name, github_issue_id, github_pr_id,
+		       slack_channel, slack_thread_ts, slack_parent_ts, thread_type,
+		       created_at, updated_at
+		FROM slack_threads
+		WHERE slack_thread_ts = ?`,
+		threadTs,
 	)
 
 	return scanThread(row)

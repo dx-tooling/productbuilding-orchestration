@@ -105,6 +105,8 @@ mise run infra-apply        # Creates webhook, Secrets Manager entry, GitHub Act
 mise run deploy             # Redeploy orchestrator to load new target (REQUIRED)
 ```
 
+If you want Slack-to-GitHub comment bridging (@mention forwarding), also ensure `SLACK_SIGNING_SECRET` is set on the orchestrator host (the signing secret from the Slack app's Basic Information page). See `orchestrator-app/docs/SLACK_INTEGRATION.md` for full Slack app setup including Event Subscriptions.
+
 Then manually:
 
 1. Install the OpenCode GitHub App on the repo: https://github.com/apps/opencode-agent

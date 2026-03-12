@@ -94,6 +94,62 @@ func (c *Client) RemoveReaction(ctx context.Context, botToken, channel, timestam
 	return err
 }
 
+// userInfoResponse represents the Slack users.info API response
+type userInfoResponse struct {
+	OK   bool `json:"ok"`
+	User struct {
+		Profile struct {
+			DisplayName string `json:"display_name"`
+			RealName    string `json:"real_name"`
+		} `json:"profile"`
+	} `json:"user"`
+	Error string `json:"error,omitempty"`
+}
+
+// GetUserInfo resolves a Slack user ID to their display name
+func (c *Client) GetUserInfo(ctx context.Context, botToken, userID string) (string, error) {
+	url := c.baseURL + "/users.info?user=" + userID
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+botToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("slack api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("slack api returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var userResp userInfoResponse
+	if err := json.Unmarshal(respBody, &userResp); err != nil {
+		return "", fmt.Errorf("parse response: %w", err)
+	}
+
+	if !userResp.OK {
+		return "", fmt.Errorf("slack api error: %s", userResp.Error)
+	}
+
+	name := userResp.User.Profile.DisplayName
+	if name == "" {
+		name = userResp.User.Profile.RealName
+	}
+
+	return name, nil
+}
+
 // post makes a POST request to the Slack API
 func (c *Client) post(ctx context.Context, botToken, endpoint string, payload interface{}) (string, error) {
 	url := c.baseURL + endpoint

@@ -20,6 +20,7 @@ import (
 	// Slack vertical
 	slackdomain "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/domain"
 	slackinfra "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/infra"
+	slackweb "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/web"
 
 	// Platform
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/config"
@@ -95,6 +96,10 @@ func main() {
 	dashboardweb.RegisterRoutes(mux, previewService)
 	previewweb.RegisterRoutes(mux, previewService)
 	githubweb.RegisterRoutes(mux, registry, previewService, slackNotifier)
+
+	// Register Slack Events API routes (for @mention → GitHub comment bridge)
+	slackHandler := slackweb.NewHandler(slackRepo, githubClient, slackClient, registry, cfg.SlackSigningSecret)
+	slackweb.RegisterRoutes(mux, slackHandler)
 
 	// ── Health Endpoints (outside application middleware) ───────────────
 	topMux := http.NewServeMux()
