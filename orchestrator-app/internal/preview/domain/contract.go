@@ -10,11 +10,12 @@ import (
 
 // PreviewContract describes how to build and run a preview for a target repo.
 type PreviewContract struct {
-	Version  int             `yaml:"version"`
-	Compose  ComposeConfig   `yaml:"compose"`
-	Runtime  RuntimeConfig   `yaml:"runtime"`
-	Database *DatabaseConfig `yaml:"database"`
-	Logging  *LoggingConfig  `yaml:"logging"`
+	Version        int             `yaml:"version"`
+	Compose        ComposeConfig   `yaml:"compose"`
+	Runtime        RuntimeConfig   `yaml:"runtime"`
+	Database       *DatabaseConfig `yaml:"database"`
+	Logging        *LoggingConfig  `yaml:"logging"`
+	UserFacingNote string          `yaml:"user_facing_note"`
 }
 
 type ComposeConfig struct {

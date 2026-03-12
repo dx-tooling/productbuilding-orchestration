@@ -132,6 +132,9 @@ runtime:
 #   service: app           # Which compose service has the logs
 #   type: docker           # "docker" for stdout/stderr (default), "file" for file-based logs
 #   path: /var/log/*.log   # Required when type="file" - path inside container
+
+# Optional: add a note that will be shown in PR comments (e.g., test credentials, important info)
+# user_facing_note: "Test login: admin / secret"
 CONFIGEOF
         echo "  Created .productbuilding/preview/config.yml"
     else

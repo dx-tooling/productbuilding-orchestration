@@ -201,6 +201,9 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 		return
 	}
 
+	// Add user-facing note from contract to meta
+	meta.UserFacingNote = contract.UserFacingNote
+
 	// 5. Generate compose override with Traefik labels
 	routerName := fmt.Sprintf("%s-pr-%d", req.RepoName, req.PRNumber)
 	host := fmt.Sprintf("%s-pr-%d.%s", req.RepoName, req.PRNumber, s.previewDomain)
@@ -351,13 +354,14 @@ func (s *Service) updateComment(ctx context.Context, p *Preview, body, pat strin
 
 // commentMeta holds the repo context needed to build GitHub links in comments.
 type commentMeta struct {
-	Owner        string
-	Repo         string
-	SHA          string // full SHA
-	Branch       string
-	PreviewURL   string
-	LogsURL      string
-	AnimationURL string
+	Owner          string
+	Repo           string
+	SHA            string // full SHA
+	Branch         string
+	PreviewURL     string
+	LogsURL        string
+	AnimationURL   string
+	UserFacingNote string // Optional note from the preview contract
 }
 
 func (m commentMeta) commitLink() string {
@@ -387,6 +391,11 @@ func progressComment(title string, meta commentMeta, completedSteps int, statusL
 		}
 	}
 
+	// Add user-facing note if present
+	if meta.UserFacingNote != "" {
+		fmt.Fprintf(&b, "\n> **Note:** %s\n", meta.UserFacingNote)
+	}
+
 	if completedSteps < numSteps && meta.AnimationURL != "" {
 		fmt.Fprintf(&b, "\n<table><tr><td><img src=\"%s\" width=\"64\" height=\"64\" /></td><td valign=\"middle\">%s</td></tr></table>", meta.AnimationURL, statusLine)
 	} else {
@@ -408,6 +417,11 @@ func failedProgressComment(meta commentMeta, completedSteps int, stage, message 
 		} else {
 			fmt.Fprintf(&b, "- [ ] %s\n", stepLabels[i])
 		}
+	}
+
+	// Add user-facing note if present
+	if meta.UserFacingNote != "" {
+		fmt.Fprintf(&b, "\n> **Note:** %s\n", meta.UserFacingNote)
 	}
 
 	fmt.Fprintf(&b, "\nFailed at `%s`:\n\n```\n%s\n```", stage, message)
