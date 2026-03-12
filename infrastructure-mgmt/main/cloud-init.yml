@@ -64,6 +64,17 @@ AWS_HOSTED_ZONE_ID=$HOSTED_ZONE_ID
 PREVIEW_DOMAIN=$PREVIEW_DOMAIN
 ENVEOF
 
+      echo "=== Fetching Slack signing secret (if configured) ==="
+      SLACK_SIGNING_SECRET=$(aws secretsmanager get-secret-value \
+        --region "$AWS_REGION" \
+        --secret-id "$PROJECT_PREFIX/slack-signing-secret" \
+        --query "SecretString" \
+        --output text 2>/dev/null || echo "")
+      if [[ -n "$SLACK_SIGNING_SECRET" ]]; then
+        echo "SLACK_SIGNING_SECRET=$SLACK_SIGNING_SECRET" >> /opt/orchestrator/repo/.env
+        echo "=== Slack signing secret loaded ==="
+      fi
+
       echo "=== Fetching target secrets from Secrets Manager ==="
       TARGETS="[]"
       for secret_name in $(aws secretsmanager list-secrets \

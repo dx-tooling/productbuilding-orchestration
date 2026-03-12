@@ -1,4 +1,17 @@
-# Per-target-repo resources: Secrets Manager secrets, GitHub webhooks, GitHub Actions secrets
+# ── Workspace-level Slack secret ─────────────────────────────────
+
+resource "aws_secretsmanager_secret" "slack_signing_secret" {
+  count = var.slack_signing_secret != "" ? 1 : 0
+  name  = "${var.project_prefix}/slack-signing-secret"
+}
+
+resource "aws_secretsmanager_secret_version" "slack_signing_secret" {
+  count         = var.slack_signing_secret != "" ? 1 : 0
+  secret_id     = aws_secretsmanager_secret.slack_signing_secret[0].id
+  secret_string = var.slack_signing_secret
+}
+
+# ── Per-target-repo resources: Secrets Manager secrets, GitHub webhooks, GitHub Actions secrets ──
 
 # Store each target's credentials in Secrets Manager
 resource "aws_secretsmanager_secret" "target" {

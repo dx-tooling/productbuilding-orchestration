@@ -39,6 +39,13 @@ variable "ssh_public_key" {
   type        = string
 }
 
+variable "slack_signing_secret" {
+  description = "Slack app signing secret (from Basic Information page) for verifying Events API requests"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "targets" {
   description = "Map of target repositories to manage"
   type = map(object({

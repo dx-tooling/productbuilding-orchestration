@@ -21,6 +21,22 @@ mise run ssh -- 'sudo bash -c "
   echo \"Loaded \$(echo \"\$TARGETS\" | jq length) target(s)\"
 "'
 
+echo "==> Refreshing Slack signing secret..."
+mise run ssh -- 'sudo bash -c "
+  REGION=\$(grep AWS_REGION /opt/orchestrator/repo/.env | cut -d= -f2)
+  SECRET=\$(aws secretsmanager get-secret-value --region \"\$REGION\" \
+    --secret-id productbuilder/slack-signing-secret \
+    --query SecretString --output text 2>/dev/null || echo \"\")
+  # Remove old value (if any) and append current
+  sed -i /^SLACK_SIGNING_SECRET=/d /opt/orchestrator/repo/.env
+  if [ -n \"\$SECRET\" ]; then
+    echo \"SLACK_SIGNING_SECRET=\$SECRET\" >> /opt/orchestrator/repo/.env
+    echo \"Slack signing secret loaded\"
+  else
+    echo \"No Slack signing secret configured (skipped)\"
+  fi
+"'
+
 echo "==> Rebuilding and restarting orchestrator..."
 mise run ssh -- "cd /opt/orchestrator/repo && docker compose up -d --build orchestrator"
 
