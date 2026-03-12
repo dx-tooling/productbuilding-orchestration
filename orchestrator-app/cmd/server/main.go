@@ -17,6 +17,10 @@ import (
 	previewinfra "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/preview/infra"
 	previewweb "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/preview/web"
 
+	// Slack vertical
+	slackdomain "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/domain"
+	slackinfra "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/infra"
+
 	// Platform
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/config"
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/database"
@@ -76,13 +80,20 @@ func main() {
 		cfg.WorkspaceDir,
 	)
 
+	// ── Build Slack Notifier (initialized but lazy-loaded per target) ────
+	slackRepo := slackinfra.NewSQLiteRepository(db)
+	slackDebouncer := slackinfra.NewDebouncer()
+	// Bot token will be loaded per target from TargetConfig.SlackBotToken
+	slackClient := slackdomain.NewClient("")
+	slackNotifier := slackdomain.NewNotifier(slackClient, slackRepo, slackDebouncer)
+
 	// ── Build HTTP Routes ──────────────────────────────────────────────
 	mux := http.NewServeMux()
 
 	// Register vertical routes
 	dashboardweb.RegisterRoutes(mux, previewService)
 	previewweb.RegisterRoutes(mux, previewService)
-	githubweb.RegisterRoutes(mux, registry, previewService)
+	githubweb.RegisterRoutes(mux, registry, previewService, slackNotifier)
 
 	// ── Health Endpoints (outside application middleware) ───────────────
 	topMux := http.NewServeMux()

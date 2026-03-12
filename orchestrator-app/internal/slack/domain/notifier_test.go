@@ -2,11 +2,13 @@ package domain
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
+	slackfacade "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/facade"
 )
 
 // Mock implementations for testing
@@ -88,7 +90,7 @@ func newMockRepository() *mockRepository {
 func (m *mockRepository) SaveThread(ctx context.Context, thread *SlackThread) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := thread.RepoOwner + "/" + thread.RepoName + "#" + string(rune('0'+thread.GithubIssueID))
+	key := fmt.Sprintf("%s/%s#%d", thread.RepoOwner, thread.RepoName, thread.GithubIssueID)
 	m.threads[key] = thread
 	return nil
 }
@@ -96,7 +98,7 @@ func (m *mockRepository) SaveThread(ctx context.Context, thread *SlackThread) er
 func (m *mockRepository) FindThread(ctx context.Context, repoOwner, repoName string, issueNumber int) (*SlackThread, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := repoOwner + "/" + repoName + "#" + string(rune('0'+issueNumber))
+	key := fmt.Sprintf("%s/%s#%d", repoOwner, repoName, issueNumber)
 	thread, ok := m.threads[key]
 	if !ok {
 		return nil, nil // Simulate not found
@@ -107,7 +109,7 @@ func (m *mockRepository) FindThread(ctx context.Context, repoOwner, repoName str
 func (m *mockRepository) FindThreadByPR(ctx context.Context, repoOwner, repoName string, prNumber int) (*SlackThread, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := repoOwner + "/" + repoName + "#" + string(rune('0'+prNumber)) + "-pr"
+	key := fmt.Sprintf("%s/%s#%d-pr", repoOwner, repoName, prNumber)
 	thread, ok := m.threads[key]
 	if !ok {
 		return nil, nil
@@ -172,8 +174,8 @@ func TestNotifier_Notify_NewThread(t *testing.T) {
 		SlackBotToken: "xoxb-test",
 	}
 
-	event := NotificationEvent{
-		Type:        EventIssueOpened,
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventIssueOpened,
 		RepoOwner:   "luminor-project",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
@@ -231,8 +233,8 @@ func TestNotifier_Notify_ExistingThread(t *testing.T) {
 	repo.SaveThread(context.Background(), existingThread)
 
 	// First message creates parent
-	event1 := NotificationEvent{
-		Type:        EventIssueOpened,
+	event1 := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventIssueOpened,
 		RepoOwner:   "luminor-project",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
@@ -242,8 +244,8 @@ func TestNotifier_Notify_ExistingThread(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Second message should post to existing thread
-	event2 := NotificationEvent{
-		Type:        EventCommentAdded,
+	event2 := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventCommentAdded,
 		RepoOwner:   "luminor-project",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
@@ -277,8 +279,8 @@ func TestNotifier_Notify_NoSlackConfig(t *testing.T) {
 		// No SlackChannel or SlackBotToken
 	}
 
-	event := NotificationEvent{
-		Type:        EventIssueOpened,
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventIssueOpened,
 		RepoOwner:   "luminor-project",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
@@ -321,8 +323,8 @@ func TestNotifier_Notify_EmojiReaction(t *testing.T) {
 	repo.SaveThread(context.Background(), existingThread)
 
 	// First create the thread with PR opened
-	event1 := NotificationEvent{
-		Type:        EventPROpened,
+	event1 := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventPROpened,
 		RepoOwner:   "luminor-project",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
@@ -332,8 +334,8 @@ func TestNotifier_Notify_EmojiReaction(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Now send PR ready with emoji reaction (thread exists now)
-	event2 := NotificationEvent{
-		Type:        EventPRReady,
+	event2 := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventPRReady,
 		Emoji:       "white_check_mark",
 		ThreadTs:    "parent-ts-123",
 		RepoOwner:   "luminor-project",
@@ -374,8 +376,8 @@ func TestNotifier_Notify_Debouncing(t *testing.T) {
 
 	// Send multiple rapid notifications (they get buffered, not executed)
 	for i := 0; i < 5; i++ {
-		event := NotificationEvent{
-			Type:        EventPROpened,
+		event := slackfacade.NotificationEvent{
+			Type:        slackfacade.EventPROpened,
 			RepoOwner:   "luminor-project",
 			RepoName:    "test-repo",
 			IssueNumber: 42,
@@ -410,13 +412,13 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		event    NotificationEvent
+		event    slackfacade.NotificationEvent
 		contains string
 	}{
 		{
 			name: "PR ready with user note",
-			event: NotificationEvent{
-				Type:        EventPRReady,
+			event: slackfacade.NotificationEvent{
+				Type:        slackfacade.EventPRReady,
 				RepoOwner:   "luminor-project",
 				RepoName:    "test-repo",
 				IssueNumber: 42,
@@ -428,8 +430,8 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 		},
 		{
 			name: "Preview failed",
-			event: NotificationEvent{
-				Type:        EventPRFailed,
+			event: slackfacade.NotificationEvent{
+				Type:        slackfacade.EventPRFailed,
 				RepoOwner:   "luminor-project",
 				RepoName:    "test-repo",
 				IssueNumber: 42,
@@ -439,8 +441,8 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 		},
 		{
 			name: "Comment with link",
-			event: NotificationEvent{
-				Type:        EventCommentAdded,
+			event: slackfacade.NotificationEvent{
+				Type:        slackfacade.EventCommentAdded,
 				RepoOwner:   "luminor-project",
 				RepoName:    "test-repo",
 				IssueNumber: 42,

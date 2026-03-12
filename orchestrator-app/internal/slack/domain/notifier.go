@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
+	slackfacade "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/facade"
 )
 
 // SlackClient defines the interface for Slack API operations (matches *Client)
@@ -37,8 +38,8 @@ type Notifier struct {
 	client     SlackClient
 	repository ThreadRepository
 	debouncer  Debouncer
-	buffer     map[string]*NotificationEvent // key: channel#issue -> latest event
-	reactions  map[string]string             // threadTs -> current emoji
+	buffer     map[string]*slackfacade.NotificationEvent // key: channel#issue -> latest event
+	reactions  map[string]string                         // threadTs -> current emoji
 	mu         sync.Mutex
 }
 
@@ -48,13 +49,13 @@ func NewNotifier(client SlackClient, repository ThreadRepository, debouncer Debo
 		client:     client,
 		repository: repository,
 		debouncer:  debouncer,
-		buffer:     make(map[string]*NotificationEvent),
+		buffer:     make(map[string]*slackfacade.NotificationEvent),
 		reactions:  make(map[string]string),
 	}
 }
 
 // Notify sends a notification to Slack (debounced)
-func (n *Notifier) Notify(ctx context.Context, event NotificationEvent, target targets.TargetConfig) error {
+func (n *Notifier) Notify(ctx context.Context, event slackfacade.NotificationEvent, target targets.TargetConfig) error {
 	// Silently skip if no Slack config
 	if target.SlackChannel == "" || target.SlackBotToken == "" {
 		return nil
@@ -168,7 +169,7 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 }
 
 // formatParentMessage creates the initial thread message
-func formatParentMessage(event NotificationEvent) MessageBlock {
+func formatParentMessage(event slackfacade.NotificationEvent) MessageBlock {
 	emoji := "📝"
 	if event.IsPR() {
 		emoji = "🔀"
@@ -186,11 +187,11 @@ func formatParentMessage(event NotificationEvent) MessageBlock {
 }
 
 // formatEventMessage formats an update message for a thread
-func formatEventMessage(event NotificationEvent) MessageBlock {
+func formatEventMessage(event slackfacade.NotificationEvent) MessageBlock {
 	var text string
 
 	switch event.Type {
-	case EventPRReady:
+	case slackfacade.EventPRReady:
 		lines := []string{
 			fmt.Sprintf("✅ *Preview ready*"),
 			fmt.Sprintf("🔗 <%s|Open Preview>", event.PreviewURL),
@@ -203,13 +204,13 @@ func formatEventMessage(event NotificationEvent) MessageBlock {
 		}
 		text = strings.Join(lines, "\n")
 
-	case EventPRFailed:
+	case slackfacade.EventPRFailed:
 		text = fmt.Sprintf("❌ *Preview failed*\n> Stage: `%s`", event.Status)
 
-	case EventPROpened, EventIssueOpened:
+	case slackfacade.EventPROpened, slackfacade.EventIssueOpened:
 		text = fmt.Sprintf("👤 Opened by @%s", event.Author)
 
-	case EventCommentAdded:
+	case slackfacade.EventCommentAdded:
 		preview := truncate(event.Body, 150)
 		url := event.CommentURL()
 		if url != "" {
@@ -218,13 +219,13 @@ func formatEventMessage(event NotificationEvent) MessageBlock {
 			text = fmt.Sprintf("💬 @%s: %s", event.Author, preview)
 		}
 
-	case EventPRMerged:
+	case slackfacade.EventPRMerged:
 		text = "🎉 *Merged* — Preview will be removed shortly"
 
-	case EventIssueClosed:
+	case slackfacade.EventIssueClosed:
 		text = "✅ *Closed*"
 
-	case EventPRClosed:
+	case slackfacade.EventPRClosed:
 		text = "🔒 *Closed* — Preview removed"
 
 	default:

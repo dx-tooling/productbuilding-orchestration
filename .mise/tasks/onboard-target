@@ -61,6 +61,61 @@ if [[ -z "$FIREWORKS_API_KEY" ]]; then
     exit 1
 fi
 
+# --- Slack Integration (optional) ---
+
+echo ""
+echo "  Slack Integration — mirror GitHub activity to Slack channels."
+echo ""
+echo "  This creates Slack threads for Issues and PRs with real-time updates."
+echo "  See docs/SLACK_INTEGRATION.md for full setup instructions."
+echo ""
+
+read -rp "Enable Slack integration? [y/N]: " ENABLE_SLACK
+ENABLE_SLACK="${ENABLE_SLACK:-n}"
+
+if [[ "$ENABLE_SLACK" =~ ^[Yy]$ ]]; then
+    echo ""
+    echo "  Slack Bot Token — required to post messages to channels."
+    echo ""
+    echo "  Create a Slack app at: https://api.slack.com/apps"
+    echo "  Required scopes: chat:write, chat:write.public, reactions:write"
+    echo "  Install the app to your workspace, then copy the Bot User OAuth Token."
+    echo ""
+    read -rp "Slack Bot Token (xoxb-...): " SLACK_BOT_TOKEN
+    if [[ -z "$SLACK_BOT_TOKEN" ]]; then
+        echo "Warning: Slack Bot Token not provided. Skipping Slack integration." >&2
+        ENABLE_SLACK="n"
+    fi
+    
+    if [[ "$ENABLE_SLACK" =~ ^[Yy]$ ]]; then
+        echo ""
+        echo "  Slack Channel — where notifications will be posted."
+        echo ""
+        echo "  IMPORTANT: You must manually create this channel in Slack first!"
+        echo "  Recommended naming: #productbuilding-{repo-name}"
+        echo "  Example: For repo 'webapp', create channel #productbuilding-webapp"
+        echo ""
+        read -rp "Slack channel name (e.g., #productbuilding-${REPO_NAME}): " SLACK_CHANNEL
+        if [[ -z "$SLACK_CHANNEL" ]]; then
+            SLACK_CHANNEL="#productbuilding-${REPO_NAME}"
+            echo "Using default: $SLACK_CHANNEL"
+        fi
+        
+        # Validate channel name format
+        if [[ ! "$SLACK_CHANNEL" =~ ^# ]]; then
+            SLACK_CHANNEL="#${SLACK_CHANNEL}"
+            echo "Added # prefix: $SLACK_CHANNEL"
+        fi
+        
+        echo ""
+        echo "✅ Slack integration configured for channel: $SLACK_CHANNEL"
+        echo "   Remember to invite the bot to this channel after deployment!"
+        echo "   Run: /invite @ProductBuilder Bot"
+    fi
+else
+    echo "Skipping Slack integration (can be enabled later)"
+fi
+
 # --- Local clone path (optional, for scaffolding) ---
 
 echo ""
@@ -86,13 +141,25 @@ if [[ ! -f "$TFVARS_FILE" ]]; then
     echo '}' >> "$TFVARS_FILE"
 fi
 
-ENTRY="  \"$REPO_NAME\" = {
+if [[ "$ENABLE_SLACK" =~ ^[Yy]$ ]]; then
+  ENTRY="  \"$REPO_NAME\" = {
+    repo_owner        = \"$REPO_OWNER\"
+    repo_name         = \"$REPO_NAME\"
+    github_pat        = \"$GITHUB_PAT\"
+    webhook_secret    = \"$WEBHOOK_SECRET\"
+    fireworks_api_key = \"$FIREWORKS_API_KEY\"
+    slack_channel     = \"$SLACK_CHANNEL\"
+    slack_bot_token   = \"$SLACK_BOT_TOKEN\"
+  }"
+else
+  ENTRY="  \"$REPO_NAME\" = {
     repo_owner        = \"$REPO_OWNER\"
     repo_name         = \"$REPO_NAME\"
     github_pat        = \"$GITHUB_PAT\"
     webhook_secret    = \"$WEBHOOK_SECRET\"
     fireworks_api_key = \"$FIREWORKS_API_KEY\"
   }"
+fi
 
 # Remove trailing } , add the entry, re-add }
 sed -i.bak '$ d' "$TFVARS_FILE"
@@ -263,6 +330,18 @@ echo "Next steps:"
 echo "  1. mise run secrets-encrypt && mise run infra-apply"
 echo "  2. Install the OpenCode GitHub App on the repo:"
 echo "     https://github.com/apps/opencode-agent"
+if [[ "$ENABLE_SLACK" =~ ^[Yy]$ ]]; then
+    echo ""
+    echo "  📱 Slack Integration Setup:"
+    echo "     a. Create Slack channel: $SLACK_CHANNEL"
+    echo "     b. Invite bot to channel: /invite @ProductBuilder Bot"
+    echo "     c. Configure GitHub webhook (see docs/SLACK_INTEGRATION.md)"
+    echo "     d. Test: Create an Issue and verify Slack notification"
+    echo ""
+    echo "  📚 Documentation:"
+    echo "     Full guide: docs/SLACK_INTEGRATION.md"
+    echo "     Verification checklist: docs/SLACK_VERIFICATION.md"
+fi
 if [[ -n "$TARGET_REPO_PATH" ]]; then
     echo "  3. Review and customize the scaffolded files, then commit and push"
 else

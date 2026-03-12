@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -9,17 +10,36 @@ import (
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/github/domain"
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
 	previewdomain "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/preview/domain"
+	slackfacade "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/facade"
 )
 
-type Handler struct {
-	registry       *targets.Registry
-	previewService *previewdomain.Service
+// Notifier defines the interface for Slack notifications
+type Notifier interface {
+	Notify(ctx context.Context, event slackfacade.NotificationEvent, target targets.TargetConfig) error
 }
 
-func NewHandler(registry *targets.Registry, previewService *previewdomain.Service) *Handler {
+// Registry defines the interface for target lookup
+type Registry interface {
+	Get(repoOwner, repoName string) (targets.TargetConfig, bool)
+}
+
+// PreviewService defines the interface for preview operations
+type PreviewService interface {
+	DeployPreview(ctx context.Context, req previewdomain.DeployRequest, pat string)
+	DeletePreview(ctx context.Context, req previewdomain.DeployRequest, pat string)
+}
+
+type Handler struct {
+	registry       Registry
+	previewService PreviewService
+	notifier       Notifier
+}
+
+func NewHandler(registry Registry, previewService PreviewService, notifier Notifier) *Handler {
 	return &Handler{
 		registry:       registry,
 		previewService: previewService,
+		notifier:       notifier,
 	}
 }
 
@@ -32,12 +52,21 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	eventType := r.Header.Get("X-GitHub-Event")
-	if eventType != "pull_request" {
-		slog.Debug("ignoring non-PR webhook event", "event", eventType)
-		w.WriteHeader(http.StatusOK)
-		return
-	}
 
+	switch eventType {
+	case "pull_request":
+		h.handlePullRequest(w, r, body)
+	case "issues":
+		h.handleIssue(w, r, body)
+	case "issue_comment":
+		h.handleIssueComment(w, r, body)
+	default:
+		slog.Debug("ignoring webhook event", "event", eventType)
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func (h *Handler) handlePullRequest(w http.ResponseWriter, r *http.Request, body []byte) {
 	event, err := domain.ParsePREvent(body)
 	if err != nil {
 		slog.Error("failed to parse PR event", "error", err)
@@ -69,6 +98,11 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		"sha", event.HeadSHA,
 	)
 
+	// Send Slack notification for PR opened
+	if event.Action == "opened" && h.notifier != nil {
+		go h.notifySlackPR(slackfacade.EventPROpened, event, target)
+	}
+
 	req := previewdomain.DeployRequest{
 		RepoOwner: event.RepoOwner,
 		RepoName:  event.RepoName,
@@ -84,9 +118,173 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	case "closed":
 		// Tear down preview asynchronously
 		go h.previewService.DeletePreview(context.Background(), req, target.GitHubPAT)
+		// Notify Slack about PR close
+		if h.notifier != nil {
+			go h.notifySlackPR(slackfacade.EventPRClosed, event, target)
+		}
 	default:
 		slog.Debug("ignoring PR action", "action", event.Action)
 	}
 
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) handleIssue(w http.ResponseWriter, r *http.Request, body []byte) {
+	event, err := domain.ParseIssueEvent(body)
+	if err != nil {
+		slog.Error("failed to parse issue event", "error", err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	// Look up target config for this repo
+	target, ok := h.registry.Get(event.Repository.Owner.Login, event.Repository.Name)
+	if !ok {
+		slog.Warn("webhook from unknown repo", "repo", event.Repository.Owner.Login+"/"+event.Repository.Name)
+		http.Error(w, "unknown repository", http.StatusNotFound)
+		return
+	}
+
+	// Validate webhook signature
+	sig := r.Header.Get("X-Hub-Signature-256")
+	if err := domain.ValidateSignature(body, sig, target.WebhookSecret); err != nil {
+		slog.Warn("webhook signature validation failed", "error", err)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	slog.Info("issue webhook received",
+		"action", event.Action,
+		"repo", event.Repository.Owner.Login+"/"+event.Repository.Name,
+		"issue", event.Issue.Number,
+		"title", event.Issue.Title,
+	)
+
+	// Send Slack notification
+	if h.notifier != nil {
+		var eventType slackfacade.EventType
+		switch event.Action {
+		case "opened":
+			eventType = slackfacade.EventIssueOpened
+		case "closed":
+			eventType = slackfacade.EventIssueClosed
+		case "reopened":
+			eventType = slackfacade.EventIssueReopened
+		default:
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		go h.notifySlackIssue(eventType, event, target)
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) handleIssueComment(w http.ResponseWriter, r *http.Request, body []byte) {
+	event, err := domain.ParseIssueCommentEvent(body)
+	if err != nil {
+		slog.Error("failed to parse issue comment event", "error", err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	// Only handle created comments
+	if event.Action != "created" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Look up target config for this repo
+	target, ok := h.registry.Get(event.Repository.Owner.Login, event.Repository.Name)
+	if !ok {
+		slog.Warn("webhook from unknown repo", "repo", event.Repository.Owner.Login+"/"+event.Repository.Name)
+		http.Error(w, "unknown repository", http.StatusNotFound)
+		return
+	}
+
+	// Validate webhook signature
+	sig := r.Header.Get("X-Hub-Signature-256")
+	if err := domain.ValidateSignature(body, sig, target.WebhookSecret); err != nil {
+		slog.Warn("webhook signature validation failed", "error", err)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	slog.Info("issue comment webhook received",
+		"repo", event.Repository.Owner.Login+"/"+event.Repository.Name,
+		"issue", event.Issue.Number,
+		"commenter", event.Comment.User.Login,
+	)
+
+	// Send Slack notification
+	if h.notifier != nil {
+		go h.notifySlackComment(event, target)
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) notifySlackPR(eventType slackfacade.EventType, event *domain.PREvent, target targets.TargetConfig) {
+	if h.notifier == nil || target.SlackChannel == "" {
+		return
+	}
+
+	ctx := context.Background()
+	slackEvent := slackfacade.NotificationEvent{
+		Type:        eventType,
+		RepoOwner:   event.RepoOwner,
+		RepoName:    event.RepoName,
+		IssueNumber: event.PRNumber,
+		URL:         fmt.Sprintf("https://github.com/%s/%s/pull/%d", event.RepoOwner, event.RepoName, event.PRNumber),
+	}
+
+	if err := h.notifier.Notify(ctx, slackEvent, target); err != nil {
+		slog.Warn("failed to send slack notification", "error", err)
+	}
+}
+
+func (h *Handler) notifySlackIssue(eventType slackfacade.EventType, event *domain.IssueEvent, target targets.TargetConfig) {
+	if h.notifier == nil || target.SlackChannel == "" {
+		return
+	}
+
+	ctx := context.Background()
+	slackEvent := slackfacade.NotificationEvent{
+		Type:        eventType,
+		RepoOwner:   event.Repository.Owner.Login,
+		RepoName:    event.Repository.Name,
+		IssueNumber: event.Issue.Number,
+		Title:       event.Issue.Title,
+		Body:        event.Issue.Body,
+		Author:      event.Issue.User.Login,
+		URL:         fmt.Sprintf("https://github.com/%s/%s/issues/%d", event.Repository.Owner.Login, event.Repository.Name, event.Issue.Number),
+	}
+
+	if err := h.notifier.Notify(ctx, slackEvent, target); err != nil {
+		slog.Warn("failed to send slack notification", "error", err)
+	}
+}
+
+func (h *Handler) notifySlackComment(event *domain.IssueCommentEvent, target targets.TargetConfig) {
+	if h.notifier == nil || target.SlackChannel == "" {
+		return
+	}
+
+	ctx := context.Background()
+	slackEvent := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventCommentAdded,
+		RepoOwner:   event.Repository.Owner.Login,
+		RepoName:    event.Repository.Name,
+		IssueNumber: event.Issue.Number,
+		Title:       event.Issue.Title,
+		Body:        event.Comment.Body,
+		Author:      event.Comment.User.Login,
+		CommentID:   event.Comment.ID,
+		URL:         fmt.Sprintf("https://github.com/%s/%s/issues/%d", event.Repository.Owner.Login, event.Repository.Name, event.Issue.Number),
+	}
+
+	if err := h.notifier.Notify(ctx, slackEvent, target); err != nil {
+		slog.Warn("failed to send slack notification", "error", err)
+	}
 }
