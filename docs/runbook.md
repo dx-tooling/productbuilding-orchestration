@@ -99,18 +99,18 @@ For each target repository:
 
 ```bash
 mise run onboard-target     # Interactive — prompts for repo details, credentials, and local clone path
-                            # Registers the target AND scaffolds .productbuilding/, workflow, CLAUDE.md
+                            # Registers the target AND scaffolds .productbuilding/, workflow, AGENTS.md
 mise run secrets-encrypt     # Re-encrypt updated targets.auto.tfvars
 mise run infra-apply        # Creates webhook, Secrets Manager entry, GitHub Actions secret
 ```
 
 Then manually:
 
-1. Install the Claude GitHub App on the repo: https://github.com/apps/claude
+1. Install the OpenCode GitHub App on the repo: https://github.com/apps/opencode-agent
 2. Review and customize the scaffolded files in the target repo:
    - `.productbuilding/preview/config.yml` — preview contract (ports, healthcheck, migrations)
    - `.productbuilding/preview/docker-compose.yml` — preview Compose file (services, Dockerfiles)
-   - `CLAUDE.md` — project conventions for Claude Code
+   - `AGENTS.md` — project conventions for OpenCode
 3. Commit and push the scaffolded files in the target repo
 4. Commit and push the updated `secrets/*.enc` files in this repo
 
@@ -156,6 +156,6 @@ The Elastic IP remains stable, so DNS continues to work.
 mise run onboard-target     # Registers target + scaffolds files in target repo
 mise run secrets-encrypt    # Re-encrypt updated targets.auto.tfvars
 mise run infra-apply
-# Then: install Claude GitHub App, customize scaffolded files, commit + push
+# Then: install OpenCode GitHub App, customize scaffolded files, commit + push
 # Don't forget to commit the updated secrets/*.enc files
 ```

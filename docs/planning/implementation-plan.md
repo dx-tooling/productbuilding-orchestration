@@ -154,7 +154,7 @@ targets = {
     repo_name          = "etfg-app-starter-kit"
     github_pat         = "github_pat_..."
     webhook_secret     = "a1b2c3..."          # openssl rand -hex 32
-    anthropic_api_key  = "sk-ant-..."          # for Claude Code GitHub Actions
+    fireworks_api_key  = "fw-..."              # for OpenCode GitHub Actions (FireworksAI)
   }
   # Add future target repos here
 }
@@ -174,7 +174,7 @@ Target repo onboarding
 Repo owner [luminor-project]: luminor-project
 Repo name: my-new-app
 GitHub PAT (fine-grained, scoped to this repo): github_pat_...
-Anthropic API key (for Claude Code): sk-ant-...
+Fireworks API key (for OpenCode): fw-...
 Local repo clone path: /Users/me/git/my-new-app
 Generating webhook secret... done (e4f8a1...)
 
@@ -183,29 +183,29 @@ Appending to main/targets.auto.tfvars... done.
 Scaffolding target repo at /Users/me/git/my-new-app...
   Created .productbuilding/preview/config.yml (edit to match your app)
   Created .productbuilding/preview/docker-compose.yml (edit to match your app)
-  Created .github/workflows/claude.yml
-  Created CLAUDE.md (starter template — customize for your project)
+  Created .github/workflows/opencode.yml
+  Created AGENTS.md (starter template — customize for your project)
 
 Next steps:
   1. mise run infra-apply
-  2. Install the Claude GitHub App on the repo:
-     https://github.com/apps/claude
+  2. Install the OpenCode GitHub App on the repo:
+     https://github.com/apps/opencode-agent
   3. Review and customize the scaffolded files, then commit and push
 ```
 
 The script:
 
-1. Prompts for repo owner, repo name, fine-grained PAT, Anthropic API key, **local clone path**
+1. Prompts for repo owner, repo name, fine-grained PAT, Fireworks API key, **local clone path**
 2. Generates a webhook secret via `openssl rand -hex 32`
 3. Appends the new target entry to `main/targets.auto.tfvars`
 4. Scaffolds productbuilding files in the target repo:
    - `.productbuilding/preview/config.yml` — preview contract (starter template)
    - `.productbuilding/preview/docker-compose.yml` — preview Compose file (starter template)
-   - `.github/workflows/claude.yml` — Claude Code workflow
-   - `CLAUDE.md` — Claude Code project guide (starter template)
-5. Prints remaining manual steps (Claude App install, review + commit scaffolded files)
+   - `.github/workflows/opencode.yml` — OpenCode workflow
+   - `AGENTS.md` — OpenCode project guide (starter template)
+5. Prints remaining manual steps (OpenCode App install, review + commit scaffolded files)
 
-The **one step that cannot be automated** is installing the Claude GitHub App — it requires an OAuth consent flow in the browser. The script prints the direct link.
+The **one step that cannot be automated** is installing the OpenCode GitHub App — it requires an OAuth consent flow in the browser. The script prints the direct link.
 
 **Cloud-init script** (templated by OpenTofu, receives region/domain/zone ID/repo clone URL):
 
@@ -593,43 +593,41 @@ The target repo also provides `.productbuilding/preview/docker-compose.yml` — 
 
 ## 4. Claude Code GitHub Actions (Issue-to-PR Workflow)
 
-The preview orchestrator is one half of the product building workflow. The other half is **Claude Code running in GitHub Actions**, which turns issues into implementation plans and approved plans into PRs. The preview orchestrator then picks up those PRs via webhook.
+The preview orchestrator is one half of the product building workflow. The other half is **OpenCode running in GitHub Actions**, which turns issues into implementations and opens PRs. The preview orchestrator then picks up those PRs via webhook.
 
 ### 4.1 End-to-End Flow
 
 ```
 1. Human opens GitHub issue describing a feature/fix
-2. Human mentions @claude in the issue (or issue triggers workflow automatically)
-3. Claude Code (in GitHub Actions) analyzes the issue and posts an implementation plan as a comment
-4. Human reviews and approves the plan (e.g. by commenting "approved" or "@claude implement this")
-5. Claude Code implements the plan and opens a PR
-6. PR webhook fires → preview orchestrator creates preview
-7. Human reviews code + live preview, iterates with @claude in PR comments if needed
-8. Human merges PR → preview orchestrator tears down preview
+2. Human comments `/opencode` in the issue
+3. OpenCode (in GitHub Actions) analyzes the issue and implements the feature, opening a PR
+4. PR webhook fires → preview orchestrator creates preview
+5. Human reviews code + live preview, iterates with `/opencode` in PR comments if needed
+6. Human merges PR → preview orchestrator tears down preview
 ```
 
 ### 4.2 Setup per Target Repo
 
-Each target repo needs the following to enable the Claude Code workflow:
+Each target repo needs the following to enable the OpenCode workflow:
 
-**1. Install the Claude GitHub App**
+**1. Install the OpenCode GitHub App**
 
-Install from [https://github.com/apps/claude](https://github.com/apps/claude) on each target repo. This app provides the identity Claude uses to comment and push. It requires:
+Install from [https://github.com/apps/opencode-agent](https://github.com/apps/opencode-agent) on each target repo. This app provides the identity OpenCode uses to comment and push. It requires:
 
 - **Contents**: Read & Write (to modify repository files)
 - **Issues**: Read & Write (to respond to issues)
 - **Pull requests**: Read & Write (to create PRs and push changes)
 
-**2. Add Anthropic API key as a repository secret**
+**2. Add Fireworks API key as a repository secret**
 
-Add `ANTHROPIC_API_KEY` to the target repo's GitHub Actions secrets (Settings → Secrets and variables → Actions).
+Add `FIREWORKS_API_KEY` to the target repo's GitHub Actions secrets (Settings → Secrets and variables → Actions).
 
-**3. Add the Claude Code workflow file**
+**3. Add the OpenCode workflow file**
 
-Create `.github/workflows/claude.yml` in the target repo:
+Create `.github/workflows/opencode.yml` in the target repo:
 
 ```yaml
-name: Claude Code
+name: OpenCode
 
 permissions:
   contents: write
@@ -642,26 +640,29 @@ on:
     types: [created]
   pull_request_review_comment:
     types: [created]
-  issues:
-    types: [opened, assigned]
+  pull_request_review:
+    types: [submitted]
 
 jobs:
-  claude:
+  opencode:
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'issues' && contains(github.event.issue.body, '@claude'))
+      contains(github.event.comment.body, '/opencode')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          fetch-depth: 0
+      - uses: anomalyco/opencode/github@latest
+        env:
+          FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          model: fireworks/accounts/fireworks/models/kimi-k2-5
 ```
 
-**4. Create a CLAUDE.md in the target repo**
+**4. Create an AGENTS.md in the target repo**
 
-This file guides Claude's behavior — coding standards, review criteria, project-specific rules, architectural constraints. Claude reads it automatically when working in the repo.
+This file guides OpenCode's behavior — coding standards, review criteria, project-specific rules, architectural constraints. OpenCode reads it automatically when working in the repo.
 
 ### 4.3 Relationship to Preview Orchestrator
 
@@ -818,13 +819,13 @@ mise run onboard-target # Add new target repo
 
 ### Phase 5 — etfg-app-starter-kit Integration
 
-**Goal:** The target repo has its preview contract and Claude Code workflow, tested end-to-end.
+**Goal:** The target repo has its preview contract and OpenCode workflow, tested end-to-end.
 
 **Tasks (onboarding + infra):**
 
-1. Run `mise run onboard-target` for etfg-app-starter-kit — creates tfvars entry and scaffolds `.productbuilding/preview/`, `.github/workflows/claude.yml`, `CLAUDE.md` in the target repo
-2. `mise run infra-apply` — creates webhook, Secrets Manager entry, `ANTHROPIC_API_KEY` GitHub Actions secret
-3. Install the Claude GitHub App ([github.com/apps/claude](https://github.com/apps/claude)) on etfg-app-starter-kit (manual, one-time)
+1. Run `mise run onboard-target` for etfg-app-starter-kit — creates tfvars entry and scaffolds `.productbuilding/preview/`, `.github/workflows/opencode.yml`, `AGENTS.md` in the target repo
+2. `mise run infra-apply` — creates webhook, Secrets Manager entry, `FIREWORKS_API_KEY` GitHub Actions secret
+3. Install the OpenCode GitHub App ([github.com/apps/opencode-agent](https://github.com/apps/opencode-agent)) on etfg-app-starter-kit (manual, one-time)
 
 **Tasks (preview contract):**
 
@@ -833,15 +834,15 @@ mise run onboard-target # Add new target repo
 6. Add `/healthz` endpoint verification
 7. Open a test PR, verify full preview lifecycle
 
-**Tasks (Claude Code):**
+**Tasks (OpenCode):**
 
-8. Customize `CLAUDE.md` in etfg-app-starter-kit with project conventions, architecture rules, coding standards
-9. Test the full workflow: open issue → @claude drafts plan → approve → Claude opens PR → preview deployed → review code + live preview
+8. Customize `AGENTS.md` in etfg-app-starter-kit with project conventions, architecture rules, coding standards
+9. Test the full workflow: open issue → comment `/opencode` → OpenCode responds → OpenCode opens PR → preview deployed → review code + live preview
 
 **Tasks (documentation):**
 
 10. Document the preview contract pattern for future repos
-11. Document the Claude Code onboarding recipe for future repos
+11. Document the OpenCode onboarding recipe for future repos
 
 ---
 

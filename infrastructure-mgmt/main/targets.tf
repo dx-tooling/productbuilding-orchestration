@@ -36,11 +36,11 @@ resource "github_repository_webhook" "preview" {
   events = ["pull_request"]
 }
 
-# Set ANTHROPIC_API_KEY as a GitHub Actions secret on each target repo
-resource "github_actions_secret" "anthropic_api_key" {
+# Set FIREWORKS_API_KEY as a GitHub Actions secret on each target repo
+resource "github_actions_secret" "fireworks_api_key" {
   for_each = var.targets
 
   repository      = each.value.repo_name
-  secret_name     = "ANTHROPIC_API_KEY"
-  plaintext_value = each.value.anthropic_api_key
+  secret_name     = "FIREWORKS_API_KEY"
+  plaintext_value = each.value.fireworks_api_key
 }

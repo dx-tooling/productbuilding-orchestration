@@ -46,7 +46,7 @@ variable "targets" {
     repo_name         = string
     github_pat        = string
     webhook_secret    = string
-    anthropic_api_key = string
+    fireworks_api_key = string
   }))
   default = {}
 }
