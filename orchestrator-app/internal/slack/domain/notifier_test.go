@@ -459,6 +459,11 @@ func TestSanitizeForCodeBlock(t *testing.T) {
 			want:  "line1\n\nline2",
 		},
 		{
+			name:  "replaces HTML entities",
+			input: "opencode session&nbsp;&nbsp;|&nbsp;&nbsp;github run &amp; deploy &lt;v2&gt;",
+			want:  "opencode session  |  github run & deploy <v2>",
+		},
+		{
 			name:  "empty string",
 			input: "",
 			want:  "",

@@ -306,6 +306,10 @@ var (
 // suitable for display inside a Slack code block.
 func sanitizeForCodeBlock(s string) string {
 	s = htmlTagRe.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "&nbsp;", " ")
+	s = strings.ReplaceAll(s, "&amp;", "&")
+	s = strings.ReplaceAll(s, "&lt;", "<")
+	s = strings.ReplaceAll(s, "&gt;", ">")
 	s = mdImageRe.ReplaceAllString(s, "$1")
 	s = mdLinkRe.ReplaceAllString(s, "$1")
 	s = headingMarkerRe.ReplaceAllString(s, "")
