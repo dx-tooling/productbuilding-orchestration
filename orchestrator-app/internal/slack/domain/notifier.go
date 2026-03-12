@@ -212,15 +212,9 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 
 // formatParentMessage creates the initial thread message
 func formatParentMessage(event slackfacade.NotificationEvent) MessageBlock {
-	emoji := "📝"
-	if event.IsPR() {
-		emoji = "🔀"
-	}
-
-	// Build the message with title, author, and body preview
 	lines := []string{
-		fmt.Sprintf("%s *%s* #%d: %s", emoji, event.IssueOrPR(), event.IssueNumber, event.Title),
-		fmt.Sprintf("👤 *Created by:* @%s", event.Author),
+		fmt.Sprintf("*%s #%d* — %s", event.IssueOrPR(), event.IssueNumber, event.Title),
+		fmt.Sprintf("by @%s", event.Author),
 	}
 
 	// Add body/description if present (truncated)
@@ -230,10 +224,12 @@ func formatParentMessage(event slackfacade.NotificationEvent) MessageBlock {
 	}
 
 	// Add link to GitHub
-	lines = append(lines, "", fmt.Sprintf("🔗 <%s|View on GitHub>", event.GitHubURL()))
+	lines = append(lines, "", fmt.Sprintf("<%s|View on GitHub>", event.GitHubURL()))
 
 	return MessageBlock{Text: strings.Join(lines, "\n")}
 }
+
+const threadSeparator = "─────"
 
 // formatEventMessage formats an update message for a thread
 func formatEventMessage(event slackfacade.NotificationEvent) MessageBlock {
@@ -242,11 +238,12 @@ func formatEventMessage(event slackfacade.NotificationEvent) MessageBlock {
 	switch event.Type {
 	case slackfacade.EventPRReady:
 		lines := []string{
-			fmt.Sprintf("✅ *Preview ready*"),
-			fmt.Sprintf("🔗 <%s|Open Preview>", event.PreviewURL),
+			threadSeparator,
+			"*Preview ready*",
+			fmt.Sprintf("<%s|Open Preview>", event.PreviewURL),
 		}
 		if event.LogsURL != "" {
-			lines = append(lines, fmt.Sprintf("📋 <%s|View Logs>", event.LogsURL))
+			lines = append(lines, fmt.Sprintf("<%s|View Logs>", event.LogsURL))
 		}
 		if event.UserNote != "" {
 			lines = append(lines, fmt.Sprintf("> *Note:* %s", event.UserNote))
@@ -254,31 +251,31 @@ func formatEventMessage(event slackfacade.NotificationEvent) MessageBlock {
 		text = strings.Join(lines, "\n")
 
 	case slackfacade.EventPRFailed:
-		text = fmt.Sprintf("❌ *Preview failed*\n> Stage: `%s`", event.Status)
+		text = fmt.Sprintf("%s\n*Preview failed*\n> Stage: `%s`", threadSeparator, event.Status)
 
 	case slackfacade.EventPROpened, slackfacade.EventIssueOpened:
-		text = fmt.Sprintf("👤 Opened by @%s", event.Author)
+		text = fmt.Sprintf("%s\nOpened by @%s", threadSeparator, event.Author)
 
 	case slackfacade.EventCommentAdded:
 		preview := truncate(event.Body, 250)
 		url := event.CommentURL()
 		if url != "" {
-			text = fmt.Sprintf("💬 *Comment by @%s:*\n> %s\n\n🔗 <%s|View full comment on GitHub>", event.Author, preview, url)
+			text = fmt.Sprintf("%s\n*@%s* commented:\n> %s\n\n<%s|View on GitHub>", threadSeparator, event.Author, preview, url)
 		} else {
-			text = fmt.Sprintf("💬 *Comment by @%s:*\n> %s", event.Author, preview)
+			text = fmt.Sprintf("%s\n*@%s* commented:\n> %s", threadSeparator, event.Author, preview)
 		}
 
 	case slackfacade.EventPRMerged:
-		text = "🎉 *Merged* — Preview will be removed shortly"
+		text = fmt.Sprintf("%s\n*Merged* — Preview will be removed shortly", threadSeparator)
 
 	case slackfacade.EventIssueClosed:
-		text = "✅ *Closed*"
+		text = fmt.Sprintf("%s\n*Closed*", threadSeparator)
 
 	case slackfacade.EventPRClosed:
-		text = "🔒 *Closed* — Preview removed"
+		text = fmt.Sprintf("%s\n*Closed* — Preview removed", threadSeparator)
 
 	default:
-		text = fmt.Sprintf("📢 Update: %s", event.Type)
+		text = fmt.Sprintf("%s\nUpdate: %s", threadSeparator, event.Type)
 	}
 
 	return MessageBlock{Text: text}

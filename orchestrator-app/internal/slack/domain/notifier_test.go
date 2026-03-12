@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -435,7 +436,7 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 		contains string
 	}{
 		{
-			name: "PR ready with user note",
+			name: "PR ready creates parent (new thread)",
 			event: slackfacade.NotificationEvent{
 				Type:        slackfacade.EventPRReady,
 				RepoOwner:   "luminor-project",
@@ -445,7 +446,7 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 				PreviewURL:  "https://preview.example.com",
 				UserNote:    "Test with admin/admin",
 			},
-			contains: "admin/admin",
+			contains: "*Pull Request #42* — Add feature",
 		},
 		{
 			name: "Preview failed",
@@ -456,7 +457,7 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 				IssueNumber: 42,
 				Status:      "compose_up",
 			},
-			contains: "Failed",
+			contains: "─────\n*Preview failed*",
 		},
 		{
 			name: "Comment with link",
@@ -469,7 +470,7 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 				Body:        "This is a long comment that should be truncated",
 				CommentID:   123456,
 			},
-			contains: "alice",
+			contains: "─────\n*@alice* commented:",
 		},
 	}
 
@@ -485,9 +486,12 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 				t.Fatal("Expected at least 1 message")
 			}
 
-			msg := client.postedMessages[0].Text
+			msg := client.postedMessages[len(client.postedMessages)-1].Text
 			if msg == "" {
 				t.Error("Message text should not be empty")
+			}
+			if !strings.Contains(msg, tt.contains) {
+				t.Errorf("Expected message to contain %q, got:\n%s", tt.contains, msg)
 			}
 		})
 	}
