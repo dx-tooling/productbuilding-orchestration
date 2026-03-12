@@ -15,14 +15,16 @@ import (
 const (
 	stepDownload   = 0
 	stepContainers = 1
-	stepHealth     = 2
-	stepTLS        = 3
-	numSteps       = 4
+	stepMigrations = 2
+	stepHealth     = 3
+	stepTLS        = 4
+	numSteps       = 5
 )
 
 var stepLabels = [numSteps]string{
 	"Download source",
 	"Build and start containers",
+	"Run database migrations",
 	"Health check",
 	"TLS certificate",
 }
@@ -178,9 +180,22 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 		return
 	}
 
-	// 7. Health check
+	// 7. Run database migrations (if configured)
+	if contract.Database.MigrateCommand != "" {
+		s.updateComment(ctx, &preview,
+			progressComment("Preview deploying", meta, stepContainers+1, "Running database migrations..."),
+			pat, log)
+
+		migrateCmd := []string{"sh", "-c", contract.Database.MigrateCommand}
+		if err := s.compose.Exec(ctx, preview.ComposeProject, contract.Compose.Service, workDir, migrateCmd); err != nil {
+			s.failPreview(ctx, &preview, stepMigrations, "migrations", fmt.Sprintf("database migrations: %v", err), pat, log)
+			return
+		}
+	}
+
+	// 8. Health check
 	s.updateComment(ctx, &preview,
-		progressComment("Preview deploying", meta, stepContainers+1, "Running health check..."),
+		progressComment("Preview deploying", meta, stepMigrations+1, "Running health check..."),
 		pat, log)
 
 	containerName := fmt.Sprintf("%s-%s-1", preview.ComposeProject, contract.Compose.Service)

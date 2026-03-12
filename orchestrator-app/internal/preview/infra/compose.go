@@ -113,3 +113,21 @@ func (r *ComposeRunner) Down(ctx context.Context, projectName, workDir string) e
 	slog.Info("compose down complete", "project", projectName)
 	return nil
 }
+
+// Exec runs a command in a running service container.
+func (r *ComposeRunner) Exec(ctx context.Context, projectName, serviceName, workDir string, command []string) error {
+	args := []string{"compose", "-p", projectName, "exec", serviceName}
+	args = append(args, command...)
+
+	slog.Info("compose exec", "project", projectName, "service", serviceName, "cmd", command)
+
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Dir = workDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("compose exec failed: %w\n%s", err, output)
+	}
+
+	slog.Info("compose exec complete", "project", projectName, "service", serviceName)
+	return nil
+}
