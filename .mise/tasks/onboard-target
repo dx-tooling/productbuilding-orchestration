@@ -275,7 +275,8 @@ on:
 jobs:
   opencode:
     if: |
-      contains(github.event.comment.body, '/opencode')
+      contains(github.event.comment.body, '/opencode') &&
+      !endsWith(github.event.comment.user.login, '[bot]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
