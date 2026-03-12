@@ -444,6 +444,30 @@ CREATE TABLE previews (
 4. Update preview record → status `deleted`
 5. Update PR comment: "Preview removed."
 
+#### Logs Endpoint
+
+The orchestrator exposes a logs endpoint for debugging preview deployments:
+
+**Endpoint:** `GET /previews/{owner}/{repo}/{pr}/logs`
+
+**Query Parameters:**
+- `tail` — Number of lines to return (default: 100)
+- `follow` — Stream logs in real-time (default: false)
+
+**Examples:**
+```bash
+# Get last 100 lines
+curl "https://api.productbuilder.luminor-tech.net/previews/luminor-project/myrepo/5/logs"
+
+# Get last 500 lines
+curl "https://api.productbuilder.luminor-tech.net/previews/luminor-project/myrepo/5/logs?tail=500"
+
+# Stream logs in real-time
+curl "https://api.productbuilder.luminor-tech.net/previews/luminor-project/myrepo/5/logs?follow=true"
+```
+
+The logs endpoint is also linked in PR comments as "View Logs" for easy access.
+
 #### Reconciliation (on startup, optionally periodic)
 
 1. Query GitHub API: list open PRs for each registered target repo

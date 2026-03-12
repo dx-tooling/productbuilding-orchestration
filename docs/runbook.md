@@ -162,4 +162,26 @@ mise run deploy             # CRITICAL: Redeploy orchestrator to load new target
 # Don't forget to commit the updated secrets/*.enc files
 ```
 
+### View preview logs
+
+Access application logs from any preview deployment:
+
+```bash
+# Get last 100 lines of logs
+mise run preview-logs luminor-project myrepo 5
+
+# Get last 500 lines
+mise run preview-logs luminor-project myrepo 5 500
+
+# Stream logs in real-time (follow mode)
+mise run preview-logs luminor-project myrepo 5 100 true
+```
+
+Or use the API directly:
+```bash
+curl "https://api.productbuilder.luminor-tech.net/previews/owner/repo/pr/logs?tail=100"
+```
+
+**Note:** A "View Logs" link is automatically included in all PR comments when previews are ready.
+
 **Important:** The orchestrator caches target configuration at startup. After adding a new target, you **must** run `mise run deploy` to restart the orchestrator with the updated configuration. Without this step, webhooks from the new repo will be rejected as "unknown repository".
