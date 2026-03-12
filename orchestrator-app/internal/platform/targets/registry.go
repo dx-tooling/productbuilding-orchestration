@@ -13,6 +13,10 @@ type TargetConfig struct {
 	RepoName      string `json:"repo_name"`
 	GitHubPAT     string `json:"github_pat"`
 	WebhookSecret string `json:"webhook_secret"`
+
+	// Optional Slack integration
+	SlackChannel  string `json:"slack_channel,omitempty"`
+	SlackBotToken string `json:"slack_bot_token,omitempty"`
 }
 
 // Registry provides lookup of target repo configurations.
