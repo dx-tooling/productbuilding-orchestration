@@ -104,16 +104,16 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 	if event.IsPR() {
 		// First try to find by PR number
 		thread, err = n.repository.FindThreadByPR(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
-		// If not found, check if there's an issue thread with the same number
+		// If not found (including "thread not found" error), check if there's an issue thread
 		// (PRs are also issues in GitHub, so they share the same number)
-		if thread == nil && err == nil {
-			thread, err = n.repository.FindThread(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
+		if thread == nil {
+			thread, _ = n.repository.FindThread(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
 		}
 	} else {
 		thread, err = n.repository.FindThread(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
-		// If not found, check if there's a PR thread with the same number
-		if thread == nil && err == nil {
-			thread, err = n.repository.FindThreadByPR(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
+		// If not found (including "thread not found" error), check if there's a PR thread
+		if thread == nil {
+			thread, _ = n.repository.FindThreadByPR(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
 		}
 	}
 
