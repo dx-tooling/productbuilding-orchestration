@@ -618,6 +618,12 @@ logging:
 
 # Optional: add a note shown in PR comments (e.g., test credentials, warnings)
 user_facing_note: "Test login: admin / secret"
+
+# Optional: run commands after preview is deployed (e.g., seed data)
+post_deploy_commands:
+  - service: app
+    command: mise run seed:property-mgr-setup doe@example.com test1234
+    description: Seed property manager demo data
 ```
 
 The target repo also provides `.productbuilding/preview/docker-compose.yml` — a production-oriented Compose file (using the prod Dockerfile, no hot reload, no host volume mounts) with all required services.
@@ -651,6 +657,25 @@ Common use cases:
 
 The note appears in PR comments as a blockquote:
 > **Note:** Test login: admin / secret
+
+**Post-Deploy Commands:**
+
+Target projects can run arbitrary commands after the preview is deployed and healthy:
+
+```yaml
+post_deploy_commands:
+  - service: app
+    command: mise run seed:property-mgr-setup doe@example.com test1234
+    description: Seed property manager demo data
+```
+
+Use cases:
+- Seed demo data for testing
+- Run database seeders
+- Create default users or configurations
+- Execute setup scripts
+
+Commands run after TLS certificate is ready but before marking preview as "ready". If any command fails, the preview is marked as failed.
 
 ---
 
