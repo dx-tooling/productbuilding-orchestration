@@ -60,6 +60,14 @@ func (e NotificationEvent) IssueOrPR() string {
 	return "Issue"
 }
 
+// ThreadType returns the database-friendly thread type: 'issue' or 'pull_request'
+func (e NotificationEvent) ThreadType() string {
+	if e.IsPR() {
+		return "pull_request"
+	}
+	return "issue"
+}
+
 // GitHubURL returns the URL to view the issue/PR on GitHub
 func (e NotificationEvent) GitHubURL() string {
 	path := "issues"

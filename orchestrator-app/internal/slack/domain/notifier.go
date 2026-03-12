@@ -139,7 +139,7 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 			SlackChannel:  target.SlackChannel,
 			SlackThreadTs: parentTs,
 			SlackParentTs: parentTs,
-			ThreadType:    event.IssueOrPR(),
+			ThreadType:    event.ThreadType(),
 		}
 
 		if err := n.repository.SaveThread(ctx, thread); err != nil {

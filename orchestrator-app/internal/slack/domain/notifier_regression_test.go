@@ -253,3 +253,45 @@ func TestIntegration_FullSlackNotificationFlow(t *testing.T) {
 		t.Error("No Slack API calls were made - flow was blocked somewhere")
 	}
 }
+
+// TestSlackThread_UsesCorrectThreadType verifies that the thread type
+// is stored in the database-compatible format ('issue' or 'pull_request'),
+// not the human-readable format ('Issue' or 'Pull Request').
+// This is a regression test for the threading bug where all messages
+// created new parent posts instead of threading, caused by CHECK constraint
+// failures when saving threads to the database.
+func TestSlackThread_UsesCorrectThreadType(t *testing.T) {
+	// Issue event should return 'issue'
+	issueEvent := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventIssueOpened,
+		RepoOwner:   "test-owner",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+		Title:       "Test Issue",
+	}
+
+	if issueEvent.ThreadType() != "issue" {
+		t.Errorf("Issue ThreadType() = %q, want 'issue'", issueEvent.ThreadType())
+	}
+
+	// PR event should return 'pull_request'
+	prEvent := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventPROpened,
+		RepoOwner:   "test-owner",
+		RepoName:    "test-repo",
+		IssueNumber: 99,
+		Title:       "Test PR",
+	}
+
+	if prEvent.ThreadType() != "pull_request" {
+		t.Errorf("PR ThreadType() = %q, want 'pull_request'", prEvent.ThreadType())
+	}
+
+	// Also verify IssueOrPR returns human-readable format (different use case)
+	if issueEvent.IssueOrPR() != "Issue" {
+		t.Errorf("IssueOrPR() = %q, want 'Issue'", issueEvent.IssueOrPR())
+	}
+	if prEvent.IssueOrPR() != "Pull Request" {
+		t.Errorf("IssueOrPR() = %q, want 'Pull Request'", prEvent.IssueOrPR())
+	}
+}
