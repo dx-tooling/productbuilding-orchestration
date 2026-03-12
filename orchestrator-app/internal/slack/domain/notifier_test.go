@@ -417,6 +417,88 @@ func TestNotifier_Notify_Debouncing(t *testing.T) {
 	}
 }
 
+func TestSanitizeForCodeBlock(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "strips HTML tags",
+			input: "<p>Hello <b>world</b></p>",
+			want:  "Hello world",
+		},
+		{
+			name:  "converts markdown images to alt text",
+			input: "See ![screenshot](https://img.example.com/shot.png) here",
+			want:  "See screenshot here",
+		},
+		{
+			name:  "converts markdown links to text",
+			input: "Check [this PR](https://github.com/foo/bar/pull/1) out",
+			want:  "Check this PR out",
+		},
+		{
+			name:  "strips heading markers",
+			input: "### Summary\nSome text\n## Details\nMore text",
+			want:  "Summary\nSome text\nDetails\nMore text",
+		},
+		{
+			name:  "strips bold markers",
+			input: "This is **important** stuff",
+			want:  "This is important stuff",
+		},
+		{
+			name:  "removes triple backticks",
+			input: "```go\nfmt.Println(\"hi\")\n```",
+			want:  "fmt.Println(\"hi\")",
+		},
+		{
+			name:  "collapses excessive newlines",
+			input: "line1\n\n\n\n\nline2",
+			want:  "line1\n\nline2",
+		},
+		{
+			name:  "empty string",
+			input: "",
+			want:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeForCodeBlock(tt.input)
+			if got != tt.want {
+				t.Errorf("sanitizeForCodeBlock() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatParentMessage_BodyInCodeBlock(t *testing.T) {
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventIssueOpened,
+		RepoOwner:   "luminor-project",
+		RepoName:    "test-repo",
+		IssueNumber: 10,
+		Title:       "Test issue",
+		Author:      "alice",
+		Body:        "This is the **body** with [a link](https://example.com)",
+		URL:         "https://github.com/luminor-project/test-repo/issues/10",
+	}
+
+	msg := formatParentMessage(event)
+	if !strings.Contains(msg.Text, "```") {
+		t.Errorf("Expected parent message body to be wrapped in code block, got:\n%s", msg.Text)
+	}
+	if strings.Contains(msg.Text, "**body**") {
+		t.Error("Expected bold markers to be stripped from body")
+	}
+	if strings.Contains(msg.Text, "[a link]") {
+		t.Error("Expected markdown link to be converted to plain text")
+	}
+}
+
 func TestNotifier_Notify_Formatting(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()

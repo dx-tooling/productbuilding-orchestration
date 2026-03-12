@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -217,10 +218,10 @@ func formatParentMessage(event slackfacade.NotificationEvent) MessageBlock {
 		fmt.Sprintf("by @%s", event.Author),
 	}
 
-	// Add body/description if present (truncated)
+	// Add body/description if present (sanitized + truncated in code block)
 	if event.Body != "" {
-		bodyPreview := truncate(event.Body, 280)
-		lines = append(lines, "", fmt.Sprintf("_%s_", bodyPreview))
+		bodyPreview := truncate(sanitizeForCodeBlock(event.Body), 300)
+		lines = append(lines, "", fmt.Sprintf("```\n%s\n```", bodyPreview))
 	}
 
 	// Add link to GitHub
@@ -257,12 +258,12 @@ func formatEventMessage(event slackfacade.NotificationEvent) MessageBlock {
 		text = fmt.Sprintf("%s\nOpened by @%s", threadSeparator, event.Author)
 
 	case slackfacade.EventCommentAdded:
-		preview := truncate(event.Body, 250)
+		preview := truncate(sanitizeForCodeBlock(event.Body), 300)
 		url := event.CommentURL()
 		if url != "" {
-			text = fmt.Sprintf("%s\n*@%s* commented:\n> %s\n\n<%s|View on GitHub>", threadSeparator, event.Author, preview, url)
+			text = fmt.Sprintf("%s\n*@%s* commented:\n```\n%s\n```\n<%s|View on GitHub>", threadSeparator, event.Author, preview, url)
 		} else {
-			text = fmt.Sprintf("%s\n*@%s* commented:\n> %s", threadSeparator, event.Author, preview)
+			text = fmt.Sprintf("%s\n*@%s* commented:\n```\n%s\n```", threadSeparator, event.Author, preview)
 		}
 
 	case slackfacade.EventPRMerged:
@@ -287,4 +288,30 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// Regex patterns for sanitizeForCodeBlock (compiled once at package level)
+var (
+	htmlTagRe       = regexp.MustCompile(`<[^>]*>`)
+	mdImageRe       = regexp.MustCompile(`!\[([^\]]*)\]\([^)]*\)`)
+	mdLinkRe        = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
+	headingMarkerRe = regexp.MustCompile(`(?m)^#{1,6}\s+`)
+	boldRe          = regexp.MustCompile(`\*\*(.+?)\*\*`)
+	italicRe        = regexp.MustCompile(`(?:^|[^\\])_(.+?)_`)
+	tripleTickRe    = regexp.MustCompile("```[a-zA-Z]*")
+	excessNewlineRe = regexp.MustCompile(`\n{3,}`)
+)
+
+// sanitizeForCodeBlock transforms raw GitHub markdown into plain text
+// suitable for display inside a Slack code block.
+func sanitizeForCodeBlock(s string) string {
+	s = htmlTagRe.ReplaceAllString(s, "")
+	s = mdImageRe.ReplaceAllString(s, "$1")
+	s = mdLinkRe.ReplaceAllString(s, "$1")
+	s = headingMarkerRe.ReplaceAllString(s, "")
+	s = boldRe.ReplaceAllString(s, "$1")
+	s = italicRe.ReplaceAllString(s, "$1")
+	s = tripleTickRe.ReplaceAllString(s, "")
+	s = excessNewlineRe.ReplaceAllString(s, "\n\n")
+	return strings.TrimSpace(s)
 }
