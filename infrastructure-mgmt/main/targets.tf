@@ -19,7 +19,8 @@ resource "aws_secretsmanager_secret_version" "target" {
   })
 }
 
-# Create webhook on each target repo for PR events
+# Create webhook on each target repo for PR and Issue events
+# This enables both preview environments and Slack notifications
 resource "github_repository_webhook" "preview" {
   for_each = var.targets
 
@@ -33,7 +34,7 @@ resource "github_repository_webhook" "preview" {
   }
 
   active = true
-  events = ["pull_request"]
+  events = ["pull_request", "issues", "issue_comment"]
 }
 
 # Set FIREWORKS_API_KEY as a GitHub Actions secret on each target repo
