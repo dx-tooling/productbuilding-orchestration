@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"text/template"
 )
 
@@ -129,5 +131,30 @@ func (r *ComposeRunner) Exec(ctx context.Context, projectName, serviceName, work
 	}
 
 	slog.Info("compose exec complete", "project", projectName, "service", serviceName)
+	return nil
+}
+
+// Logs streams container logs to the provided writer.
+func (r *ComposeRunner) Logs(ctx context.Context, projectName, serviceName string, tail int, follow bool, w io.Writer) error {
+	args := []string{"compose", "-p", projectName, "logs", serviceName}
+
+	if tail > 0 {
+		args = append(args, "--tail", strconv.Itoa(tail))
+	}
+
+	if follow {
+		args = append(args, "--follow")
+	}
+
+	slog.Info("compose logs", "project", projectName, "service", serviceName, "tail", tail, "follow", follow)
+
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Stdout = w
+	cmd.Stderr = w
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("compose logs failed: %w", err)
+	}
+
 	return nil
 }

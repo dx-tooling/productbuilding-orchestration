@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -79,6 +80,24 @@ func (s *Service) ListPreviews(ctx context.Context) ([]Preview, error) {
 
 func (s *Service) GetPreview(ctx context.Context, repoOwner, repoName string, prNumber int) (*Preview, error) {
 	return s.repo.FindByRepoPR(ctx, repoOwner, repoName, prNumber)
+}
+
+// GetPreviewLogs streams logs from a preview's app container.
+func (s *Service) GetPreviewLogs(ctx context.Context, repoOwner, repoName string, prNumber int, tail int, follow bool, w io.Writer) error {
+	preview, err := s.repo.FindByRepoPR(ctx, repoOwner, repoName, prNumber)
+	if err != nil {
+		return fmt.Errorf("preview not found: %w", err)
+	}
+
+	workDir := filepath.Join(s.workspaceDir, preview.ComposeProject)
+
+	// Parse the contract to get the service name
+	contract, err := ParseContract(workDir)
+	if err != nil {
+		return fmt.Errorf("failed to parse contract: %w", err)
+	}
+
+	return s.compose.Logs(ctx, preview.ComposeProject, contract.Compose.Service, tail, follow, w)
 }
 
 // DeployPreview handles the full lifecycle: download → build → deploy → healthcheck.

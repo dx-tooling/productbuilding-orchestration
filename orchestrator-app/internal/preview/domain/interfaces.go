@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"io"
 	"time"
 )
 
@@ -17,6 +18,8 @@ type ComposeManager interface {
 	Down(ctx context.Context, projectName, workDir string) error
 	// Exec runs a command in a running container
 	Exec(ctx context.Context, projectName, serviceName, workDir string, command []string) error
+	// Logs streams container logs to the provided writer
+	Logs(ctx context.Context, projectName, serviceName string, tail int, follow bool, w io.Writer) error
 }
 
 // HealthChecker polls endpoints until they respond successfully.
