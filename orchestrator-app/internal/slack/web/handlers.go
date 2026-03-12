@@ -30,20 +30,27 @@ type GitHubCommenter interface {
 	CreateComment(ctx context.Context, owner, repo string, number int, body, pat string) (int64, error)
 }
 
+// GitHubIssueCreator creates new GitHub issues
+type GitHubIssueCreator interface {
+	CreateIssue(ctx context.Context, owner, repo, title, body, pat string) (int, error)
+}
+
 // UserInfoResolver resolves a Slack user ID to a display name
 type UserInfoResolver interface {
 	GetUserInfo(ctx context.Context, botToken, userID string) (string, error)
 }
 
-// TargetRegistry looks up target configuration by repo
+// TargetRegistry looks up target configuration by repo or channel
 type TargetRegistry interface {
 	Get(repoOwner, repoName string) (targets.TargetConfig, bool)
+	GetBySlackChannel(channel string) (targets.TargetConfig, bool)
 }
 
 // Handler handles Slack Events API callbacks
 type Handler struct {
 	threadFinder   ThreadFinder
 	githubClient   GitHubCommenter
+	issueCreator   GitHubIssueCreator
 	slackClient    UserInfoResolver
 	registry       TargetRegistry
 	signingSecret  string
@@ -54,6 +61,7 @@ type Handler struct {
 func NewHandler(
 	threadFinder ThreadFinder,
 	githubClient GitHubCommenter,
+	issueCreator GitHubIssueCreator,
 	slackClient UserInfoResolver,
 	registry TargetRegistry,
 	signingSecret string,
@@ -62,6 +70,7 @@ func NewHandler(
 	return &Handler{
 		threadFinder:   threadFinder,
 		githubClient:   githubClient,
+		issueCreator:   issueCreator,
 		slackClient:    slackClient,
 		registry:       registry,
 		signingSecret:  signingSecret,
@@ -145,12 +154,62 @@ func (h *Handler) HandleEvent(w http.ResponseWriter, r *http.Request) {
 
 // handleAppMention processes an app_mention event and posts to GitHub if appropriate
 func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEvent, botUserID string) {
-	// Ignore mentions not in a thread
 	if event.ThreadTs == "" {
-		slog.Debug("ignoring app_mention without thread_ts")
+		// Top-level mention — create a new GitHub issue if channel is tracked
+		h.handleTopLevelMention(ctx, event, botUserID)
 		return
 	}
 
+	// In-thread mention — forward as GitHub comment
+	h.handleThreadMention(ctx, event, botUserID)
+}
+
+// handleTopLevelMention creates a GitHub issue from a top-level @mention
+func (h *Handler) handleTopLevelMention(ctx context.Context, event slackAppMentionEvent, botUserID string) {
+	// Look up target by Slack channel
+	target, ok := h.registry.GetBySlackChannel(event.Channel)
+	if !ok {
+		slog.Debug("ignoring top-level app_mention in unregistered channel", "channel", event.Channel)
+		return
+	}
+
+	// Resolve Slack user display name
+	displayName := event.User
+	if name, err := h.slackClient.GetUserInfo(ctx, target.SlackBotToken, event.User); err == nil && name != "" {
+		displayName = name
+	}
+
+	// Strip bot mention from text — this becomes the issue title
+	title := event.Text
+	if botUserID != "" {
+		title = strings.ReplaceAll(title, "<@"+botUserID+">", "")
+	} else {
+		title = botMentionRe.ReplaceAllString(title, "")
+	}
+	title = strings.TrimSpace(title)
+
+	// Build a deep link to the Slack message
+	slackLink := h.slackMessageLink(event.Channel, event.Ts, "", "")
+
+	// Issue body: who requested it + deep link
+	body := fmt.Sprintf("Requested by %s [via Slack](%s)\n\n<!-- via-slack -->", displayName, slackLink)
+
+	number, err := h.issueCreator.CreateIssue(ctx, target.RepoOwner, target.RepoName, title, body, target.GitHubPAT)
+	if err != nil {
+		slog.Error("failed to create github issue from slack", "error", err, "repo", target.RepoOwner+"/"+target.RepoName)
+		return
+	}
+
+	slog.Info("created github issue from slack",
+		"repo", target.RepoOwner+"/"+target.RepoName,
+		"number", number,
+		"title", title,
+		"user", displayName,
+	)
+}
+
+// handleThreadMention forwards an in-thread @mention as a GitHub comment
+func (h *Handler) handleThreadMention(ctx context.Context, event slackAppMentionEvent, botUserID string) {
 	// Look up the thread by Slack timestamp
 	thread, err := h.threadFinder.FindThreadBySlackTs(ctx, event.ThreadTs)
 	if err != nil {
@@ -187,12 +246,7 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 	}
 
 	// Format the comment with a deep link back to the Slack message
-	slackHost := "slack.com"
-	if h.slackWorkspace != "" {
-		slackHost = h.slackWorkspace + ".slack.com"
-	}
-	slackLink := fmt.Sprintf("https://%s/archives/%s/p%s?thread_ts=%s&cid=%s",
-		slackHost, event.Channel, strings.ReplaceAll(event.Ts, ".", ""), event.ThreadTs, event.Channel)
+	slackLink := h.slackMessageLink(event.Channel, event.Ts, event.ThreadTs, event.Channel)
 	comment := fmt.Sprintf("**%s** [via Slack](%s):\n\n%s\n\n<!-- via-slack -->", displayName, slackLink, text)
 
 	// Post to GitHub
@@ -206,6 +260,21 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 		"number", number,
 		"user", displayName,
 	)
+}
+
+// slackMessageLink builds a deep link to a Slack message.
+// For thread replies, pass threadTs and cid; for top-level messages, pass empty strings.
+func (h *Handler) slackMessageLink(channel, ts, threadTs, cid string) string {
+	slackHost := "slack.com"
+	if h.slackWorkspace != "" {
+		slackHost = h.slackWorkspace + ".slack.com"
+	}
+	link := fmt.Sprintf("https://%s/archives/%s/p%s",
+		slackHost, channel, strings.ReplaceAll(ts, ".", ""))
+	if threadTs != "" {
+		link += fmt.Sprintf("?thread_ts=%s&cid=%s", threadTs, cid)
+	}
+	return link
 }
 
 // verifySignature validates the Slack request signature using HMAC-SHA256

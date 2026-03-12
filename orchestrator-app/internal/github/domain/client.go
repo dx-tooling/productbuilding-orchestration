@@ -18,6 +18,7 @@ import (
 // Client interacts with the GitHub API for tarball downloads and PR comments.
 type Client struct {
 	httpClient *http.Client
+	baseURL    string // optional, for testing; defaults to "https://api.github.com"
 }
 
 func NewClient() *Client {
@@ -179,6 +180,56 @@ func (c *Client) UpdateComment(ctx context.Context, owner, repo string, commentI
 	}
 
 	return nil
+}
+
+// apiURL returns the base GitHub API URL, using the configured baseURL if set.
+func (c *Client) apiURL() string {
+	if c.baseURL != "" {
+		return c.baseURL
+	}
+	return "https://api.github.com"
+}
+
+type createIssueRequest struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+}
+
+type createIssueResponse struct {
+	Number int `json:"number"`
+}
+
+// CreateIssue creates a new GitHub issue and returns its number.
+func (c *Client) CreateIssue(ctx context.Context, owner, repo, title, body, pat string) (int, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/issues", c.apiURL(), owner, repo)
+
+	payload, _ := json.Marshal(createIssueRequest{Title: title, Body: body})
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(payload))
+	if err != nil {
+		return 0, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("create issue: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("create issue: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	var result createIssueResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("parse issue response: %w", err)
+	}
+
+	return result.Number, nil
 }
 
 // DeleteComment removes a PR comment.

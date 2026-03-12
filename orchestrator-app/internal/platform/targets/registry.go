@@ -35,6 +35,16 @@ func (r *Registry) Get(repoOwner, repoName string) (TargetConfig, bool) {
 	return t, ok
 }
 
+// GetBySlackChannel returns the config for a target linked to the given Slack channel ID.
+func (r *Registry) GetBySlackChannel(channel string) (TargetConfig, bool) {
+	for _, t := range r.targets {
+		if t.SlackChannel == channel {
+			return t, true
+		}
+	}
+	return TargetConfig{}, false
+}
+
 // LoadFromFile reads a JSON array of target configs (as written by cloud-init).
 func (r *Registry) LoadFromFile(path string) error {
 	data, err := os.ReadFile(path)

@@ -64,13 +64,40 @@ func (m *mockUserInfoResolver) GetUserInfo(ctx context.Context, botToken, userID
 	return m.name, m.err
 }
 
+type mockGitHubIssueCreator struct {
+	called bool
+	owner  string
+	repo   string
+	title  string
+	body   string
+	pat    string
+	number int
+	err    error
+}
+
+func (m *mockGitHubIssueCreator) CreateIssue(ctx context.Context, owner, repo, title, body, pat string) (int, error) {
+	m.called = true
+	m.owner = owner
+	m.repo = repo
+	m.title = title
+	m.body = body
+	m.pat = pat
+	return m.number, m.err
+}
+
 type mockTargetRegistry struct {
-	config targets.TargetConfig
-	found  bool
+	config         targets.TargetConfig
+	found          bool
+	channelConfig  targets.TargetConfig
+	channelFound   bool
 }
 
 func (m *mockTargetRegistry) Get(repoOwner, repoName string) (targets.TargetConfig, bool) {
 	return m.config, m.found
+}
+
+func (m *mockTargetRegistry) GetBySlackChannel(channel string) (targets.TargetConfig, bool) {
+	return m.channelConfig, m.channelFound
 }
 
 // --- Helpers ---
@@ -94,7 +121,7 @@ func makeSignedRequest(t *testing.T, body []byte) *http.Request {
 // --- Tests ---
 
 func TestHandleEvent_URLVerification(t *testing.T) {
-	h := NewHandler(nil, nil, nil, nil, testSigningSecret, "")
+	h := NewHandler(nil, nil, nil, nil, nil, testSigningSecret, "")
 
 	payload := map[string]string{
 		"type":      "url_verification",
@@ -120,7 +147,7 @@ func TestHandleEvent_URLVerification(t *testing.T) {
 }
 
 func TestHandleEvent_BadSignature(t *testing.T) {
-	h := NewHandler(nil, nil, nil, nil, testSigningSecret, "")
+	h := NewHandler(nil, nil, nil, nil, nil, testSigningSecret, "")
 
 	body := []byte(`{"type":"url_verification","challenge":"test"}`)
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
@@ -137,7 +164,7 @@ func TestHandleEvent_BadSignature(t *testing.T) {
 }
 
 func TestHandleEvent_StaleTimestamp(t *testing.T) {
-	h := NewHandler(nil, nil, nil, nil, testSigningSecret, "")
+	h := NewHandler(nil, nil, nil, nil, nil, testSigningSecret, "")
 
 	body := []byte(`{"type":"url_verification","challenge":"test"}`)
 	// Timestamp 10 minutes ago
@@ -161,7 +188,7 @@ func TestHandleEvent_StaleTimestamp(t *testing.T) {
 }
 
 func TestHandleEvent_MissingSignatureHeaders(t *testing.T) {
-	h := NewHandler(nil, nil, nil, nil, testSigningSecret, "")
+	h := NewHandler(nil, nil, nil, nil, nil, testSigningSecret, "")
 
 	body := []byte(`{"type":"url_verification","challenge":"test"}`)
 	req := httptest.NewRequest("POST", "/slack/events", bytes.NewReader(body))
@@ -175,9 +202,11 @@ func TestHandleEvent_MissingSignatureHeaders(t *testing.T) {
 	}
 }
 
-func TestHandleEvent_AppMentionWithoutThreadTs(t *testing.T) {
+func TestHandleEvent_AppMentionWithoutThreadTs_UnknownChannel(t *testing.T) {
 	github := &mockGitHubCommenter{}
-	h := NewHandler(&mockThreadFinder{}, github, &mockUserInfoResolver{}, &mockTargetRegistry{}, testSigningSecret, "")
+	issueCreator := &mockGitHubIssueCreator{}
+	registry := &mockTargetRegistry{channelFound: false}
+	h := NewHandler(&mockThreadFinder{}, github, issueCreator, &mockUserInfoResolver{}, registry, testSigningSecret, "")
 
 	payload := map[string]interface{}{
 		"type": "event_callback",
@@ -185,7 +214,56 @@ func TestHandleEvent_AppMentionWithoutThreadTs(t *testing.T) {
 			"type":    "app_mention",
 			"user":    "U123",
 			"text":    "<@UBOT> hello",
-			"channel": "C123",
+			"channel": "C0UNKNOWN",
+			"ts":      "1234567890.123456",
+			// No thread_ts — top-level mention in unknown channel
+		},
+		"authorizations": []map[string]string{{"user_id": "UBOT"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := makeSignedRequest(t, body)
+	rec := httptest.NewRecorder()
+
+	h.HandleEvent(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %d", rec.Code)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	if github.called {
+		t.Error("Should not post GitHub comment for top-level mention")
+	}
+	if issueCreator.called {
+		t.Error("Should not create GitHub issue for unknown channel")
+	}
+}
+
+func TestHandleEvent_AppMentionTopLevel_CreatesIssue(t *testing.T) {
+	github := &mockGitHubCommenter{}
+	issueCreator := &mockGitHubIssueCreator{number: 99}
+	userResolver := &mockUserInfoResolver{name: "Alice Smith"}
+	registry := &mockTargetRegistry{
+		channelConfig: targets.TargetConfig{
+			RepoOwner:     "luminor-project",
+			RepoName:      "playground",
+			GitHubPAT:     "ghp_test123",
+			SlackBotToken: "xoxb-test",
+			SlackChannel:  "C0PRODUCT",
+		},
+		channelFound: true,
+	}
+
+	h := NewHandler(&mockThreadFinder{}, github, issueCreator, userResolver, registry, testSigningSecret, "test-workspace")
+
+	payload := map[string]interface{}{
+		"type": "event_callback",
+		"event": map[string]interface{}{
+			"type":    "app_mention",
+			"user":    "U123ALICE",
+			"text":    "<@UBOT> Add dark mode support",
+			"channel": "C0PRODUCT",
 			"ts":      "1234567890.123456",
 			// No thread_ts — top-level mention
 		},
@@ -201,18 +279,37 @@ func TestHandleEvent_AppMentionWithoutThreadTs(t *testing.T) {
 		t.Errorf("Expected 200, got %d", rec.Code)
 	}
 
-	// Give goroutine time to not fire
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	if github.called {
-		t.Error("Should not post GitHub comment for mention without thread_ts")
+		t.Error("Should not post a comment — should create an issue")
+	}
+
+	if !issueCreator.called {
+		t.Fatal("Expected GitHub issue to be created")
+	}
+	if issueCreator.owner != "luminor-project" || issueCreator.repo != "playground" {
+		t.Errorf("Wrong repo: %s/%s", issueCreator.owner, issueCreator.repo)
+	}
+	if issueCreator.title != "Add dark mode support" {
+		t.Errorf("Expected title 'Add dark mode support', got %q", issueCreator.title)
+	}
+	if issueCreator.pat != "ghp_test123" {
+		t.Errorf("Expected PAT ghp_test123, got %s", issueCreator.pat)
+	}
+
+	// Body should mention the requester with a deep link
+	slackLink := "https://test-workspace.slack.com/archives/C0PRODUCT/p1234567890123456"
+	expectedBody := fmt.Sprintf("Requested by Alice Smith [via Slack](%s)\n\n<!-- via-slack -->", slackLink)
+	if issueCreator.body != expectedBody {
+		t.Errorf("Unexpected issue body:\ngot:  %q\nwant: %q", issueCreator.body, expectedBody)
 	}
 }
 
 func TestHandleEvent_AppMentionInUntrackedThread(t *testing.T) {
 	github := &mockGitHubCommenter{}
 	threadFinder := &mockThreadFinder{err: fmt.Errorf("thread not found")}
-	h := NewHandler(threadFinder, github, &mockUserInfoResolver{}, &mockTargetRegistry{}, testSigningSecret, "")
+	h := NewHandler(threadFinder, github, nil, &mockUserInfoResolver{}, &mockTargetRegistry{}, testSigningSecret, "")
 
 	payload := map[string]interface{}{
 		"type": "event_callback",
@@ -265,7 +362,7 @@ func TestHandleEvent_AppMentionInTrackedThread(t *testing.T) {
 		found: true,
 	}
 
-	h := NewHandler(threadFinder, github, userResolver, registry, testSigningSecret, "test-workspace")
+	h := NewHandler(threadFinder, github, nil, userResolver, registry, testSigningSecret, "test-workspace")
 
 	payload := map[string]interface{}{
 		"type": "event_callback",
@@ -336,7 +433,7 @@ func TestHandleEvent_AppMentionInTrackedThread_UsesPRID(t *testing.T) {
 		found: true,
 	}
 
-	h := NewHandler(threadFinder, github, userResolver, registry, testSigningSecret, "test-workspace")
+	h := NewHandler(threadFinder, github, nil, userResolver, registry, testSigningSecret, "test-workspace")
 
 	payload := map[string]interface{}{
 		"type": "event_callback",
@@ -385,7 +482,7 @@ func TestHandleEvent_BotMentionStripped(t *testing.T) {
 		found: true,
 	}
 
-	h := NewHandler(threadFinder, github, userResolver, registry, testSigningSecret, "test-workspace")
+	h := NewHandler(threadFinder, github, nil, userResolver, registry, testSigningSecret, "test-workspace")
 
 	// Text with bot mention at different positions
 	payload := map[string]interface{}{
