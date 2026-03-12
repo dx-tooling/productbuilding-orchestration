@@ -111,6 +111,7 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 		SHA:          req.HeadSHA,
 		Branch:       req.Branch,
 		PreviewURL:   fmt.Sprintf("https://%s-pr-%d.%s", req.RepoName, req.PRNumber, s.previewDomain),
+		LogsURL:      fmt.Sprintf("https://api.%s/api/v1/previews/%s/%s/%d/logs", s.previewDomain, req.RepoOwner, req.RepoName, req.PRNumber),
 		AnimationURL: "https://raw.githubusercontent.com/luminor-project/assets/refs/heads/main/productbuilding/crane-building-animation-128x128.gif",
 	}
 
@@ -245,7 +246,7 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	_ = s.repo.Update(ctx, preview)
 
 	s.updateComment(ctx, &preview,
-		progressComment("Preview ready", meta, numSteps, fmt.Sprintf("**[%s](%s)**", meta.PreviewURL, meta.PreviewURL)),
+		progressComment("Preview ready", meta, numSteps, fmt.Sprintf("**[%s](%s)**  •  %s", meta.PreviewURL, meta.PreviewURL, meta.logsLink())),
 		pat, log)
 
 	log.Info("preview ready", "url", preview.PreviewURL)
@@ -331,6 +332,7 @@ type commentMeta struct {
 	SHA          string // full SHA
 	Branch       string
 	PreviewURL   string
+	LogsURL      string
 	AnimationURL string
 }
 
@@ -339,7 +341,11 @@ func (m commentMeta) commitLink() string {
 }
 
 func (m commentMeta) branchLink() string {
-	return fmt.Sprintf("[`%s`](https://github.com/%s/%s/tree/%s)", m.Branch, m.Owner, m.Repo, m.Branch)
+	return fmt.Sprintf("[%s](https://github.com/%s/%s/tree/%s)", m.Branch, m.Owner, m.Repo, m.Branch)
+}
+
+func (m commentMeta) logsLink() string {
+	return fmt.Sprintf("[View Logs](%s)", m.LogsURL)
 }
 
 // progressComment builds a markdown comment with a checklist showing deployment progress.
