@@ -175,15 +175,22 @@ func formatParentMessage(event slackfacade.NotificationEvent) MessageBlock {
 		emoji = "🔀"
 	}
 
-	text := fmt.Sprintf("%s *%s* #%d: %s\n<%s|View on GitHub>",
-		emoji,
-		event.IssueOrPR(),
-		event.IssueNumber,
-		event.Title,
-		event.GitHubURL(),
-	)
+	// Build the message with title, author, and body preview
+	lines := []string{
+		fmt.Sprintf("%s *%s* #%d: %s", emoji, event.IssueOrPR(), event.IssueNumber, event.Title),
+		fmt.Sprintf("👤 *Created by:* @%s", event.Author),
+	}
 
-	return MessageBlock{Text: text}
+	// Add body/description if present (truncated)
+	if event.Body != "" {
+		bodyPreview := truncate(event.Body, 280)
+		lines = append(lines, "", fmt.Sprintf("_%s_", bodyPreview))
+	}
+
+	// Add link to GitHub
+	lines = append(lines, "", fmt.Sprintf("🔗 <%s|View on GitHub>", event.GitHubURL()))
+
+	return MessageBlock{Text: strings.Join(lines, "\n")}
 }
 
 // formatEventMessage formats an update message for a thread
@@ -211,12 +218,12 @@ func formatEventMessage(event slackfacade.NotificationEvent) MessageBlock {
 		text = fmt.Sprintf("👤 Opened by @%s", event.Author)
 
 	case slackfacade.EventCommentAdded:
-		preview := truncate(event.Body, 150)
+		preview := truncate(event.Body, 250)
 		url := event.CommentURL()
 		if url != "" {
-			text = fmt.Sprintf("💬 @%s: %s\n<%s|View full comment>", event.Author, preview, url)
+			text = fmt.Sprintf("💬 *Comment by @%s:*\n> %s\n\n🔗 <%s|View full comment on GitHub>", event.Author, preview, url)
 		} else {
-			text = fmt.Sprintf("💬 @%s: %s", event.Author, preview)
+			text = fmt.Sprintf("💬 *Comment by @%s:*\n> %s", event.Author, preview)
 		}
 
 	case slackfacade.EventPRMerged:
