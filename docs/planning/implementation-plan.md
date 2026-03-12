@@ -615,6 +615,9 @@ logging:
   service: app           # Which compose service to get logs from (defaults to compose.service)
   type: docker         # "docker" (default) for stdout/stderr, or "file" for file-based logs
   # path: /var/log/app/*.log  # Required when type="file" - path to log files inside container
+
+# Optional: add a note shown in PR comments (e.g., test credentials, warnings)
+user_facing_note: "Test login: admin / secret"
 ```
 
 The target repo also provides `.productbuilding/preview/docker-compose.yml` — a production-oriented Compose file (using the prod Dockerfile, no hot reload, no host volume mounts) with all required services.
@@ -632,9 +635,26 @@ logging:
 
 The logs endpoint works with any tech stack - it simply needs to know how to access the logs (Docker stdout or files inside the container).
 
+**User-Facing Notes:**
+
+Target projects can include a `user_facing_note` in their contract to display important information in PR comments:
+
+```yaml
+user_facing_note: "Test login: admin / secret"
+```
+
+Common use cases:
+- Test credentials for preview environments
+- Warnings about preview limitations ("RAG features not available")
+- Important setup instructions
+- Feature flags or environment-specific notes
+
+The note appears in PR comments as a blockquote:
+> **Note:** Test login: admin / secret
+
 ---
 
-## 4. Claude Code GitHub Actions (Issue-to-PR Workflow)
+## 4. OpenCode GitHub Actions (Issue-to-PR Workflow)
 
 The preview orchestrator is one half of the product building workflow. The other half is **OpenCode running in GitHub Actions**, which turns issues into implementations and opens PRs. The preview orchestrator then picks up those PRs via webhook.
 
