@@ -307,7 +307,7 @@ func TestHandleEvent_AppMentionInTrackedThread(t *testing.T) {
 	}
 
 	// Verify comment format
-	expectedBody := "**@Alice Smith** via Slack:\n\nplease fix the alignment\n\n<!-- via-slack -->"
+	expectedBody := "**Alice Smith** via Slack:\n\nplease fix the alignment\n\n<!-- via-slack -->"
 	if github.body != expectedBody {
 		t.Errorf("Unexpected comment body:\ngot:  %q\nwant: %q", github.body, expectedBody)
 	}
@@ -413,7 +413,7 @@ func TestHandleEvent_BotMentionStripped(t *testing.T) {
 	}
 
 	// The mention should be stripped; text should just be "hey  do the thing" trimmed
-	expectedBody := "**@Charlie** via Slack:\n\nhey  do the thing\n\n<!-- via-slack -->"
+	expectedBody := "**Charlie** via Slack:\n\nhey  do the thing\n\n<!-- via-slack -->"
 	if github.body != expectedBody {
 		t.Errorf("Unexpected comment body:\ngot:  %q\nwant: %q", github.body, expectedBody)
 	}

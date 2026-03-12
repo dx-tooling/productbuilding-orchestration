@@ -184,7 +184,7 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 	}
 
 	// Format the comment
-	comment := fmt.Sprintf("**@%s** via Slack:\n\n%s\n\n<!-- via-slack -->", displayName, text)
+	comment := fmt.Sprintf("**%s** via Slack:\n\n%s\n\n<!-- via-slack -->", displayName, text)
 
 	// Post to GitHub
 	if _, err := h.githubClient.CreateComment(ctx, thread.RepoOwner, thread.RepoName, number, comment, target.GitHubPAT); err != nil {
