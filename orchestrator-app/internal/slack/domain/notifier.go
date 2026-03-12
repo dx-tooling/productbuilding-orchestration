@@ -102,9 +102,19 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 	var err error
 
 	if event.IsPR() {
+		// First try to find by PR number
 		thread, err = n.repository.FindThreadByPR(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
+		// If not found, check if there's an issue thread with the same number
+		// (PRs are also issues in GitHub, so they share the same number)
+		if thread == nil && err == nil {
+			thread, err = n.repository.FindThread(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
+		}
 	} else {
 		thread, err = n.repository.FindThread(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
+		// If not found, check if there's a PR thread with the same number
+		if thread == nil && err == nil {
+			thread, err = n.repository.FindThreadByPR(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
+		}
 	}
 
 	newThread := false
@@ -151,6 +161,23 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 		n.mu.Lock()
 		n.reactions[parentTs] = event.Emoji
 		n.mu.Unlock()
+	} else {
+		// Found existing thread - update it to include both issue and PR IDs if needed
+		// This handles the case where an issue becomes a PR (or vice versa)
+		needsUpdate := false
+		if event.IsPR() && thread.GithubPRID == 0 && thread.GithubIssueID == event.IssueNumber {
+			// Issue became a PR - update the thread
+			thread.GithubPRID = event.IssueNumber
+			thread.ThreadType = "pull_request" // Update type
+			needsUpdate = true
+			slog.Info("updating thread from issue to PR", "repo", event.RepoOwner+"/"+event.RepoName, "number", event.IssueNumber)
+		}
+
+		if needsUpdate {
+			if err := n.repository.SaveThread(ctx, thread); err != nil {
+				slog.Warn("failed to update thread type", "error", err)
+			}
+		}
 	}
 
 	// Post update to thread (only if not the first message creating the thread)
