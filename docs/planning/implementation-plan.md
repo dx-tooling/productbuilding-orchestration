@@ -860,7 +860,55 @@ mise run onboard-target # Add new target repo
 
 ---
 
-## 8. Future Considerations (Not in MVP)
+## 8. Troubleshooting
+
+### "Webhook from unknown repo" error
+
+**Symptom:** Orchestrator logs show:
+```
+{"level":"WARN","msg":"webhook from unknown repo","repo":"owner/new-repo"}
+```
+
+**Cause:** The orchestrator loads target configuration at startup and caches it in memory. When you add a new target via `mise run infra-apply`, the running orchestrator doesn't automatically pick up the new configuration.
+
+**Solution:** Redeploy the orchestrator:
+```bash
+mise run deploy
+```
+
+**Prevention:** Always run `mise run deploy` after adding new targets:
+```bash
+mise run onboard-target     # Add target
+mise run secrets-encrypt     # Encrypt
+mise run infra-apply         # Create webhook/secret
+mise run deploy              # CRITICAL: Reload orchestrator
+```
+
+### OpenCode workflow fails with API errors
+
+**Symptom:** OpenCode action fails with `undefined is not an object (evaluating 'octoRest.rest')`
+
+**Cause:** The workflow is missing `GITHUB_TOKEN` environment variable.
+
+**Solution:** Ensure the workflow includes:
+```yaml
+- uses: anomalyco/opencode/github@latest
+  env:
+    FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Required for API access
+```
+
+### Preview not deploying after PR update
+
+**Symptom:** Pushing commits to an existing PR doesn't trigger preview updates.
+
+**Cause:** Webhook may not be configured for "synchronize" events.
+
+**Solution:** Verify webhook is configured for `pull_request` events (includes synchronize). Check GitHub webhook settings or re-run `mise run infra-apply`.
+
+---
+
+## 9. Future Considerations (Not in MVP)
 
 - GitHub Deployment/Environment status reporting
 - Image-based deployment from CI (Path B from design brief)

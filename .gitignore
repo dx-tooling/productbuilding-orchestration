@@ -2,6 +2,10 @@ secrets.yaml
 secrets/.key
 .env
 
+# macOS
+.DS_Store
+**/.DS_Store
+
 # OpenTofu
 infrastructure-mgmt/bootstrap/terraform.tfstate
 infrastructure-mgmt/bootstrap/terraform.tfstate.backup

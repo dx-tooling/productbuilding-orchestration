@@ -102,6 +102,7 @@ mise run onboard-target     # Interactive — prompts for repo details, credenti
                             # Registers the target AND scaffolds .productbuilding/, workflow, AGENTS.md
 mise run secrets-encrypt     # Re-encrypt updated targets.auto.tfvars
 mise run infra-apply        # Creates webhook, Secrets Manager entry, GitHub Actions secret
+mise run deploy             # Redeploy orchestrator to load new target (REQUIRED)
 ```
 
 Then manually:
@@ -155,7 +156,10 @@ The Elastic IP remains stable, so DNS continues to work.
 ```bash
 mise run onboard-target     # Registers target + scaffolds files in target repo
 mise run secrets-encrypt    # Re-encrypt updated targets.auto.tfvars
-mise run infra-apply
+mise run infra-apply        # Creates webhook, Secrets Manager entry, GitHub Actions secret
+mise run deploy             # CRITICAL: Redeploy orchestrator to load new target config
 # Then: install OpenCode GitHub App, customize scaffolded files, commit + push
 # Don't forget to commit the updated secrets/*.enc files
 ```
+
+**Important:** The orchestrator caches target configuration at startup. After adding a new target, you **must** run `mise run deploy` to restart the orchestrator with the updated configuration. Without this step, webhooks from the new repo will be rejected as "unknown repository".
