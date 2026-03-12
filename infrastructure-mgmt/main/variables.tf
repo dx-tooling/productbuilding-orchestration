@@ -47,6 +47,8 @@ variable "targets" {
     github_pat        = string
     webhook_secret    = string
     fireworks_api_key = string
+    slack_channel     = optional(string)
+    slack_bot_token   = optional(string)
   }))
   default = {}
 }

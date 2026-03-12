@@ -30,7 +30,7 @@ type mockReaction struct {
 	Emoji     string
 }
 
-func (m *mockClient) PostMessage(ctx context.Context, channel string, msg MessageBlock) (string, error) {
+func (m *mockClient) PostMessage(ctx context.Context, botToken, channel string, msg MessageBlock) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ts := "parent-ts-" + string(rune('a'+len(m.postedMessages)))
@@ -41,7 +41,7 @@ func (m *mockClient) PostMessage(ctx context.Context, channel string, msg Messag
 	return ts, nil
 }
 
-func (m *mockClient) PostToThread(ctx context.Context, channel, threadTs string, msg MessageBlock) error {
+func (m *mockClient) PostToThread(ctx context.Context, botToken, channel, threadTs string, msg MessageBlock) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.postedMessages = append(m.postedMessages, mockPost{
@@ -52,7 +52,7 @@ func (m *mockClient) PostToThread(ctx context.Context, channel, threadTs string,
 	return nil
 }
 
-func (m *mockClient) AddReaction(ctx context.Context, channel, timestamp, emoji string) error {
+func (m *mockClient) AddReaction(ctx context.Context, botToken, channel, timestamp, emoji string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.reactions = append(m.reactions, mockReaction{
@@ -63,7 +63,7 @@ func (m *mockClient) AddReaction(ctx context.Context, channel, timestamp, emoji 
 	return nil
 }
 
-func (m *mockClient) RemoveReaction(ctx context.Context, channel, timestamp, emoji string) error {
+func (m *mockClient) RemoveReaction(ctx context.Context, botToken, channel, timestamp, emoji string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// Find and mark as removed (simplified)

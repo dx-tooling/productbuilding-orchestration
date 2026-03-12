@@ -49,13 +49,13 @@ func TestClient_PostMessage(t *testing.T) {
 	defer server.Close()
 
 	// Create client with test server
-	client := NewClientWithBaseURL("test-token", server.URL)
+	client := NewClientWithBaseURL(server.URL)
 
 	msg := MessageBlock{
 		Text: "Test message",
 	}
 
-	ts, err := client.PostMessage(context.Background(), "#test-channel", msg)
+	ts, err := client.PostMessage(context.Background(), "test-token", "#test-channel", msg)
 	if err != nil {
 		t.Errorf("PostMessage() error = %v", err)
 		return
@@ -85,13 +85,13 @@ func TestClient_PostToThread(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClientWithBaseURL("test-token", server.URL)
+	client := NewClientWithBaseURL(server.URL)
 
 	msg := MessageBlock{
 		Text: "Reply in thread",
 	}
 
-	err := client.PostToThread(context.Background(), "#test-channel", "parent-ts-123", msg)
+	err := client.PostToThread(context.Background(), "test-token", "#test-channel", "parent-ts-123", msg)
 	if err != nil {
 		t.Errorf("PostToThread() error = %v", err)
 	}
@@ -119,9 +119,9 @@ func TestClient_AddReaction(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClientWithBaseURL("test-token", server.URL)
+	client := NewClientWithBaseURL(server.URL)
 
-	err := client.AddReaction(context.Background(), "#test-channel", "msg-ts-123", "white_check_mark")
+	err := client.AddReaction(context.Background(), "test-token", "#test-channel", "msg-ts-123", "white_check_mark")
 	if err != nil {
 		t.Errorf("AddReaction() error = %v", err)
 	}
@@ -141,9 +141,9 @@ func TestClient_RemoveReaction(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClientWithBaseURL("test-token", server.URL)
+	client := NewClientWithBaseURL(server.URL)
 
-	err := client.RemoveReaction(context.Background(), "#test-channel", "msg-ts-123", "arrows_counterclockwise")
+	err := client.RemoveReaction(context.Background(), "test-token", "#test-channel", "msg-ts-123", "arrows_counterclockwise")
 	if err != nil {
 		t.Errorf("RemoveReaction() error = %v", err)
 	}
@@ -160,10 +160,10 @@ func TestClient_PostMessage_SlackError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClientWithBaseURL("test-token", server.URL)
+	client := NewClientWithBaseURL(server.URL)
 
 	msg := MessageBlock{Text: "Test"}
-	_, err := client.PostMessage(context.Background(), "#invalid", msg)
+	_, err := client.PostMessage(context.Background(), "test-token", "#invalid", msg)
 	if err == nil {
 		t.Error("PostMessage() expected error for failed Slack response")
 	}
@@ -175,10 +175,10 @@ func TestClient_PostMessage_HTTPError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClientWithBaseURL("test-token", server.URL)
+	client := NewClientWithBaseURL(server.URL)
 
 	msg := MessageBlock{Text: "Test"}
-	_, err := client.PostMessage(context.Background(), "#test", msg)
+	_, err := client.PostMessage(context.Background(), "test-token", "#test", msg)
 	if err == nil {
 		t.Error("PostMessage() expected error for HTTP 500")
 	}

@@ -12,10 +12,12 @@ resource "aws_secretsmanager_secret_version" "target" {
 
   secret_id = aws_secretsmanager_secret.target[each.key].id
   secret_string = jsonencode({
-    repo_owner     = each.value.repo_owner
-    repo_name      = each.value.repo_name
-    github_pat     = each.value.github_pat
-    webhook_secret = each.value.webhook_secret
+    repo_owner      = each.value.repo_owner
+    repo_name       = each.value.repo_name
+    github_pat      = each.value.github_pat
+    webhook_secret  = each.value.webhook_secret
+    slack_channel   = each.value.slack_channel
+    slack_bot_token = each.value.slack_bot_token
   })
 }
 

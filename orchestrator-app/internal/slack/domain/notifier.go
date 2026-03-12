@@ -15,10 +15,10 @@ import (
 
 // SlackClient defines the interface for Slack API operations (matches *Client)
 type SlackClient interface {
-	PostMessage(ctx context.Context, channel string, msg MessageBlock) (string, error)
-	PostToThread(ctx context.Context, channel, threadTs string, msg MessageBlock) error
-	AddReaction(ctx context.Context, channel, timestamp, emoji string) error
-	RemoveReaction(ctx context.Context, channel, timestamp, emoji string) error
+	PostMessage(ctx context.Context, botToken, channel string, msg MessageBlock) (string, error)
+	PostToThread(ctx context.Context, botToken, channel, threadTs string, msg MessageBlock) error
+	AddReaction(ctx context.Context, botToken, channel, timestamp, emoji string) error
+	RemoveReaction(ctx context.Context, botToken, channel, timestamp, emoji string) error
 }
 
 // ThreadRepository defines the interface for thread persistence
@@ -72,9 +72,9 @@ func (n *Notifier) Notify(ctx context.Context, event slackfacade.NotificationEve
 	// Handle emoji reactions immediately (not debounced)
 	if event.Emoji != "" && event.Emoji != currentEmoji && event.ThreadTs != "" {
 		if currentEmoji != "" {
-			n.client.RemoveReaction(ctx, target.SlackChannel, event.ThreadTs, currentEmoji)
+			n.client.RemoveReaction(ctx, target.SlackBotToken, target.SlackChannel, event.ThreadTs, currentEmoji)
 		}
-		n.client.AddReaction(ctx, target.SlackChannel, event.ThreadTs, event.Emoji)
+		n.client.AddReaction(ctx, target.SlackBotToken, target.SlackChannel, event.ThreadTs, event.Emoji)
 		n.reactions[event.ThreadTs] = event.Emoji
 	}
 
@@ -112,7 +112,7 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 		newThread = true
 		// Create new thread
 		parentMsg := formatParentMessage(*event)
-		parentTs, err := n.client.PostMessage(ctx, target.SlackChannel, parentMsg)
+		parentTs, err := n.client.PostMessage(ctx, target.SlackBotToken, target.SlackChannel, parentMsg)
 		if err != nil {
 			slog.Warn("failed to create slack thread",
 				"error", err,
@@ -159,7 +159,7 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 	}
 
 	updateMsg := formatEventMessage(*event)
-	if err := n.client.PostToThread(ctx, thread.SlackChannel, thread.SlackThreadTs, updateMsg); err != nil {
+	if err := n.client.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, updateMsg); err != nil {
 		slog.Warn("failed to post to slack thread",
 			"error", err,
 			"channel", thread.SlackChannel,

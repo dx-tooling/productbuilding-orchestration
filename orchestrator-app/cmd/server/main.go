@@ -80,11 +80,10 @@ func main() {
 		cfg.WorkspaceDir,
 	)
 
-	// ── Build Slack Notifier (initialized but lazy-loaded per target) ────
+	// ── Build Slack Notifier (bot token loaded per target from config) ────
 	slackRepo := slackinfra.NewSQLiteRepository(db)
 	slackDebouncer := slackinfra.NewDebouncer()
-	// Bot token will be loaded per target from TargetConfig.SlackBotToken
-	slackClient := slackdomain.NewClient("")
+	slackClient := slackdomain.NewClient()
 	slackNotifier := slackdomain.NewNotifier(slackClient, slackRepo, slackDebouncer)
 
 	// ── Build HTTP Routes ──────────────────────────────────────────────

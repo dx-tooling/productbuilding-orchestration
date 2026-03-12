@@ -13,24 +13,21 @@ const slackAPIBaseURL = "https://slack.com/api"
 
 // Client provides methods to interact with the Slack API
 type Client struct {
-	botToken   string
 	httpClient *http.Client
 	baseURL    string
 }
 
-// NewClient creates a new Slack client with the given bot token
-func NewClient(botToken string) *Client {
+// NewClient creates a new Slack client
+func NewClient() *Client {
 	return &Client{
-		botToken:   botToken,
 		httpClient: &http.Client{},
 		baseURL:    slackAPIBaseURL,
 	}
 }
 
 // NewClientWithBaseURL creates a client with a custom base URL (for testing)
-func NewClientWithBaseURL(botToken, baseURL string) *Client {
+func NewClientWithBaseURL(baseURL string) *Client {
 	return &Client{
-		botToken:   botToken,
 		httpClient: &http.Client{},
 		baseURL:    baseURL,
 	}
@@ -44,7 +41,7 @@ type slackResponse struct {
 }
 
 // PostMessage posts a message to a channel and returns the timestamp
-func (c *Client) PostMessage(ctx context.Context, channel string, msg MessageBlock) (string, error) {
+func (c *Client) PostMessage(ctx context.Context, botToken, channel string, msg MessageBlock) (string, error) {
 	payload := map[string]interface{}{
 		"channel": channel,
 		"text":    msg.Text,
@@ -54,11 +51,11 @@ func (c *Client) PostMessage(ctx context.Context, channel string, msg MessageBlo
 		payload["blocks"] = msg.Blocks
 	}
 
-	return c.post(ctx, "/chat.postMessage", payload)
+	return c.post(ctx, botToken, "/chat.postMessage", payload)
 }
 
 // PostToThread posts a message to an existing thread
-func (c *Client) PostToThread(ctx context.Context, channel, threadTs string, msg MessageBlock) error {
+func (c *Client) PostToThread(ctx context.Context, botToken, channel, threadTs string, msg MessageBlock) error {
 	payload := map[string]interface{}{
 		"channel":   channel,
 		"thread_ts": threadTs,
@@ -69,36 +66,36 @@ func (c *Client) PostToThread(ctx context.Context, channel, threadTs string, msg
 		payload["blocks"] = msg.Blocks
 	}
 
-	_, err := c.post(ctx, "/chat.postMessage", payload)
+	_, err := c.post(ctx, botToken, "/chat.postMessage", payload)
 	return err
 }
 
 // AddReaction adds an emoji reaction to a message
-func (c *Client) AddReaction(ctx context.Context, channel, timestamp, emoji string) error {
+func (c *Client) AddReaction(ctx context.Context, botToken, channel, timestamp, emoji string) error {
 	payload := map[string]interface{}{
 		"channel":   channel,
 		"timestamp": timestamp,
 		"name":      emoji,
 	}
 
-	_, err := c.post(ctx, "/reactions.add", payload)
+	_, err := c.post(ctx, botToken, "/reactions.add", payload)
 	return err
 }
 
 // RemoveReaction removes an emoji reaction from a message
-func (c *Client) RemoveReaction(ctx context.Context, channel, timestamp, emoji string) error {
+func (c *Client) RemoveReaction(ctx context.Context, botToken, channel, timestamp, emoji string) error {
 	payload := map[string]interface{}{
 		"channel":   channel,
 		"timestamp": timestamp,
 		"name":      emoji,
 	}
 
-	_, err := c.post(ctx, "/reactions.remove", payload)
+	_, err := c.post(ctx, botToken, "/reactions.remove", payload)
 	return err
 }
 
 // post makes a POST request to the Slack API
-func (c *Client) post(ctx context.Context, endpoint string, payload interface{}) (string, error) {
+func (c *Client) post(ctx context.Context, botToken, endpoint string, payload interface{}) (string, error) {
 	url := c.baseURL + endpoint
 
 	body, err := json.Marshal(payload)
@@ -111,7 +108,7 @@ func (c *Client) post(ctx context.Context, endpoint string, payload interface{})
 		return "", fmt.Errorf("create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.botToken)
+	req.Header.Set("Authorization", "Bearer "+botToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
