@@ -416,11 +416,7 @@ func (s *Service) notifySlack(ctx context.Context, p *Preview, eventType slackfa
 		return
 	}
 
-	// Construct logs URL from preview URL
-	logsURL := ""
-	if p.PreviewURL != "" {
-		logsURL = p.PreviewURL + "/logs"
-	}
+	logsURL := fmt.Sprintf("https://api.%s/previews/%s/%s/%d/logs", s.previewDomain, p.RepoOwner, p.RepoName, p.PRNumber)
 
 	event := slackfacade.NotificationEvent{
 		Type:        eventType,
