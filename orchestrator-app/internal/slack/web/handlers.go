@@ -183,8 +183,9 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 		number = thread.GithubPRID
 	}
 
-	// Format the comment
-	comment := fmt.Sprintf("**%s** via Slack:\n\n%s\n\n<!-- via-slack -->", displayName, text)
+	// Format the comment with a deep link back to the Slack message
+	slackLink := fmt.Sprintf("https://slack.com/archives/%s/p%s", event.Channel, strings.ReplaceAll(event.Ts, ".", ""))
+	comment := fmt.Sprintf("**%s** [via Slack](%s):\n\n%s\n\n<!-- via-slack -->", displayName, slackLink, text)
 
 	// Post to GitHub
 	if _, err := h.githubClient.CreateComment(ctx, thread.RepoOwner, thread.RepoName, number, comment, target.GitHubPAT); err != nil {
