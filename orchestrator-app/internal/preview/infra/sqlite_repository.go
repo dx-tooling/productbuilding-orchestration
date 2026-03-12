@@ -19,15 +19,17 @@ func NewSQLiteRepository(db *sql.DB) *SQLiteRepository {
 
 func (r *SQLiteRepository) Upsert(ctx context.Context, p domain.Preview) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO previews (id, repo_owner, repo_name, pr_number, branch_name, head_sha, preview_url, status, compose_project, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO previews (id, repo_owner, repo_name, pr_number, branch_name, head_sha, preview_url, status, compose_project, created_at, updated_at, github_comment_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(repo_owner, repo_name, pr_number) DO UPDATE SET
 			branch_name = excluded.branch_name,
 			head_sha = excluded.head_sha,
 			status = excluded.status,
-			updated_at = ?`,
+			updated_at = ?,
+			github_comment_id = excluded.github_comment_id`,
 		p.ID, p.RepoOwner, p.RepoName, p.PRNumber, p.BranchName, p.HeadSHA,
 		p.PreviewURL, string(p.Status), p.ComposeProject, p.CreatedAt, p.UpdatedAt,
+		p.GithubCommentID,
 		time.Now(),
 	)
 	if err != nil {
