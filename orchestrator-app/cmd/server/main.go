@@ -69,6 +69,12 @@ func main() {
 	composeRunner := previewinfra.NewComposeRunner()
 	healthChecker := previewinfra.NewHealthChecker()
 
+	// ── Build Slack Notifier (bot token loaded per target from config) ────
+	slackRepo := slackinfra.NewSQLiteRepository(db)
+	slackDebouncer := slackinfra.NewDebouncer()
+	slackClient := slackdomain.NewClient()
+	slackNotifier := slackdomain.NewNotifier(slackClient, slackRepo, slackDebouncer)
+
 	// ── Build Preview Vertical ─────────────────────────────────────────
 	previewService := previewdomain.NewService(
 		previewRepo,
@@ -76,15 +82,11 @@ func main() {
 		composeRunner, // ComposeManager
 		healthChecker, // HealthChecker
 		githubClient,  // PRCommenter
+		slackNotifier, // SlackNotifier
+		registry,      // TargetRegistry
 		cfg.PreviewDomain,
 		cfg.WorkspaceDir,
 	)
-
-	// ── Build Slack Notifier (bot token loaded per target from config) ────
-	slackRepo := slackinfra.NewSQLiteRepository(db)
-	slackDebouncer := slackinfra.NewDebouncer()
-	slackClient := slackdomain.NewClient()
-	slackNotifier := slackdomain.NewNotifier(slackClient, slackRepo, slackDebouncer)
 
 	// ── Build HTTP Routes ──────────────────────────────────────────────
 	mux := http.NewServeMux()

@@ -10,7 +10,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
+	slackfacade "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/facade"
 )
+
+// SlackNotifier defines the interface for sending Slack notifications
+type SlackNotifier interface {
+	Notify(ctx context.Context, event slackfacade.NotificationEvent, target targets.TargetConfig) error
+}
 
 // Deploy step indices for the progress checklist.
 const (
@@ -33,13 +41,15 @@ var stepLabels = [numSteps]string{
 }
 
 type Service struct {
-	repo          Repository
-	downloader    SourceDownloader
-	compose       ComposeManager
-	healthChecker HealthChecker
-	commenter     PRCommenter
-	previewDomain string
-	workspaceDir  string
+	repo           Repository
+	downloader     SourceDownloader
+	compose        ComposeManager
+	healthChecker  HealthChecker
+	commenter      PRCommenter
+	notifier       SlackNotifier
+	targetRegistry *targets.Registry
+	previewDomain  string
+	workspaceDir   string
 
 	// Per-PR mutex to prevent concurrent operations on the same preview.
 	locksMu sync.Mutex
@@ -52,18 +62,22 @@ func NewService(
 	compose ComposeManager,
 	healthChecker HealthChecker,
 	commenter PRCommenter,
+	notifier SlackNotifier,
+	targetRegistry *targets.Registry,
 	previewDomain string,
 	workspaceDir string,
 ) *Service {
 	return &Service{
-		repo:          repo,
-		downloader:    downloader,
-		compose:       compose,
-		healthChecker: healthChecker,
-		commenter:     commenter,
-		previewDomain: previewDomain,
-		workspaceDir:  workspaceDir,
-		locks:         make(map[string]*sync.Mutex),
+		repo:           repo,
+		downloader:     downloader,
+		compose:        compose,
+		healthChecker:  healthChecker,
+		commenter:      commenter,
+		notifier:       notifier,
+		targetRegistry: targetRegistry,
+		previewDomain:  previewDomain,
+		workspaceDir:   workspaceDir,
+		locks:          make(map[string]*sync.Mutex),
 	}
 }
 
@@ -305,6 +319,11 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 		progressComment("Preview ready", meta, numSteps, fmt.Sprintf("**[%s](%s)**  •  %s", meta.PreviewURL, meta.PreviewURL, meta.logsLink())),
 		pat, log)
 
+	// Notify Slack that preview is ready
+	if target, ok := s.targetRegistry.Get(preview.RepoOwner, preview.RepoName); ok {
+		s.notifySlack(ctx, &preview, slackfacade.EventPRReady, "ready", target)
+	}
+
 	log.Info("preview ready", "url", preview.PreviewURL)
 }
 
@@ -371,6 +390,11 @@ func (s *Service) failPreview(ctx context.Context, p *Preview, completedSteps in
 	}
 	body := failedProgressComment(meta, completedSteps, stage, message)
 	s.updateComment(ctx, p, body, pat, log)
+
+	// Notify Slack that preview failed
+	if target, ok := s.targetRegistry.Get(p.RepoOwner, p.RepoName); ok {
+		s.notifySlack(ctx, p, slackfacade.EventPRFailed, stage+": "+message, target)
+	}
 }
 
 func (s *Service) updateComment(ctx context.Context, p *Preview, body, pat string, log *slog.Logger) {
@@ -378,6 +402,40 @@ func (s *Service) updateComment(ctx context.Context, p *Preview, body, pat strin
 		if err := s.commenter.UpdateComment(ctx, p.RepoOwner, p.RepoName, p.GithubCommentID, body, pat); err != nil {
 			log.Warn("failed to update comment", "error", err)
 		}
+	}
+}
+
+// notifySlack sends a Slack notification for preview status updates
+func (s *Service) notifySlack(ctx context.Context, p *Preview, eventType slackfacade.EventType, status string, target targets.TargetConfig) {
+	if s.notifier == nil {
+		return
+	}
+
+	// Silently skip if no Slack config for this target
+	if target.SlackChannel == "" || target.SlackBotToken == "" {
+		return
+	}
+
+	// Construct logs URL from preview URL
+	logsURL := ""
+	if p.PreviewURL != "" {
+		logsURL = p.PreviewURL + "/logs"
+	}
+
+	event := slackfacade.NotificationEvent{
+		Type:        eventType,
+		RepoOwner:   p.RepoOwner,
+		RepoName:    p.RepoName,
+		IssueNumber: p.PRNumber,
+		Title:       fmt.Sprintf("Preview for %s", p.BranchName),
+		Status:      status,
+		PreviewURL:  p.PreviewURL,
+		LogsURL:     logsURL,
+		Author:      "ProductBuilder",
+	}
+
+	if err := s.notifier.Notify(ctx, event, target); err != nil {
+		slog.Warn("failed to send slack notification", "error", err, "repo", p.RepoOwner+"/"+p.RepoName, "pr", p.PRNumber)
 	}
 }
 
