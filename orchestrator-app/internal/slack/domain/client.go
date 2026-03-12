@@ -150,6 +150,54 @@ func (c *Client) GetUserInfo(ctx context.Context, botToken, userID string) (stri
 	return name, nil
 }
 
+// channelInfoResponse represents the Slack conversations.info API response
+type channelInfoResponse struct {
+	OK      bool `json:"ok"`
+	Channel struct {
+		Name string `json:"name"`
+	} `json:"channel"`
+	Error string `json:"error,omitempty"`
+}
+
+// GetChannelName resolves a Slack channel ID to its name
+func (c *Client) GetChannelName(ctx context.Context, botToken, channelID string) (string, error) {
+	url := c.baseURL + "/conversations.info?channel=" + channelID
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+botToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("slack api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("slack api returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var chResp channelInfoResponse
+	if err := json.Unmarshal(respBody, &chResp); err != nil {
+		return "", fmt.Errorf("parse response: %w", err)
+	}
+
+	if !chResp.OK {
+		return "", fmt.Errorf("slack api error: %s", chResp.Error)
+	}
+
+	return chResp.Channel.Name, nil
+}
+
 // post makes a POST request to the Slack API
 func (c *Client) post(ctx context.Context, botToken, endpoint string, payload interface{}) (string, error) {
 	url := c.baseURL + endpoint

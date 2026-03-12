@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 )
 
 // TargetConfig holds credentials for a single target repository.
@@ -35,14 +36,29 @@ func (r *Registry) Get(repoOwner, repoName string) (TargetConfig, bool) {
 	return t, ok
 }
 
-// GetBySlackChannel returns the config for a target linked to the given Slack channel ID.
-func (r *Registry) GetBySlackChannel(channel string) (TargetConfig, bool) {
+// GetByChannelName returns the config for a target whose repo name matches
+// the Slack channel naming convention "productbuilding-<reponame>".
+func (r *Registry) GetByChannelName(channelName string) (TargetConfig, bool) {
+	if !strings.HasPrefix(channelName, "productbuilding-") {
+		return TargetConfig{}, false
+	}
+	repoName := strings.TrimPrefix(channelName, "productbuilding-")
 	for _, t := range r.targets {
-		if t.SlackChannel == channel {
+		if t.RepoName == repoName {
 			return t, true
 		}
 	}
 	return TargetConfig{}, false
+}
+
+// AnyBotToken returns the first available Slack bot token from any target.
+func (r *Registry) AnyBotToken() string {
+	for _, t := range r.targets {
+		if t.SlackBotToken != "" {
+			return t.SlackBotToken
+		}
+	}
+	return ""
 }
 
 // LoadFromFile reads a JSON array of target configs (as written by cloud-init).

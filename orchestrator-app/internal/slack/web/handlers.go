@@ -35,15 +35,17 @@ type GitHubIssueCreator interface {
 	CreateIssue(ctx context.Context, owner, repo, title, body, pat string) (int, error)
 }
 
-// UserInfoResolver resolves a Slack user ID to a display name
+// UserInfoResolver resolves Slack user and channel info
 type UserInfoResolver interface {
 	GetUserInfo(ctx context.Context, botToken, userID string) (string, error)
+	GetChannelName(ctx context.Context, botToken, channelID string) (string, error)
 }
 
-// TargetRegistry looks up target configuration by repo or channel
+// TargetRegistry looks up target configuration by repo or channel name
 type TargetRegistry interface {
 	Get(repoOwner, repoName string) (targets.TargetConfig, bool)
-	GetBySlackChannel(channel string) (targets.TargetConfig, bool)
+	GetByChannelName(channelName string) (targets.TargetConfig, bool)
+	AnyBotToken() string
 }
 
 // Handler handles Slack Events API callbacks
@@ -166,8 +168,8 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 
 // handleTopLevelMention creates a GitHub issue from a top-level @mention
 func (h *Handler) handleTopLevelMention(ctx context.Context, event slackAppMentionEvent, botUserID string) {
-	// Look up target by Slack channel
-	target, ok := h.registry.GetBySlackChannel(event.Channel)
+	// Resolve channel ID → name, then look up target by naming convention
+	target, ok := h.resolveTargetByChannel(ctx, event.Channel)
 	if !ok {
 		slog.Debug("ignoring top-level app_mention in unregistered channel", "channel", event.Channel)
 		return
@@ -275,6 +277,32 @@ func (h *Handler) slackMessageLink(channel, ts, threadTs, cid string) string {
 		link += fmt.Sprintf("?thread_ts=%s&cid=%s", threadTs, cid)
 	}
 	return link
+}
+
+// resolveTargetByChannel resolves a Slack channel ID to a target config
+// using the naming convention "productbuilding-<reponame>".
+// It tries each target's bot token to resolve the channel name.
+func (h *Handler) resolveTargetByChannel(ctx context.Context, channelID string) (targets.TargetConfig, bool) {
+	// We need a bot token to call the Slack API. Try to get the channel name
+	// using whatever bot token we can find from the target that will eventually match.
+	// Since all targets share the same Slack workspace, any valid bot token works.
+	// We resolve the channel name first, then look up the target.
+	channelName, err := h.resolveChannelName(ctx, channelID)
+	if err != nil {
+		slog.Debug("failed to resolve channel name", "channel", channelID, "error", err)
+		return targets.TargetConfig{}, false
+	}
+
+	return h.registry.GetByChannelName(channelName)
+}
+
+// resolveChannelName uses the first available bot token to resolve a channel ID to its name.
+func (h *Handler) resolveChannelName(ctx context.Context, channelID string) (string, error) {
+	token := h.registry.AnyBotToken()
+	if token == "" {
+		return "", fmt.Errorf("no bot token available to resolve channel name")
+	}
+	return h.slackClient.GetChannelName(ctx, token, channelID)
 }
 
 // verifySignature validates the Slack request signature using HMAC-SHA256

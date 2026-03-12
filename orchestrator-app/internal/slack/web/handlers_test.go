@@ -56,12 +56,18 @@ func (m *mockGitHubCommenter) CreateComment(ctx context.Context, owner, repo str
 }
 
 type mockUserInfoResolver struct {
-	name string
-	err  error
+	name        string
+	err         error
+	channelName string
+	channelErr  error
 }
 
 func (m *mockUserInfoResolver) GetUserInfo(ctx context.Context, botToken, userID string) (string, error) {
 	return m.name, m.err
+}
+
+func (m *mockUserInfoResolver) GetChannelName(ctx context.Context, botToken, channelID string) (string, error) {
+	return m.channelName, m.channelErr
 }
 
 type mockGitHubIssueCreator struct {
@@ -86,18 +92,23 @@ func (m *mockGitHubIssueCreator) CreateIssue(ctx context.Context, owner, repo, t
 }
 
 type mockTargetRegistry struct {
-	config         targets.TargetConfig
-	found          bool
-	channelConfig  targets.TargetConfig
-	channelFound   bool
+	config        targets.TargetConfig
+	found         bool
+	channelConfig targets.TargetConfig
+	channelFound  bool
+	botToken      string
 }
 
 func (m *mockTargetRegistry) Get(repoOwner, repoName string) (targets.TargetConfig, bool) {
 	return m.config, m.found
 }
 
-func (m *mockTargetRegistry) GetBySlackChannel(channel string) (targets.TargetConfig, bool) {
+func (m *mockTargetRegistry) GetByChannelName(channelName string) (targets.TargetConfig, bool) {
 	return m.channelConfig, m.channelFound
+}
+
+func (m *mockTargetRegistry) AnyBotToken() string {
+	return m.botToken
 }
 
 // --- Helpers ---
@@ -205,8 +216,9 @@ func TestHandleEvent_MissingSignatureHeaders(t *testing.T) {
 func TestHandleEvent_AppMentionWithoutThreadTs_UnknownChannel(t *testing.T) {
 	github := &mockGitHubCommenter{}
 	issueCreator := &mockGitHubIssueCreator{}
-	registry := &mockTargetRegistry{channelFound: false}
-	h := NewHandler(&mockThreadFinder{}, github, issueCreator, &mockUserInfoResolver{}, registry, testSigningSecret, "")
+	registry := &mockTargetRegistry{channelFound: false, botToken: "xoxb-test"}
+	userResolver := &mockUserInfoResolver{channelName: "random-channel"}
+	h := NewHandler(&mockThreadFinder{}, github, issueCreator, userResolver, registry, testSigningSecret, "")
 
 	payload := map[string]interface{}{
 		"type": "event_callback",
@@ -243,16 +255,19 @@ func TestHandleEvent_AppMentionWithoutThreadTs_UnknownChannel(t *testing.T) {
 func TestHandleEvent_AppMentionTopLevel_CreatesIssue(t *testing.T) {
 	github := &mockGitHubCommenter{}
 	issueCreator := &mockGitHubIssueCreator{number: 99}
-	userResolver := &mockUserInfoResolver{name: "Alice Smith"}
+	userResolver := &mockUserInfoResolver{
+		name:        "Alice Smith",
+		channelName: "productbuilding-playground",
+	}
 	registry := &mockTargetRegistry{
 		channelConfig: targets.TargetConfig{
 			RepoOwner:     "luminor-project",
 			RepoName:      "playground",
 			GitHubPAT:     "ghp_test123",
 			SlackBotToken: "xoxb-test",
-			SlackChannel:  "C0PRODUCT",
 		},
 		channelFound: true,
+		botToken:     "xoxb-test",
 	}
 
 	h := NewHandler(&mockThreadFinder{}, github, issueCreator, userResolver, registry, testSigningSecret, "test-workspace")

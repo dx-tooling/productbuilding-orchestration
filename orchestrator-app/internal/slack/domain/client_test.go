@@ -252,6 +252,57 @@ func TestClient_GetUserInfo_SlackError(t *testing.T) {
 	}
 }
 
+func TestClient_GetChannelName(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			t.Errorf("Expected GET, got %s", r.Method)
+		}
+		if r.URL.Path != "/conversations.info" {
+			t.Errorf("Expected path /conversations.info, got %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("channel") != "C0AL47F20FP" {
+			t.Errorf("Expected channel param C0AL47F20FP, got %s", r.URL.Query().Get("channel"))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok": true,
+			"channel": map[string]interface{}{
+				"name": "productbuilding-luminor-core-go-playground",
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClientWithBaseURL(server.URL)
+
+	name, err := client.GetChannelName(context.Background(), "test-token", "C0AL47F20FP")
+	if err != nil {
+		t.Fatalf("GetChannelName() error = %v", err)
+	}
+	if name != "productbuilding-luminor-core-go-playground" {
+		t.Errorf("GetChannelName() = %q, want %q", name, "productbuilding-luminor-core-go-playground")
+	}
+}
+
+func TestClient_GetChannelName_SlackError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":    false,
+			"error": "channel_not_found",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClientWithBaseURL(server.URL)
+
+	_, err := client.GetChannelName(context.Background(), "test-token", "CBAD")
+	if err == nil {
+		t.Error("GetChannelName() expected error for failed Slack response")
+	}
+}
+
 func TestClient_PostMessage_HTTPError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
