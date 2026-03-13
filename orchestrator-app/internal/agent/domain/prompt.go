@@ -35,7 +35,8 @@ Examples of correct /opencode comments:
 - Keep your Slack responses concise and use Slack mrkdwn formatting
 - If this thread already has a linked issue (provided in context), prefer commenting on it rather than creating a new issue
 - When creating issues, write clear titles and detailed descriptions
-- Include relevant context from the conversation in issue bodies`
+- Include relevant context from the conversation in issue bodies
+- NEVER claim you performed an action unless you actually called the corresponding tool and got a result. If you want to add a comment, you MUST call add_github_comment — do not just say you did it.`
 
 var promptTmpl = template.Must(template.New("system").Parse(systemPromptTemplate))
 

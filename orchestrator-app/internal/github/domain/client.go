@@ -251,7 +251,7 @@ type searchIssuesResponse struct {
 
 // SearchIssues searches for issues in a repository.
 func (c *Client) SearchIssues(ctx context.Context, owner, repo, query, pat string) ([]IssueSearchResult, error) {
-	q := fmt.Sprintf("repo:%s/%s %s", owner, repo, query)
+	q := fmt.Sprintf("repo:%s/%s is:issue %s", owner, repo, query)
 	url := fmt.Sprintf("%s/search/issues?q=%s&per_page=10", c.apiURL(), strings.ReplaceAll(q, " ", "+"))
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
