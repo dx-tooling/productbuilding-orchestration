@@ -110,9 +110,32 @@ mise run deploy             # Redeploy orchestrator to load new target (REQUIRED
 - Ensure `SLACK_SIGNING_SECRET` and `SLACK_WORKSPACE` are set on the orchestrator host (managed via Terraform / Secrets Manager / deploy task)
 - The Slack app needs these Bot Token Scopes: `chat:write`, `chat:write.public`, `reactions:write`, `channels:read`, `app_mentions:read`, `users:read`
 - Enable Event Subscriptions with `app_mention` event, Request URL: `https://api.{domain}/slack/events`
+- **Configure Slash Commands** (see below)
 - Slack channels **must** follow the naming convention `#productbuilding-{repo-name}` (the system uses this to match channels to repos)
 - After adding scopes or event subscriptions, **reinstall the app** to the workspace
 - See `orchestrator-app/docs/SLACK_INTEGRATION.md` for the complete setup guide
+
+**Slash Commands Setup (Manual):**
+
+The orchestrator now supports three slash commands for improved UX:
+
+1. Go to **api.slack.com/apps** → Your App → **Slash Commands**
+2. Create these three commands:
+
+| Command | Request URL | Short Description | Usage Hint |
+|---------|-------------|-------------------|------------|
+| `/create-issue` | `https://api.{domain}/slack/commands` | Create a GitHub issue | `<issue title>` |
+| `/create-plan` | `https://api.{domain}/slack/commands` | Request implementation plan | `[additional instructions]` |
+| `/implement` | `https://api.{domain}/slack/commands` | Request implementation | `[additional instructions]` |
+
+3. Save and reinstall the app to the workspace
+
+**Slash Command Usage:**
+- `/create-issue Fix login bug` - Creates GitHub issue (channel context)
+- `/create-plan make sure to add e2e tests` - Posts `/opencode` comment requesting plan (thread context)
+- `/implement focus on performance` - Posts `/opencode` comment requesting implementation (thread context)
+
+Note: `/create-plan` and `/implement` must be used in existing issue/PR threads.
 
 Then manually:
 

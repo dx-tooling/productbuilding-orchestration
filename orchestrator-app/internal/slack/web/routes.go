@@ -6,3 +6,8 @@ import "net/http"
 func RegisterRoutes(mux *http.ServeMux, handler *Handler) {
 	mux.HandleFunc("POST /slack/events", handler.HandleEvent)
 }
+
+// RegisterSlashCommandRoutes registers Slack slash command routes on the given mux
+func RegisterSlashCommandRoutes(mux *http.ServeMux, slashHandler *SlashCommandHandler) {
+	mux.HandleFunc("POST /slack/commands", slashHandler.HandleSlashCommand)
+}

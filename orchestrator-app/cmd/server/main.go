@@ -101,6 +101,10 @@ func main() {
 	slackHandler := slackweb.NewHandler(slackRepo, githubClient, githubClient, slackClient, registry, cfg.SlackSigningSecret, cfg.SlackWorkspace)
 	slackweb.RegisterRoutes(mux, slackHandler)
 
+	// Register Slack slash command routes (for /create-issue, /create-plan, /implement)
+	slashHandler := slackweb.NewSlashCommandHandler(slackRepo, githubClient, githubClient, slackClient, registry, nil, cfg.SlackSigningSecret, cfg.SlackWorkspace)
+	slackweb.RegisterSlashCommandRoutes(mux, slashHandler)
+
 	// ── Health Endpoints (outside application middleware) ───────────────
 	topMux := http.NewServeMux()
 	topMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
