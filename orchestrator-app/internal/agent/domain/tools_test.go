@@ -23,8 +23,12 @@ type mockGitHubClient struct {
 	listIssuesErr       error
 	getPRDiffResult     string
 	getPRDiffErr        error
-	closeIssueErr       error
-	closePRErr          error
+	closeIssueErr          error
+	closePRErr             error
+	searchCodeResult       []CodeSearchResult
+	searchCodeErr          error
+	getFileContentsResult  *FileContents
+	getFileContentsErr     error
 
 	// Captured args
 	lastCommentBody    string
@@ -65,6 +69,14 @@ func (m *mockGitHubClient) CloseIssue(_ context.Context, _, _ string, number int
 func (m *mockGitHubClient) ClosePR(_ context.Context, _, _ string, prNumber int, _ string) error {
 	m.lastClosedPRNumber = prNumber
 	return m.closePRErr
+}
+
+func (m *mockGitHubClient) SearchCode(_ context.Context, _, _, _, _ string) ([]CodeSearchResult, error) {
+	return m.searchCodeResult, m.searchCodeErr
+}
+
+func (m *mockGitHubClient) GetFileContents(_ context.Context, _, _, _, _, _ string) (*FileContents, error) {
+	return m.getFileContentsResult, m.getFileContentsErr
 }
 
 var testTarget = targets.TargetConfig{
@@ -337,9 +349,121 @@ func TestToolExecutor_ClosePR(t *testing.T) {
 	}
 }
 
+func TestToolExecutor_SearchCode(t *testing.T) {
+	gh := &mockGitHubClient{
+		searchCodeResult: []CodeSearchResult{
+			{Path: "internal/auth/handler.go", TextMatches: []string{"func Authenticate(ctx context.Context)"}},
+			{Path: "cmd/server/main.go", TextMatches: []string{"auth.NewHandler(db)"}},
+		},
+	}
+	exec := NewToolExecutor(gh)
+
+	result, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "search_repo_code",
+			Arguments: `{"query":"Authenticate"}`,
+		},
+	}, testTarget)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "internal/auth/handler.go") {
+		t.Errorf("expected file path in result, got: %s", result)
+	}
+	if !strings.Contains(result, "func Authenticate") {
+		t.Errorf("expected code snippet in result, got: %s", result)
+	}
+}
+
+func TestToolExecutor_SearchCode_NoResults(t *testing.T) {
+	gh := &mockGitHubClient{searchCodeResult: []CodeSearchResult{}}
+	exec := NewToolExecutor(gh)
+
+	result, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "search_repo_code",
+			Arguments: `{"query":"nonexistent"}`,
+		},
+	}, testTarget)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "No code found") {
+		t.Errorf("expected 'No code found' message, got: %s", result)
+	}
+}
+
+func TestToolExecutor_GetFileContents_File(t *testing.T) {
+	gh := &mockGitHubClient{
+		getFileContentsResult: &FileContents{
+			Path:    "main.go",
+			Type:    "file",
+			Size:    42,
+			Content: "package main\n\nfunc main() {}\n",
+		},
+	}
+	exec := NewToolExecutor(gh)
+
+	result, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "get_file_contents",
+			Arguments: `{"path":"main.go","ref":"feature-branch"}`,
+		},
+	}, testTarget)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "main.go") {
+		t.Errorf("expected file path in result, got: %s", result)
+	}
+	if !strings.Contains(result, "package main") {
+		t.Errorf("expected file content in result, got: %s", result)
+	}
+	if !strings.Contains(result, "feature-branch") {
+		t.Errorf("expected ref in result, got: %s", result)
+	}
+}
+
+func TestToolExecutor_GetFileContents_Dir(t *testing.T) {
+	gh := &mockGitHubClient{
+		getFileContentsResult: &FileContents{
+			Path: "internal/",
+			Type: "dir",
+			Entries: []DirEntry{
+				{Name: "auth", Path: "internal/auth", Type: "dir"},
+				{Name: "main.go", Path: "internal/main.go", Type: "file", Size: 256},
+			},
+		},
+	}
+	exec := NewToolExecutor(gh)
+
+	result, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "get_file_contents",
+			Arguments: `{"path":"internal/"}`,
+		},
+	}, testTarget)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "Directory") {
+		t.Errorf("expected directory listing, got: %s", result)
+	}
+	if !strings.Contains(result, "auth/") {
+		t.Errorf("expected dir entry, got: %s", result)
+	}
+	if !strings.Contains(result, "main.go") {
+		t.Errorf("expected file entry, got: %s", result)
+	}
+}
+
 func TestToolDefinitions_Count(t *testing.T) {
 	defs := ToolDefinitions()
-	if len(defs) != 8 {
-		t.Errorf("expected 8 tool definitions, got %d", len(defs))
+	if len(defs) != 10 {
+		t.Errorf("expected 10 tool definitions, got %d", len(defs))
 	}
 }

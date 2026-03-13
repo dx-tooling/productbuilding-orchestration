@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -489,6 +491,163 @@ func (c *Client) ClosePR(ctx context.Context, owner, repo string, prNumber int, 
 	}
 
 	return nil
+}
+
+// CodeSearchResult represents a file matching a code search.
+type CodeSearchResult struct {
+	Path        string   `json:"path"`
+	HTMLURL     string   `json:"html_url"`
+	TextMatches []string `json:"text_matches"`
+}
+
+type searchCodeResponse struct {
+	Items []searchCodeItem `json:"items"`
+}
+
+type searchCodeItem struct {
+	Path        string `json:"path"`
+	HTMLURL     string `json:"html_url"`
+	TextMatches []struct {
+		Fragment string `json:"fragment"`
+	} `json:"text_matches"`
+}
+
+// SearchCode searches for code in a repository using GitHub code search.
+func (c *Client) SearchCode(ctx context.Context, owner, repo, query, pat string) ([]CodeSearchResult, error) {
+	q := fmt.Sprintf("repo:%s/%s %s", owner, repo, query)
+	u := fmt.Sprintf("%s/search/code?q=%s&per_page=10", c.apiURL(), strings.ReplaceAll(q, " ", "+"))
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github.text-match+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("search code: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("search code: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	var result searchCodeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("parse search response: %w", err)
+	}
+
+	items := make([]CodeSearchResult, len(result.Items))
+	for i, item := range result.Items {
+		fragments := make([]string, len(item.TextMatches))
+		for j, m := range item.TextMatches {
+			fragments[j] = m.Fragment
+		}
+		items[i] = CodeSearchResult{
+			Path:        item.Path,
+			HTMLURL:     item.HTMLURL,
+			TextMatches: fragments,
+		}
+	}
+	return items, nil
+}
+
+// FileContents represents the contents of a file or directory from the GitHub API.
+type FileContents struct {
+	Path    string     `json:"path"`
+	Type    string     `json:"type"` // "file" or "dir"
+	Size    int        `json:"size"`
+	Content string     `json:"content,omitempty"`
+	Entries []DirEntry `json:"entries,omitempty"`
+}
+
+// DirEntry represents a single entry in a directory listing.
+type DirEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Type string `json:"type"` // "file" or "dir"
+	Size int    `json:"size"`
+}
+
+// GetFileContents retrieves the contents of a file or directory listing at any ref.
+func (c *Client) GetFileContents(ctx context.Context, owner, repo, path, ref, pat string) (*FileContents, error) {
+	u := fmt.Sprintf("%s/repos/%s/%s/contents/%s", c.apiURL(), owner, repo, path)
+	if ref != "" {
+		u += "?ref=" + url.QueryEscape(ref)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get file contents: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("get file contents: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	// Try as file (object with type "file")
+	var fileResp struct {
+		Type     string `json:"type"`
+		Path     string `json:"path"`
+		Size     int    `json:"size"`
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+	}
+	if err := json.Unmarshal(body, &fileResp); err == nil && fileResp.Type == "file" {
+		content := fileResp.Content
+		if fileResp.Encoding == "base64" {
+			cleaned := strings.ReplaceAll(content, "\n", "")
+			decoded, err := base64.StdEncoding.DecodeString(cleaned)
+			if err != nil {
+				return nil, fmt.Errorf("decode base64 content: %w", err)
+			}
+			content = string(decoded)
+		}
+		return &FileContents{
+			Path:    fileResp.Path,
+			Type:    "file",
+			Size:    fileResp.Size,
+			Content: content,
+		}, nil
+	}
+
+	// Try as directory (array)
+	var dirResp []struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+		Type string `json:"type"`
+		Size int    `json:"size"`
+	}
+	if err := json.Unmarshal(body, &dirResp); err == nil && len(dirResp) > 0 {
+		entries := make([]DirEntry, len(dirResp))
+		for i, e := range dirResp {
+			entries[i] = DirEntry{Name: e.Name, Path: e.Path, Type: e.Type, Size: e.Size}
+		}
+		return &FileContents{
+			Path:    path,
+			Type:    "dir",
+			Entries: entries,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("unexpected response format for %s", path)
 }
 
 // DeleteComment removes a PR comment.

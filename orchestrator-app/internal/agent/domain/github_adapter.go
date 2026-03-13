@@ -88,3 +88,39 @@ func (a *GitHubClientAdapter) CloseIssue(ctx context.Context, owner, repo string
 func (a *GitHubClientAdapter) ClosePR(ctx context.Context, owner, repo string, prNumber int, pat string) error {
 	return a.client.ClosePR(ctx, owner, repo, prNumber, pat)
 }
+
+func (a *GitHubClientAdapter) SearchCode(ctx context.Context, owner, repo, query, pat string) ([]CodeSearchResult, error) {
+	results, err := a.client.SearchCode(ctx, owner, repo, query, pat)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CodeSearchResult, len(results))
+	for i, r := range results {
+		out[i] = CodeSearchResult{
+			Path:        r.Path,
+			HTMLURL:     r.HTMLURL,
+			TextMatches: r.TextMatches,
+		}
+	}
+	return out, nil
+}
+
+func (a *GitHubClientAdapter) GetFileContents(ctx context.Context, owner, repo, path, ref, pat string) (*FileContents, error) {
+	result, err := a.client.GetFileContents(ctx, owner, repo, path, ref, pat)
+	if err != nil {
+		return nil, err
+	}
+	fc := &FileContents{
+		Path:    result.Path,
+		Type:    result.Type,
+		Size:    result.Size,
+		Content: result.Content,
+	}
+	if len(result.Entries) > 0 {
+		fc.Entries = make([]DirEntry, len(result.Entries))
+		for i, e := range result.Entries {
+			fc.Entries[i] = DirEntry{Name: e.Name, Path: e.Path, Type: e.Type, Size: e.Size}
+		}
+	}
+	return fc, nil
+}

@@ -19,6 +19,32 @@ type GitHubClient interface {
 	GetPRDiff(ctx context.Context, owner, repo string, prNumber int, pat string) (string, error)
 	CloseIssue(ctx context.Context, owner, repo string, number int, pat string) error
 	ClosePR(ctx context.Context, owner, repo string, prNumber int, pat string) error
+	SearchCode(ctx context.Context, owner, repo, query, pat string) ([]CodeSearchResult, error)
+	GetFileContents(ctx context.Context, owner, repo, path, ref, pat string) (*FileContents, error)
+}
+
+// CodeSearchResult is returned by SearchCode.
+type CodeSearchResult struct {
+	Path        string   `json:"path"`
+	HTMLURL     string   `json:"html_url"`
+	TextMatches []string `json:"text_matches"`
+}
+
+// FileContents is returned by GetFileContents.
+type FileContents struct {
+	Path    string     `json:"path"`
+	Type    string     `json:"type"`
+	Size    int        `json:"size"`
+	Content string     `json:"content,omitempty"`
+	Entries []DirEntry `json:"entries,omitempty"`
+}
+
+// DirEntry represents an entry in a directory listing.
+type DirEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Type string `json:"type"`
+	Size int    `json:"size"`
 }
 
 // IssueSearchResult is returned by SearchIssues.
@@ -81,6 +107,10 @@ func (e *GitHubToolExecutor) Execute(ctx context.Context, call ToolCall, target 
 		return e.closeIssue(ctx, call.Function.Arguments, target)
 	case "close_github_pr":
 		return e.closePR(ctx, call.Function.Arguments, target)
+	case "search_repo_code":
+		return e.searchCode(ctx, call.Function.Arguments, target)
+	case "get_file_contents":
+		return e.getFileContents(ctx, call.Function.Arguments, target)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", call.Function.Name)
 	}
@@ -277,6 +307,89 @@ func (e *GitHubToolExecutor) closePR(ctx context.Context, argsJSON string, targe
 		args.PRNumber, target.RepoOwner, target.RepoName, args.PRNumber), nil
 }
 
+func (e *GitHubToolExecutor) searchCode(ctx context.Context, argsJSON string, target targets.TargetConfig) (string, error) {
+	var args struct {
+		Query string `json:"query"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "", fmt.Errorf("parse arguments: %w", err)
+	}
+
+	results, err := e.github.SearchCode(ctx, target.RepoOwner, target.RepoName, args.Query, target.GitHubPAT)
+	if err != nil {
+		return "", err
+	}
+
+	if len(results) == 0 {
+		return fmt.Sprintf("No code found matching %q.", args.Query), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Found %d file(s) matching %q:\n\n", len(results), args.Query))
+	for _, r := range results {
+		sb.WriteString(r.Path + "\n")
+		for _, fragment := range r.TextMatches {
+			for _, line := range strings.Split(fragment, "\n") {
+				sb.WriteString("  " + line + "\n")
+			}
+			sb.WriteString("\n")
+		}
+	}
+	return sb.String(), nil
+}
+
+func (e *GitHubToolExecutor) getFileContents(ctx context.Context, argsJSON string, target targets.TargetConfig) (string, error) {
+	var args struct {
+		Path string `json:"path"`
+		Ref  string `json:"ref"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "", fmt.Errorf("parse arguments: %w", err)
+	}
+
+	fc, err := e.github.GetFileContents(ctx, target.RepoOwner, target.RepoName, args.Path, args.Ref, target.GitHubPAT)
+	if err != nil {
+		return "", err
+	}
+
+	if fc.Type == "dir" {
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Directory: %s (%d entries)\n\n", fc.Path, len(fc.Entries)))
+		for _, entry := range fc.Entries {
+			if entry.Type == "dir" {
+				sb.WriteString(fmt.Sprintf("  dir   %s/\n", entry.Name))
+			} else {
+				sb.WriteString(fmt.Sprintf("  file  %s  (%d bytes)\n", entry.Name, entry.Size))
+			}
+		}
+		return sb.String(), nil
+	}
+
+	// File: cap at 500 lines to avoid blowing up context
+	lines := strings.Split(fc.Content, "\n")
+	truncated := false
+	if len(lines) > 500 {
+		lines = lines[:500]
+		truncated = true
+	}
+
+	ref := args.Ref
+	if ref == "" {
+		ref = "default branch"
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("File: %s (%d bytes, ref: %s)\n\n", fc.Path, fc.Size, ref))
+	for i, line := range lines {
+		sb.WriteString(fmt.Sprintf("%4d  %s\n", i+1, line))
+	}
+	if truncated {
+		sb.WriteString(fmt.Sprintf("\n... truncated (showing 500 of %d lines)\n", len(strings.Split(fc.Content, "\n"))))
+	}
+
+	return sb.String(), nil
+}
+
 // ToolDefinitions returns the tool schemas to pass to the LLM.
 func ToolDefinitions() []ToolDef {
 	return []ToolDef{
@@ -392,6 +505,35 @@ func ToolDefinitions() []ToolDef {
 						"pr_number": {"type": "integer", "description": "Pull request number to close"}
 					},
 					"required": ["pr_number"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolSchema{
+				Name:        "search_repo_code",
+				Description: "Search for code in the repository by keyword or pattern. Returns matching files with code snippets. Searches the default branch.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"query": {"type": "string", "description": "Code search query (e.g. 'handleAuth', 'func NewServer', 'TODO fix')"}
+					},
+					"required": ["query"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolSchema{
+				Name:        "get_file_contents",
+				Description: "Read the contents of a file or list a directory in the repository. Can read from any branch, tag, or commit SHA.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"path": {"type": "string", "description": "File or directory path (e.g. 'src/main.go', 'internal/auth/')"},
+						"ref": {"type": "string", "description": "Branch name, tag, or commit SHA (default: repository default branch)"}
+					},
+					"required": ["path"]
 				}`),
 			},
 		},
