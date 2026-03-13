@@ -463,7 +463,7 @@ func TestToolExecutor_GetFileContents_Dir(t *testing.T) {
 
 func TestToolDefinitions_Count(t *testing.T) {
 	defs := ToolDefinitions()
-	if len(defs) != 10 {
-		t.Errorf("expected 10 tool definitions, got %d", len(defs))
+	if len(defs) != 11 {
+		t.Errorf("expected 11 tool definitions, got %d", len(defs))
 	}
 }

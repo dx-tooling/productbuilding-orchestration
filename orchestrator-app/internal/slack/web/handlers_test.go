@@ -86,6 +86,28 @@ func (m *mockThreadSaver) getSaved() []*domain.SlackThread {
 	return m.saved
 }
 
+type mockConversationRecorder struct {
+	mu     sync.Mutex
+	convs  []agent.Conversation
+	err    error
+}
+
+func (m *mockConversationRecorder) UpsertConversation(_ context.Context, conv agent.Conversation) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	m.convs = append(m.convs, conv)
+	return nil
+}
+
+func (m *mockConversationRecorder) getConversations() []agent.Conversation {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.convs
+}
+
 type mockSlackClient struct {
 	mu             sync.Mutex
 	channelName    string
@@ -201,7 +223,7 @@ func defaultTarget() targets.TargetConfig {
 // --- Tests ---
 
 func TestHandleEvent_URLVerification(t *testing.T) {
-	h := NewHandler(nil, nil, nil, nil, nil, testSigningSecret, "")
+	h := NewHandler(nil, nil, nil, nil, nil, nil, testSigningSecret, "")
 
 	payload := map[string]string{
 		"type":      "url_verification",
@@ -227,7 +249,7 @@ func TestHandleEvent_URLVerification(t *testing.T) {
 }
 
 func TestHandleEvent_BadSignature(t *testing.T) {
-	h := NewHandler(nil, nil, nil, nil, nil, testSigningSecret, "")
+	h := NewHandler(nil, nil, nil, nil, nil, nil, testSigningSecret, "")
 
 	body := []byte(`{"type":"url_verification","challenge":"test"}`)
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
@@ -244,7 +266,7 @@ func TestHandleEvent_BadSignature(t *testing.T) {
 }
 
 func TestHandleEvent_StaleTimestamp(t *testing.T) {
-	h := NewHandler(nil, nil, nil, nil, nil, testSigningSecret, "")
+	h := NewHandler(nil, nil, nil, nil, nil, nil, testSigningSecret, "")
 
 	body := []byte(`{"type":"url_verification","challenge":"test"}`)
 	staleTs := strconv.FormatInt(time.Now().Unix()-600, 10)
@@ -267,7 +289,7 @@ func TestHandleEvent_StaleTimestamp(t *testing.T) {
 }
 
 func TestHandleEvent_MissingSignatureHeaders(t *testing.T) {
-	h := NewHandler(nil, nil, nil, nil, nil, testSigningSecret, "")
+	h := NewHandler(nil, nil, nil, nil, nil, nil, testSigningSecret, "")
 
 	body := []byte(`{"type":"url_verification","challenge":"test"}`)
 	req := httptest.NewRequest("POST", "/slack/events", bytes.NewReader(body))
@@ -300,7 +322,8 @@ func TestHandleEvent_TopLevelMention_AgentRunsAndResponds(t *testing.T) {
 		botToken:      "xoxb-test",
 	}
 
-	h := NewHandler(agentRunner, &mockThreadFinder{}, threadSaver, slackClient, registry, testSigningSecret, "")
+	convRecorder := &mockConversationRecorder{}
+	h := NewHandler(agentRunner, &mockThreadFinder{}, threadSaver, convRecorder, slackClient, registry, testSigningSecret, "")
 
 	payload := map[string]interface{}{
 		"type": "event_callback",
@@ -362,6 +385,21 @@ func TestHandleEvent_TopLevelMention_AgentRunsAndResponds(t *testing.T) {
 	if len(msgs) != 1 || msgs[0] != "I created issue #42 for you!" {
 		t.Errorf("Expected agent response posted, got %v", msgs)
 	}
+
+	// Check conversation recorded
+	convs := convRecorder.getConversations()
+	if len(convs) != 1 {
+		t.Fatalf("Expected 1 recorded conversation, got %d", len(convs))
+	}
+	if convs[0].ChannelID != "C0PRODUCT" {
+		t.Errorf("Expected channel C0PRODUCT, got %s", convs[0].ChannelID)
+	}
+	if convs[0].LinkedIssue != 42 {
+		t.Errorf("Expected linked issue 42, got %d", convs[0].LinkedIssue)
+	}
+	if convs[0].UserName != "Alice Smith" {
+		t.Errorf("Expected user name 'Alice Smith', got %q", convs[0].UserName)
+	}
 }
 
 func TestHandleEvent_InThreadMention_AgentRunsWithContext(t *testing.T) {
@@ -385,7 +423,7 @@ func TestHandleEvent_InThreadMention_AgentRunsWithContext(t *testing.T) {
 		botToken:      "xoxb-test",
 	}
 
-	h := NewHandler(agentRunner, threadFinder, &mockThreadSaver{}, slackClient, registry, testSigningSecret, "")
+	h := NewHandler(agentRunner, threadFinder, &mockThreadSaver{}, nil, slackClient, registry, testSigningSecret, "")
 
 	payload := map[string]interface{}{
 		"type": "event_callback",
@@ -431,7 +469,7 @@ func TestHandleEvent_AgentError_PostsErrorMessage(t *testing.T) {
 		botToken:      "xoxb-test",
 	}
 
-	h := NewHandler(agentRunner, &mockThreadFinder{}, &mockThreadSaver{}, slackClient, registry, testSigningSecret, "")
+	h := NewHandler(agentRunner, &mockThreadFinder{}, &mockThreadSaver{}, nil, slackClient, registry, testSigningSecret, "")
 
 	payload := map[string]interface{}{
 		"type": "event_callback",
@@ -476,7 +514,7 @@ func TestHandleEvent_UnregisteredChannel_Ignored(t *testing.T) {
 	slackClient := &mockSlackClient{channelName: "random-channel"}
 	registry := &mockTargetRegistry{channelFound: false, botToken: "xoxb-test"}
 
-	h := NewHandler(agentRunner, &mockThreadFinder{}, &mockThreadSaver{}, slackClient, registry, testSigningSecret, "")
+	h := NewHandler(agentRunner, &mockThreadFinder{}, &mockThreadSaver{}, nil, slackClient, registry, testSigningSecret, "")
 
 	payload := map[string]interface{}{
 		"type": "event_callback",

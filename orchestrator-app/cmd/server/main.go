@@ -97,7 +97,10 @@ func main() {
 	githubAdapter := agentdomain.NewGitHubClientAdapter(githubClient)
 	toolExecutor := agentdomain.NewToolExecutor(githubAdapter)
 	slackAdapter := agentdomain.NewSlackClientAdapter(slackClient)
-	agentRunner := agentdomain.NewAgent(fireworksClient, toolExecutor, slackAdapter, cfg.FireworksModel)
+	convRepo := slackinfra.NewConversationRepository(db)
+	agentRunner := agentdomain.NewAgent(fireworksClient, toolExecutor, slackAdapter, cfg.FireworksModel,
+		agentdomain.WithConversationLister(convRepo, cfg.SlackWorkspace),
+	)
 
 	// ── Build HTTP Routes ──────────────────────────────────────────────
 	mux := http.NewServeMux()
@@ -108,7 +111,7 @@ func main() {
 	githubweb.RegisterRoutes(mux, registry, previewService, slackNotifier)
 
 	// Register Slack Events API routes (agent-driven @mention handling)
-	slackHandler := slackweb.NewHandler(agentRunner, slackRepo, slackRepo, slackClient, registry, cfg.SlackSigningSecret, cfg.SlackWorkspace)
+	slackHandler := slackweb.NewHandler(agentRunner, slackRepo, slackRepo, convRepo, slackClient, registry, cfg.SlackSigningSecret, cfg.SlackWorkspace)
 	slackweb.RegisterRoutes(mux, slackHandler)
 
 	// ── Health Endpoints (outside application middleware) ───────────────

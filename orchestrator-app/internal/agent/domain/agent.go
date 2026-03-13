@@ -2,8 +2,10 @@ package domain
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
 )
@@ -25,20 +27,37 @@ type ThreadMessage struct {
 
 // Agent is the core orchestration loop: system prompt + thread context → LLM → tool calls → response.
 type Agent struct {
-	llm          LLMClient
-	tools        ToolExecutor
-	slackFetcher SlackThreadFetcher
-	model        string
+	llm                 LLMClient
+	tools               ToolExecutor
+	slackFetcher        SlackThreadFetcher
+	model               string
+	conversationLister  ConversationLister
+	workspace           string
+}
+
+// AgentOption configures optional Agent dependencies.
+type AgentOption func(*Agent)
+
+// WithConversationLister adds conversation listing support to the agent.
+func WithConversationLister(lister ConversationLister, workspace string) AgentOption {
+	return func(a *Agent) {
+		a.conversationLister = lister
+		a.workspace = workspace
+	}
 }
 
 // NewAgent creates a new agent with the given dependencies.
-func NewAgent(llm LLMClient, tools ToolExecutor, slackFetcher SlackThreadFetcher, model string) *Agent {
-	return &Agent{
+func NewAgent(llm LLMClient, tools ToolExecutor, slackFetcher SlackThreadFetcher, model string, opts ...AgentOption) *Agent {
+	a := &Agent{
 		llm:          llm,
 		tools:        tools,
 		slackFetcher: slackFetcher,
 		model:        model,
 	}
+	for _, opt := range opts {
+		opt(a)
+	}
+	return a
 }
 
 // RunRequest contains the context for a single agent invocation.
@@ -136,10 +155,18 @@ func (a *Agent) Run(ctx context.Context, req RunRequest) (RunResponse, error) {
 
 		// Execute each tool call
 		for _, tc := range resp.ToolCalls {
-			result, err := a.tools.Execute(ctx, tc, req.Target)
-			if err != nil {
-				slog.Warn("tool execution failed", "tool", tc.Function.Name, "error", err)
-				result = fmt.Sprintf("Error: %s", err.Error())
+			var result string
+			var execErr error
+
+			if tc.Function.Name == "list_conversations" && a.conversationLister != nil {
+				result, execErr = a.executeListConversations(ctx, tc, req.ChannelID)
+			} else {
+				result, execErr = a.tools.Execute(ctx, tc, req.Target)
+			}
+
+			if execErr != nil {
+				slog.Warn("tool execution failed", "tool", tc.Function.Name, "error", execErr)
+				result = fmt.Sprintf("Error: %s", execErr.Error())
 			}
 
 			messages = append(messages, Message{
@@ -155,4 +182,38 @@ func (a *Agent) Run(ctx context.Context, req RunRequest) (RunResponse, error) {
 		Text:        "I'm having trouble processing this request. Please try again or rephrase your question.",
 		SideEffects: a.tools.Effects(),
 	}, nil
+}
+
+// executeListConversations handles the list_conversations tool call.
+func (a *Agent) executeListConversations(ctx context.Context, tc ToolCall, channelID string) (string, error) {
+	var args struct {
+		Days int `json:"days"`
+	}
+	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+		return "", fmt.Errorf("parse arguments: %w", err)
+	}
+	if args.Days <= 0 {
+		args.Days = 14
+	}
+
+	convs, err := a.conversationLister.ListRecentConversations(ctx, channelID, args.Days)
+	if err != nil {
+		return "", fmt.Errorf("list conversations: %w", err)
+	}
+
+	if len(convs) == 0 {
+		return fmt.Sprintf("No conversations found in this channel in the last %d days.", args.Days), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Found %d conversation(s) in the last %d days:\n\n", len(convs), args.Days))
+	for _, c := range convs {
+		link := SlackThreadLink(a.workspace, c.ChannelID, c.ThreadTs)
+		summary := c.Summary
+		if summary == "" {
+			summary = "(no summary)"
+		}
+		sb.WriteString(fmt.Sprintf("- %s (by %s) — <%s|view thread>\n", summary, c.UserName, link))
+	}
+	return sb.String(), nil
 }

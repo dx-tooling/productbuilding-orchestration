@@ -53,15 +53,21 @@ type TargetRegistry interface {
 	AnyBotToken() string
 }
 
+// ConversationRecorder persists conversation metadata after each agent response.
+type ConversationRecorder interface {
+	UpsertConversation(ctx context.Context, conv agent.Conversation) error
+}
+
 // Handler handles Slack Events API callbacks.
 type Handler struct {
-	agent          AgentRunner
-	threadFinder   ThreadFinder
-	threadSaver    ThreadSaver
-	slackClient    SlackClient
-	registry       TargetRegistry
-	signingSecret  string
-	slackWorkspace string
+	agent                AgentRunner
+	threadFinder         ThreadFinder
+	threadSaver          ThreadSaver
+	conversationRecorder ConversationRecorder
+	slackClient          SlackClient
+	registry             TargetRegistry
+	signingSecret        string
+	slackWorkspace       string
 }
 
 // NewHandler creates a new Slack event handler.
@@ -69,19 +75,21 @@ func NewHandler(
 	agentRunner AgentRunner,
 	threadFinder ThreadFinder,
 	threadSaver ThreadSaver,
+	conversationRecorder ConversationRecorder,
 	slackClient SlackClient,
 	registry TargetRegistry,
 	signingSecret string,
 	slackWorkspace string,
 ) *Handler {
 	return &Handler{
-		agent:          agentRunner,
-		threadFinder:   threadFinder,
-		threadSaver:    threadSaver,
-		slackClient:    slackClient,
-		registry:       registry,
-		signingSecret:  signingSecret,
-		slackWorkspace: slackWorkspace,
+		agent:                agentRunner,
+		threadFinder:         threadFinder,
+		threadSaver:          threadSaver,
+		conversationRecorder: conversationRecorder,
+		slackClient:          slackClient,
+		registry:             registry,
+		signingSecret:        signingSecret,
+		slackWorkspace:       slackWorkspace,
 	}
 }
 
@@ -246,7 +254,11 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 	}
 
 	// Save thread mapping for any created issues
+	var firstCreatedIssueNumber int
 	for _, issue := range resp.SideEffects.CreatedIssues {
+		if firstCreatedIssueNumber == 0 {
+			firstCreatedIssueNumber = issue.Number
+		}
 		thread, err := domain.NewSlackThread(
 			target.RepoOwner, target.RepoName,
 			issue.Number, 0,
@@ -260,6 +272,23 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 			slog.Warn("failed to save thread mapping", "error", err, "issue", issue.Number)
 		} else {
 			slog.Info("saved thread mapping", "issue", issue.Number, "thread_ts", replyTs)
+		}
+	}
+
+	// Record conversation for list_conversations support
+	if h.conversationRecorder != nil {
+		conv := agent.Conversation{
+			ChannelID:    event.Channel,
+			ThreadTs:     replyTs,
+			Summary:      agent.TruncateSummary(text, 100),
+			UserName:     displayName,
+			LastActiveAt: time.Now(),
+			LinkedIssue:  firstCreatedIssueNumber,
+			RepoOwner:    target.RepoOwner,
+			RepoName:     target.RepoName,
+		}
+		if err := h.conversationRecorder.UpsertConversation(ctx, conv); err != nil {
+			slog.Warn("failed to record conversation", "error", err)
 		}
 	}
 }

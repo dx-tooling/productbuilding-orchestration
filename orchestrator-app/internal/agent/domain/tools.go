@@ -537,5 +537,18 @@ func ToolDefinitions() []ToolDef {
 				}`),
 			},
 		},
+		{
+			Type: "function",
+			Function: ToolSchema{
+				Name:        "list_conversations",
+				Description: "List recent bot conversations in the current Slack channel. Use when asked about past discussions or conversation history.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"days": {"type": "integer", "description": "Number of days to look back (default: 14)"}
+					}
+				}`),
+			},
+		},
 	}
 }

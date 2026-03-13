@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
 )
@@ -291,6 +292,147 @@ func TestAgent_ThreadContextFetched(t *testing.T) {
 	msgs := llm.requests[0].Messages
 	if len(msgs) != 4 {
 		t.Errorf("expected 4 messages (system + 2 thread + user), got %d", len(msgs))
+	}
+}
+
+// mockConversationLister returns canned conversation results.
+type mockConversationLister struct {
+	conversations []Conversation
+	err           error
+	calledWith    struct {
+		channelID string
+		days      int
+	}
+}
+
+func (m *mockConversationLister) ListRecentConversations(_ context.Context, channelID string, days int) ([]Conversation, error) {
+	m.calledWith.channelID = channelID
+	m.calledWith.days = days
+	return m.conversations, m.err
+}
+
+func TestAgent_ListConversations_Intercepted(t *testing.T) {
+	lister := &mockConversationLister{
+		conversations: []Conversation{
+			{
+				ChannelID:    "C123",
+				ThreadTs:     "1111111111.111111",
+				Summary:      "Implement sign in feature",
+				UserName:     "alice",
+				LastActiveAt: time.Now(),
+			},
+			{
+				ChannelID:    "C123",
+				ThreadTs:     "2222222222.222222",
+				Summary:      "Fix sign up bug",
+				UserName:     "bob",
+				LastActiveAt: time.Now().Add(-time.Hour),
+			},
+		},
+	}
+
+	llm := &mockLLMClient{
+		responses: []ChatResponse{
+			{
+				ToolCalls: []ToolCall{
+					{
+						ID:   "call_list",
+						Type: "function",
+						Function: FunctionCall{
+							Name:      "list_conversations",
+							Arguments: `{"days":7}`,
+						},
+					},
+				},
+				FinishReason: "tool_calls",
+			},
+			{Content: "Here are your recent conversations!", FinishReason: "stop"},
+		},
+	}
+	tools := &mockToolExecutor{}
+	agent := NewAgent(llm, tools, nil, "test-model",
+		WithConversationLister(lister, "test-workspace"),
+	)
+
+	resp, err := agent.Run(context.Background(), RunRequest{
+		ChannelID: "C123",
+		MessageTs: "123.456",
+		UserText:  "What have we talked about?",
+		UserName:  "alice",
+		Target:    agentTarget,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Text != "Here are your recent conversations!" {
+		t.Errorf("unexpected response: %s", resp.Text)
+	}
+	// list_conversations should NOT go through the ToolExecutor
+	if len(tools.calls) != 0 {
+		t.Errorf("expected 0 tool executor calls, got %d", len(tools.calls))
+	}
+	// Verify the lister was called with correct channel and days
+	if lister.calledWith.channelID != "C123" {
+		t.Errorf("expected channelID C123, got %s", lister.calledWith.channelID)
+	}
+	if lister.calledWith.days != 7 {
+		t.Errorf("expected days 7, got %d", lister.calledWith.days)
+	}
+	// Verify the tool result contains deep links
+	if len(llm.requests) < 2 {
+		t.Fatalf("expected at least 2 LLM requests, got %d", len(llm.requests))
+	}
+	toolResultMsg := llm.requests[1].Messages
+	found := false
+	for _, m := range toolResultMsg {
+		if m.Role == "tool" && strings.Contains(m.Content, "test-workspace.slack.com") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected tool result to contain Slack deep links")
+	}
+}
+
+func TestAgent_ListConversations_WithoutLister_FallsThrough(t *testing.T) {
+	llm := &mockLLMClient{
+		responses: []ChatResponse{
+			{
+				ToolCalls: []ToolCall{
+					{
+						ID:   "call_list",
+						Type: "function",
+						Function: FunctionCall{
+							Name:      "list_conversations",
+							Arguments: `{}`,
+						},
+					},
+				},
+				FinishReason: "tool_calls",
+			},
+			{Content: "Unknown tool.", FinishReason: "stop"},
+		},
+	}
+	tools := &mockToolExecutor{}
+	// No WithConversationLister — should fall through to ToolExecutor
+	agent := NewAgent(llm, tools, nil, "test-model")
+
+	_, err := agent.Run(context.Background(), RunRequest{
+		ChannelID: "C123",
+		MessageTs: "123.456",
+		UserText:  "What have we talked about?",
+		UserName:  "alice",
+		Target:    agentTarget,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should have been dispatched to ToolExecutor (which won't know the tool)
+	if len(tools.calls) != 1 {
+		t.Errorf("expected 1 tool executor call, got %d", len(tools.calls))
 	}
 }
 
