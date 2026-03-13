@@ -153,8 +153,9 @@ func (h *InteractionsHandler) HandleInteractions(w http.ResponseWriter, r *http.
 	}
 
 	// Route based on payload type
+	// Note: Slack sends message shortcuts as "message_action", not "shortcut"
 	switch payload.Type {
-	case "shortcut":
+	case "shortcut", "message_action":
 		h.handleShortcut(w, payload)
 	case "view_submission":
 		h.handleViewSubmission(w, payload)
