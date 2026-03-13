@@ -113,12 +113,8 @@ func (h *SlashCommandHandler) HandleSlashCommand(w http.ResponseWriter, r *http.
 	switch cmd.Command {
 	case "/create-issue":
 		h.handleCreateIssue(w, cmd)
-	case "/create-plan":
-		h.handleCreatePlan(w, cmd)
-	case "/implement":
-		h.handleImplement(w, cmd)
 	default:
-		h.sendEphemeralResponse(w, fmt.Sprintf("Unknown command: %s", cmd.Command))
+		h.sendEphemeralResponse(w, fmt.Sprintf("Unknown command: %s. Available command: /create-issue", cmd.Command))
 	}
 }
 
@@ -179,138 +175,6 @@ func (h *SlashCommandHandler) handleCreateIssue(w http.ResponseWriter, cmd slash
 		h.postResponse(cmd.ResponseURL, map[string]interface{}{
 			"response_type": "in_channel",
 			"text":          fmt.Sprintf("✅ Issue <%s|#%d> created: %s", issueURL, number, cmd.Text),
-		})
-	}()
-}
-
-// handleCreatePlan handles the /create-plan command (thread context only)
-func (h *SlashCommandHandler) handleCreatePlan(w http.ResponseWriter, cmd slashCommand) {
-	// Validate: must be in a thread
-	if cmd.ThreadTs == "" {
-		h.sendEphemeralResponse(w, "Error: This command must be used in a thread. Please reply in a ProductBuilder thread (created when a GitHub Issue or PR is opened).")
-		return
-	}
-
-	// Look up the thread - must be a ProductBuilder-created thread
-	ctx := context.Background()
-	thread, err := h.threadFinder.FindThreadBySlackTs(ctx, cmd.ThreadTs)
-	if err != nil {
-		h.sendEphemeralResponse(w, "Error: This thread is not tracked by ProductBuilder. Please use this command in a thread created by ProductBuilder for a GitHub Issue or PR.")
-		return
-	}
-
-	// Look up target config
-	target, ok := h.registry.Get(thread.RepoOwner, thread.RepoName)
-	if !ok {
-		h.sendEphemeralResponse(w, "Error: Repository configuration not found.")
-		return
-	}
-
-	// Send immediate ephemeral response
-	h.sendEphemeralResponse(w, "⏳ Requesting implementation plan from OpenCode...")
-
-	// Process asynchronously
-	go func() {
-		ctx := context.Background()
-
-		// Build the /opencode comment
-		comment := "/opencode Please write an implementation plan for this."
-		if cmd.Text != "" {
-			comment += " " + cmd.Text
-		}
-
-		// Determine GitHub number: PR if set, else issue
-		number := thread.GithubIssueID
-		if thread.GithubPRID > 0 {
-			number = thread.GithubPRID
-		}
-
-		// Post to GitHub
-		if _, err := h.githubClient.CreateComment(ctx, thread.RepoOwner, thread.RepoName, number, comment, target.GitHubPAT); err != nil {
-			slog.Error("failed to post github comment from slash command", "error", err, "repo", thread.RepoOwner+"/"+thread.RepoName, "number", number)
-			h.postResponse(cmd.ResponseURL, map[string]interface{}{
-				"response_type": "in_channel",
-				"text":          fmt.Sprintf("❌ Failed to request implementation plan: %v", err),
-			})
-			return
-		}
-
-		slog.Info("requested implementation plan from slash command",
-			"repo", thread.RepoOwner+"/"+thread.RepoName,
-			"number", number,
-			"user", cmd.UserName,
-		)
-
-		// Public confirmation in thread
-		h.postResponse(cmd.ResponseURL, map[string]interface{}{
-			"response_type": "in_channel",
-			"text":          "✅ Implementation plan requested. OpenCode will respond shortly.",
-		})
-	}()
-}
-
-// handleImplement handles the /implement command (thread context only)
-func (h *SlashCommandHandler) handleImplement(w http.ResponseWriter, cmd slashCommand) {
-	// Validate: must be in a thread
-	if cmd.ThreadTs == "" {
-		h.sendEphemeralResponse(w, "Error: This command must be used in a thread. Please reply in a ProductBuilder thread (created when a GitHub Issue or PR is opened).")
-		return
-	}
-
-	// Look up the thread - must be a ProductBuilder-created thread
-	ctx := context.Background()
-	thread, err := h.threadFinder.FindThreadBySlackTs(ctx, cmd.ThreadTs)
-	if err != nil {
-		h.sendEphemeralResponse(w, "Error: This thread is not tracked by ProductBuilder. Please use this command in a thread created by ProductBuilder for a GitHub Issue or PR.")
-		return
-	}
-
-	// Look up target config
-	target, ok := h.registry.Get(thread.RepoOwner, thread.RepoName)
-	if !ok {
-		h.sendEphemeralResponse(w, "Error: Repository configuration not found.")
-		return
-	}
-
-	// Send immediate ephemeral response
-	h.sendEphemeralResponse(w, "⏳ Requesting implementation from OpenCode...")
-
-	// Process asynchronously
-	go func() {
-		ctx := context.Background()
-
-		// Build the /opencode comment
-		comment := "/opencode Please implement the plan."
-		if cmd.Text != "" {
-			comment += " " + cmd.Text
-		}
-
-		// Determine GitHub number: PR if set, else issue
-		number := thread.GithubIssueID
-		if thread.GithubPRID > 0 {
-			number = thread.GithubPRID
-		}
-
-		// Post to GitHub
-		if _, err := h.githubClient.CreateComment(ctx, thread.RepoOwner, thread.RepoName, number, comment, target.GitHubPAT); err != nil {
-			slog.Error("failed to post github comment from slash command", "error", err, "repo", thread.RepoOwner+"/"+thread.RepoName, "number", number)
-			h.postResponse(cmd.ResponseURL, map[string]interface{}{
-				"response_type": "in_channel",
-				"text":          fmt.Sprintf("❌ Failed to request implementation: %v", err),
-			})
-			return
-		}
-
-		slog.Info("requested implementation from slash command",
-			"repo", thread.RepoOwner+"/"+thread.RepoName,
-			"number", number,
-			"user", cmd.UserName,
-		)
-
-		// Public confirmation in thread
-		h.postResponse(cmd.ResponseURL, map[string]interface{}{
-			"response_type": "in_channel",
-			"text":          "✅ Implementation requested. OpenCode will work on it and open a PR.",
 		})
 	}()
 }

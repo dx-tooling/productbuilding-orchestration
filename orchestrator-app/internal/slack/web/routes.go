@@ -11,3 +11,8 @@ func RegisterRoutes(mux *http.ServeMux, handler *Handler) {
 func RegisterSlashCommandRoutes(mux *http.ServeMux, slashHandler *SlashCommandHandler) {
 	mux.HandleFunc("POST /slack/commands", slashHandler.HandleSlashCommand)
 }
+
+// RegisterInteractionsRoutes registers Slack interactions routes on the given mux
+func RegisterInteractionsRoutes(mux *http.ServeMux, interactionsHandler *InteractionsHandler) {
+	mux.HandleFunc("POST /slack/interactions", interactionsHandler.HandleInteractions)
+}
