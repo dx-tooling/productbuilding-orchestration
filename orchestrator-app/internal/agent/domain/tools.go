@@ -70,6 +70,7 @@ type IssueDetail struct {
 type ToolExecutor interface {
 	Execute(ctx context.Context, call ToolCall, target targets.TargetConfig) (string, error)
 	Effects() SideEffects
+	ResetEffects()
 }
 
 // GitHubToolExecutor executes agent tools against the GitHub API.
@@ -86,6 +87,11 @@ func NewToolExecutor(github GitHubClient) *GitHubToolExecutor {
 // Effects returns the side effects accumulated during execution.
 func (e *GitHubToolExecutor) Effects() SideEffects {
 	return e.effects
+}
+
+// ResetEffects clears accumulated side effects. Called at the start of each agent run.
+func (e *GitHubToolExecutor) ResetEffects() {
+	e.effects = SideEffects{}
 }
 
 // Execute dispatches a tool call to the appropriate handler.

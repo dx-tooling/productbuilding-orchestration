@@ -50,6 +50,10 @@ func (m *mockToolExecutor) Effects() SideEffects {
 	return m.effects
 }
 
+func (m *mockToolExecutor) ResetEffects() {
+	m.effects = SideEffects{}
+}
+
 // mockSlackFetcher returns canned thread messages.
 type mockSlackFetcher struct {
 	messages []ThreadMessage

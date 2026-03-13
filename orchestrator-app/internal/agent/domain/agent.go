@@ -80,6 +80,8 @@ type RunResponse struct {
 
 // Run executes the agent loop: build context → call LLM → execute tools → return response.
 func (a *Agent) Run(ctx context.Context, req RunRequest) (RunResponse, error) {
+	a.tools.ResetEffects()
+
 	systemPrompt, err := RenderSystemPrompt(PromptData{
 		RepoOwner: req.Target.RepoOwner,
 		RepoName:  req.Target.RepoName,
