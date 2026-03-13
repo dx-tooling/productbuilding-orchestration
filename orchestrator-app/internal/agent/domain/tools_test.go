@@ -21,6 +21,8 @@ type mockGitHubClient struct {
 	getIssueErr         error
 	listIssuesResult    []IssueDetail
 	listIssuesErr       error
+	getPRDiffResult     string
+	getPRDiffErr        error
 
 	// Captured args
 	lastCommentBody string
@@ -45,6 +47,10 @@ func (m *mockGitHubClient) GetIssue(_ context.Context, _, _ string, _ int, _ str
 
 func (m *mockGitHubClient) ListIssues(_ context.Context, _, _, _, _ string, _ int) ([]IssueDetail, error) {
 	return m.listIssuesResult, m.listIssuesErr
+}
+
+func (m *mockGitHubClient) GetPRDiff(_ context.Context, _, _ string, _ int, _ string) (string, error) {
+	return m.getPRDiffResult, m.getPRDiffErr
 }
 
 var testTarget = targets.TargetConfig{
@@ -218,9 +224,64 @@ func TestToolExecutor_GitHubError(t *testing.T) {
 	}
 }
 
+func TestToolExecutor_SearchPRDiff(t *testing.T) {
+	diff := `diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -1,3 +1,5 @@
+ package main
++import "fmt"
++func hello() { fmt.Println("Hello") }
+diff --git a/utils.go b/utils.go
+--- a/utils.go
++++ b/utils.go
+@@ -1 +1,2 @@
+ package main
++func helper() { fmt.Println("Helper") }
+`
+	gh := &mockGitHubClient{getPRDiffResult: diff}
+	exec := NewToolExecutor(gh)
+
+	result, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "search_pr_diff",
+			Arguments: `{"pr_number":10,"pattern":"fmt"}`,
+		},
+	}, testTarget)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "main.go") {
+		t.Errorf("expected result to contain filename, got: %s", result)
+	}
+	if !strings.Contains(result, "fmt") {
+		t.Errorf("expected result to contain matching pattern, got: %s", result)
+	}
+}
+
+func TestToolExecutor_SearchPRDiff_NoMatches(t *testing.T) {
+	gh := &mockGitHubClient{getPRDiffResult: "diff --git a/main.go b/main.go\n+package main\n"}
+	exec := NewToolExecutor(gh)
+
+	result, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "search_pr_diff",
+			Arguments: `{"pr_number":10,"pattern":"nonexistent"}`,
+		},
+	}, testTarget)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "No lines matching") {
+		t.Errorf("expected 'No lines matching' message, got: %s", result)
+	}
+}
+
 func TestToolDefinitions_Count(t *testing.T) {
 	defs := ToolDefinitions()
-	if len(defs) != 5 {
-		t.Errorf("expected 5 tool definitions, got %d", len(defs))
+	if len(defs) != 6 {
+		t.Errorf("expected 6 tool definitions, got %d", len(defs))
 	}
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
+	"strings"
 
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
 )
@@ -16,6 +16,7 @@ type GitHubClient interface {
 	SearchIssues(ctx context.Context, owner, repo, query, pat string) ([]IssueSearchResult, error)
 	GetIssue(ctx context.Context, owner, repo string, number int, pat string) (*IssueDetail, error)
 	ListIssues(ctx context.Context, owner, repo, state, pat string, limit int) ([]IssueDetail, error)
+	GetPRDiff(ctx context.Context, owner, repo string, prNumber int, pat string) (string, error)
 }
 
 // IssueSearchResult is returned by SearchIssues.
@@ -72,6 +73,8 @@ func (e *GitHubToolExecutor) Execute(ctx context.Context, call ToolCall, target 
 		return e.getIssue(ctx, call.Function.Arguments, target)
 	case "list_github_issues":
 		return e.listIssues(ctx, call.Function.Arguments, target)
+	case "search_pr_diff":
+		return e.searchPRDiff(ctx, call.Function.Arguments, target)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", call.Function.Name)
 	}
@@ -189,9 +192,51 @@ func (e *GitHubToolExecutor) listIssues(ctx context.Context, argsJSON string, ta
 	return string(result), nil
 }
 
-// parseIntArg is a helper for extracting int params from JSON args.
-func parseIntArg(s string) (int, error) {
-	return strconv.Atoi(s)
+func (e *GitHubToolExecutor) searchPRDiff(ctx context.Context, argsJSON string, target targets.TargetConfig) (string, error) {
+	var args struct {
+		PRNumber int    `json:"pr_number"`
+		Pattern  string `json:"pattern"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "", fmt.Errorf("parse arguments: %w", err)
+	}
+
+	diff, err := e.github.GetPRDiff(ctx, target.RepoOwner, target.RepoName, args.PRNumber, target.GitHubPAT)
+	if err != nil {
+		return "", err
+	}
+
+	pattern := strings.ToLower(args.Pattern)
+	var matches []string
+	var currentFile string
+
+	for _, line := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(line, "diff --git") {
+			// Extract filename from "diff --git a/path b/path"
+			parts := strings.SplitN(line, " b/", 2)
+			if len(parts) == 2 {
+				currentFile = parts[1]
+			}
+		}
+		if strings.Contains(strings.ToLower(line), pattern) {
+			prefix := ""
+			if currentFile != "" {
+				prefix = currentFile + ": "
+			}
+			matches = append(matches, prefix+line)
+		}
+	}
+
+	if len(matches) == 0 {
+		return fmt.Sprintf("No lines matching %q found in PR #%d diff.", args.Pattern, args.PRNumber), nil
+	}
+
+	// Cap output to avoid blowing up the context
+	if len(matches) > 50 {
+		matches = append(matches[:50], fmt.Sprintf("... and %d more matches", len(matches)-50))
+	}
+
+	return strings.Join(matches, "\n"), nil
 }
 
 // ToolDefinitions returns the tool schemas to pass to the LLM.
@@ -266,6 +311,21 @@ func ToolDefinitions() []ToolDef {
 						"state": {"type": "string", "description": "Filter by state: open, closed, or all", "default": "open"},
 						"limit": {"type": "integer", "description": "Maximum number of issues to return", "default": 10}
 					}
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolSchema{
+				Name:        "search_pr_diff",
+				Description: "Search through a pull request's code changes (diff) for lines matching a pattern. Use this to answer questions about code in a PR.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"pr_number": {"type": "integer", "description": "Pull request number"},
+						"pattern": {"type": "string", "description": "Case-insensitive search pattern to match against diff lines"}
+					},
+					"required": ["pr_number", "pattern"]
 				}`),
 			},
 		},

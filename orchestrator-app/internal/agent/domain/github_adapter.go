@@ -76,3 +76,7 @@ func (a *GitHubClientAdapter) ListIssues(ctx context.Context, owner, repo, state
 	}
 	return out, nil
 }
+
+func (a *GitHubClientAdapter) GetPRDiff(ctx context.Context, owner, repo string, prNumber int, pat string) (string, error) {
+	return a.client.GetPRDiff(ctx, owner, repo, prNumber, pat)
+}

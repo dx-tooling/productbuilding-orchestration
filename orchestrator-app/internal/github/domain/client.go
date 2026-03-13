@@ -397,6 +397,36 @@ func (c *Client) ListIssues(ctx context.Context, owner, repo, state, pat string,
 	return issues, nil
 }
 
+// GetPRDiff retrieves the diff of a pull request as plain text.
+func (c *Client) GetPRDiff(ctx context.Context, owner, repo string, prNumber int, pat string) (string, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d", c.apiURL(), owner, repo, prNumber)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github.diff")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("get pr diff: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("get pr diff: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read diff: %w", err)
+	}
+
+	return string(body), nil
+}
+
 // DeleteComment removes a PR comment.
 func (c *Client) DeleteComment(ctx context.Context, owner, repo string, commentID int64, pat string) error {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/comments/%d", owner, repo, commentID)
