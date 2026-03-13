@@ -198,6 +198,77 @@ func (c *Client) GetChannelName(ctx context.Context, botToken, channelID string)
 	return chResp.Channel.Name, nil
 }
 
+// threadRepliesResponse represents the Slack conversations.replies API response
+type threadRepliesResponse struct {
+	OK       bool             `json:"ok"`
+	Messages []threadReplyMsg `json:"messages"`
+	Error    string           `json:"error,omitempty"`
+}
+
+type threadReplyMsg struct {
+	User  string `json:"user"`
+	Text  string `json:"text"`
+	Ts    string `json:"ts"`
+	BotID string `json:"bot_id,omitempty"`
+}
+
+// ThreadMessage represents a message within a Slack thread.
+type ThreadMessage struct {
+	User  string `json:"user"`
+	Text  string `json:"text"`
+	Ts    string `json:"ts"`
+	BotID string `json:"bot_id,omitempty"`
+}
+
+// GetThreadReplies fetches all messages in a thread.
+func (c *Client) GetThreadReplies(ctx context.Context, botToken, channel, threadTs string) ([]ThreadMessage, error) {
+	url := c.baseURL + "/conversations.replies?channel=" + channel + "&ts=" + threadTs + "&limit=100"
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+botToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("slack api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("slack api returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var threadResp threadRepliesResponse
+	if err := json.Unmarshal(respBody, &threadResp); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+
+	if !threadResp.OK {
+		return nil, fmt.Errorf("slack api error: %s", threadResp.Error)
+	}
+
+	messages := make([]ThreadMessage, len(threadResp.Messages))
+	for i, m := range threadResp.Messages {
+		messages[i] = ThreadMessage{
+			User:  m.User,
+			Text:  m.Text,
+			Ts:    m.Ts,
+			BotID: m.BotID,
+		}
+	}
+
+	return messages, nil
+}
+
 // post makes a POST request to the Slack API
 func (c *Client) post(ctx context.Context, botToken, endpoint string, payload interface{}) (string, error) {
 	url := c.baseURL + endpoint

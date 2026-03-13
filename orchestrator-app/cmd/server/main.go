@@ -5,6 +5,9 @@ import (
 	"net/http"
 	"os"
 
+	// Agent vertical
+	agentdomain "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/agent/domain"
+
 	// Dashboard vertical
 	dashboardweb "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/dashboard/web"
 
@@ -89,6 +92,13 @@ func main() {
 		cfg.WorkspaceDir,
 	)
 
+	// ── Build Agent ────────────────────────────────────────────────────
+	fireworksClient := agentdomain.NewFireworksClient(cfg.FireworksAPIKey)
+	githubAdapter := agentdomain.NewGitHubClientAdapter(githubClient)
+	toolExecutor := agentdomain.NewToolExecutor(githubAdapter)
+	slackAdapter := agentdomain.NewSlackClientAdapter(slackClient)
+	agentRunner := agentdomain.NewAgent(fireworksClient, toolExecutor, slackAdapter, cfg.FireworksModel)
+
 	// ── Build HTTP Routes ──────────────────────────────────────────────
 	mux := http.NewServeMux()
 
@@ -97,17 +107,9 @@ func main() {
 	previewweb.RegisterRoutes(mux, previewService)
 	githubweb.RegisterRoutes(mux, registry, previewService, slackNotifier)
 
-	// Register Slack Events API routes (for @mention → GitHub comment bridge)
-	slackHandler := slackweb.NewHandler(slackRepo, githubClient, githubClient, slackClient, registry, cfg.SlackSigningSecret, cfg.SlackWorkspace)
+	// Register Slack Events API routes (agent-driven @mention handling)
+	slackHandler := slackweb.NewHandler(agentRunner, slackRepo, slackRepo, slackClient, registry, cfg.SlackSigningSecret, cfg.SlackWorkspace)
 	slackweb.RegisterRoutes(mux, slackHandler)
-
-	// Register Slack slash command routes (for /create-issue)
-	slashHandler := slackweb.NewSlashCommandHandler(slackRepo, githubClient, githubClient, slackClient, registry, nil, cfg.SlackSigningSecret, cfg.SlackWorkspace)
-	slackweb.RegisterSlashCommandRoutes(mux, slashHandler)
-
-	// Register Slack interactions routes (for message shortcuts)
-	interactionsHandler := slackweb.NewInteractionsHandler(slackRepo, githubClient, githubClient, slackClient, slackClient, registry, nil, nil, cfg.SlackSigningSecret, cfg.SlackWorkspace)
-	slackweb.RegisterInteractionsRoutes(mux, interactionsHandler)
 
 	// ── Health Endpoints (outside application middleware) ───────────────
 	topMux := http.NewServeMux()

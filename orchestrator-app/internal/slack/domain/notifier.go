@@ -81,6 +81,13 @@ func (n *Notifier) Notify(ctx context.Context, event slackfacade.NotificationEve
 		n.reactions[event.ThreadTs] = event.Emoji
 	}
 
+	// Comments should be posted immediately (each is unique content),
+	// while status updates benefit from debouncing (rapid state transitions).
+	if event.Type == slackfacade.EventCommentAdded {
+		go n.flush(ctx, key, target)
+		return nil
+	}
+
 	// Debounce the message posting
 	n.debouncer.Debounce(key, 2*time.Second, func() {
 		n.flush(ctx, key, target)

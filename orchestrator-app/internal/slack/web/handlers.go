@@ -16,68 +16,68 @@ import (
 	"strings"
 	"time"
 
+	agent "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/agent/domain"
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/domain"
 )
 
-// ThreadFinder looks up a Slack thread by its timestamp
+// AgentRunner runs the LLM agent loop.
+type AgentRunner interface {
+	Run(ctx context.Context, req agent.RunRequest) (agent.RunResponse, error)
+}
+
+// ThreadFinder looks up a Slack thread by its timestamp.
 type ThreadFinder interface {
 	FindThreadBySlackTs(ctx context.Context, threadTs string) (*domain.SlackThread, error)
 }
 
-// GitHubCommenter posts comments on GitHub issues/PRs
-type GitHubCommenter interface {
-	CreateComment(ctx context.Context, owner, repo string, number int, body, pat string) (int64, error)
+// ThreadSaver persists thread-to-issue mappings.
+type ThreadSaver interface {
+	SaveThread(ctx context.Context, thread *domain.SlackThread) error
 }
 
-// GitHubIssueCreator creates new GitHub issues
-type GitHubIssueCreator interface {
-	CreateIssue(ctx context.Context, owner, repo, title, body, pat string) (int, error)
-}
-
-// UserInfoResolver resolves Slack user and channel info
-type UserInfoResolver interface {
+// SlackClient combines user info, thread posting, and reaction management.
+type SlackClient interface {
 	GetUserInfo(ctx context.Context, botToken, userID string) (string, error)
 	GetChannelName(ctx context.Context, botToken, channelID string) (string, error)
-}
-
-// ThreadPoster posts messages to Slack threads
-type ThreadPoster interface {
+	PostMessage(ctx context.Context, botToken, channel string, msg domain.MessageBlock) (string, error)
 	PostToThread(ctx context.Context, botToken, channel, threadTs string, msg domain.MessageBlock) error
+	AddReaction(ctx context.Context, botToken, channel, timestamp, emoji string) error
+	RemoveReaction(ctx context.Context, botToken, channel, timestamp, emoji string) error
 }
 
-// TargetRegistry looks up target configuration by repo or channel name
+// TargetRegistry looks up target configuration by repo or channel name.
 type TargetRegistry interface {
 	Get(repoOwner, repoName string) (targets.TargetConfig, bool)
 	GetByChannelName(channelName string) (targets.TargetConfig, bool)
 	AnyBotToken() string
 }
 
-// Handler handles Slack Events API callbacks
+// Handler handles Slack Events API callbacks.
 type Handler struct {
+	agent          AgentRunner
 	threadFinder   ThreadFinder
-	githubClient   GitHubCommenter
-	issueCreator   GitHubIssueCreator
-	slackClient    UserInfoResolver
+	threadSaver    ThreadSaver
+	slackClient    SlackClient
 	registry       TargetRegistry
 	signingSecret  string
-	slackWorkspace string // workspace subdomain, e.g. "luminor-tech"
+	slackWorkspace string
 }
 
-// NewHandler creates a new Slack event handler
+// NewHandler creates a new Slack event handler.
 func NewHandler(
+	agentRunner AgentRunner,
 	threadFinder ThreadFinder,
-	githubClient GitHubCommenter,
-	issueCreator GitHubIssueCreator,
-	slackClient UserInfoResolver,
+	threadSaver ThreadSaver,
+	slackClient SlackClient,
 	registry TargetRegistry,
 	signingSecret string,
 	slackWorkspace string,
 ) *Handler {
 	return &Handler{
+		agent:          agentRunner,
 		threadFinder:   threadFinder,
-		githubClient:   githubClient,
-		issueCreator:   issueCreator,
+		threadSaver:    threadSaver,
 		slackClient:    slackClient,
 		registry:       registry,
 		signingSecret:  signingSecret,
@@ -85,7 +85,7 @@ func NewHandler(
 	}
 }
 
-// slackEnvelope represents the outer Slack Events API payload
+// slackEnvelope represents the outer Slack Events API payload.
 type slackEnvelope struct {
 	Type      string          `json:"type"`
 	Challenge string          `json:"challenge"`
@@ -96,7 +96,7 @@ type slackEnvelope struct {
 	} `json:"authorizations"`
 }
 
-// slackAppMentionEvent represents the inner event for app_mention
+// slackAppMentionEvent represents the inner event for app_mention.
 type slackAppMentionEvent struct {
 	Type     string `json:"type"`
 	User     string `json:"user"`
@@ -108,7 +108,7 @@ type slackAppMentionEvent struct {
 
 var botMentionRe = regexp.MustCompile(`<@[A-Z0-9]+>`)
 
-// HandleEvent handles incoming Slack Events API requests
+// HandleEvent handles incoming Slack Events API requests.
 func (h *Handler) HandleEvent(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -159,79 +159,16 @@ func (h *Handler) HandleEvent(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleAppMention processes an app_mention event and posts to GitHub if appropriate
+// handleAppMention processes an app_mention event via the LLM agent.
 func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEvent, botUserID string) {
-	if event.ThreadTs == "" {
-		// Top-level mention — create a new GitHub issue if channel is tracked
-		h.handleTopLevelMention(ctx, event, botUserID)
-		return
-	}
-
-	// In-thread mention — forward as GitHub comment
-	h.handleThreadMention(ctx, event, botUserID)
-}
-
-// handleTopLevelMention creates a GitHub issue from a top-level @mention
-func (h *Handler) handleTopLevelMention(ctx context.Context, event slackAppMentionEvent, botUserID string) {
-	// Resolve channel ID → name, then look up target by naming convention
+	// Resolve channel → target
 	target, ok := h.resolveTargetByChannel(ctx, event.Channel)
 	if !ok {
-		slog.Debug("ignoring top-level app_mention in unregistered channel", "channel", event.Channel)
+		slog.Debug("ignoring app_mention in unregistered channel", "channel", event.Channel)
 		return
 	}
 
-	// Resolve Slack user display name
-	displayName := event.User
-	if name, err := h.slackClient.GetUserInfo(ctx, target.SlackBotToken, event.User); err == nil && name != "" {
-		displayName = name
-	}
-
-	// Strip bot mention from text — this becomes the issue title
-	title := event.Text
-	if botUserID != "" {
-		title = strings.ReplaceAll(title, "<@"+botUserID+">", "")
-	} else {
-		title = botMentionRe.ReplaceAllString(title, "")
-	}
-	title = strings.TrimSpace(title)
-
-	// Build a deep link to the Slack message
-	slackLink := h.slackMessageLink(event.Channel, event.Ts, "", "")
-
-	// Issue body: who requested it + deep link
-	body := fmt.Sprintf("Requested by %s [via Slack](%s)\n\n<!-- via-slack -->", displayName, slackLink)
-
-	number, err := h.issueCreator.CreateIssue(ctx, target.RepoOwner, target.RepoName, title, body, target.GitHubPAT)
-	if err != nil {
-		slog.Error("failed to create github issue from slack", "error", err, "repo", target.RepoOwner+"/"+target.RepoName)
-		return
-	}
-
-	slog.Info("created github issue from slack",
-		"repo", target.RepoOwner+"/"+target.RepoName,
-		"number", number,
-		"title", title,
-		"user", displayName,
-	)
-}
-
-// handleThreadMention forwards an in-thread @mention as a GitHub comment
-func (h *Handler) handleThreadMention(ctx context.Context, event slackAppMentionEvent, botUserID string) {
-	// Look up the thread by Slack timestamp
-	thread, err := h.threadFinder.FindThreadBySlackTs(ctx, event.ThreadTs)
-	if err != nil {
-		slog.Debug("ignoring app_mention in untracked thread", "thread_ts", event.ThreadTs, "error", err)
-		return
-	}
-
-	// Look up target config for this repo
-	target, ok := h.registry.Get(thread.RepoOwner, thread.RepoName)
-	if !ok {
-		slog.Warn("no target config for tracked thread", "repo", thread.RepoOwner+"/"+thread.RepoName)
-		return
-	}
-
-	// Resolve Slack user display name
+	// Resolve user display name
 	displayName := event.User
 	if name, err := h.slackClient.GetUserInfo(ctx, target.SlackBotToken, event.User); err == nil && name != "" {
 		displayName = name
@@ -246,58 +183,94 @@ func (h *Handler) handleThreadMention(ctx context.Context, event slackAppMention
 	}
 	text = strings.TrimSpace(text)
 
-	// Determine GitHub number: PR if set, else issue
-	number := thread.GithubIssueID
-	if thread.GithubPRID > 0 {
-		number = thread.GithubPRID
+	// Add :eyes: reaction as thinking indicator
+	_ = h.slackClient.AddReaction(ctx, target.SlackBotToken, event.Channel, event.Ts, "eyes")
+
+	// Look up existing thread mapping for linked issue context
+	var linkedIssue *agent.IssueContext
+	threadTs := event.ThreadTs
+	if threadTs != "" {
+		if thread, err := h.threadFinder.FindThreadBySlackTs(ctx, threadTs); err == nil && thread != nil {
+			linkedIssue = &agent.IssueContext{
+				Number: thread.GithubIssueID,
+				Title:  "", // Will be fetched by agent if needed
+				State:  "",
+			}
+			if thread.GithubPRID > 0 {
+				linkedIssue.Number = thread.GithubPRID
+			}
+		}
 	}
 
-	// Format the comment with a deep link back to the Slack message
-	slackLink := h.slackMessageLink(event.Channel, event.Ts, event.ThreadTs, event.Channel)
-	comment := fmt.Sprintf("**%s** [via Slack](%s):\n\n%s\n\n<!-- via-slack -->", displayName, slackLink, text)
+	// Build agent request
+	req := agent.RunRequest{
+		ChannelID:   event.Channel,
+		ThreadTs:    threadTs,
+		MessageTs:   event.Ts,
+		UserText:    text,
+		UserName:    displayName,
+		BotUserID:   botUserID,
+		Target:      target,
+		LinkedIssue: linkedIssue,
+	}
 
-	// Post to GitHub
-	if _, err := h.githubClient.CreateComment(ctx, thread.RepoOwner, thread.RepoName, number, comment, target.GitHubPAT); err != nil {
-		slog.Error("failed to post github comment from slack", "error", err, "repo", thread.RepoOwner+"/"+thread.RepoName, "number", number)
+	// Run agent
+	resp, err := h.agent.Run(ctx, req)
+
+	// Remove :eyes:, add :white_check_mark:
+	_ = h.slackClient.RemoveReaction(ctx, target.SlackBotToken, event.Channel, event.Ts, "eyes")
+
+	if err != nil {
+		slog.Error("agent error", "error", err, "channel", event.Channel)
+		_ = h.slackClient.AddReaction(ctx, target.SlackBotToken, event.Channel, event.Ts, "x")
+		replyTs := event.Ts
+		if event.ThreadTs != "" {
+			replyTs = event.ThreadTs
+		}
+		_ = h.slackClient.PostToThread(ctx, target.SlackBotToken, event.Channel, replyTs,
+			domain.MessageBlock{Text: "Sorry, I encountered an error processing your request. Please try again."})
 		return
 	}
 
-	slog.Info("posted github comment from slack",
-		"repo", thread.RepoOwner+"/"+thread.RepoName,
-		"number", number,
-		"user", displayName,
-	)
+	_ = h.slackClient.AddReaction(ctx, target.SlackBotToken, event.Channel, event.Ts, "white_check_mark")
+
+	// Post response as thread reply
+	replyTs := event.Ts // top-level mention → start new thread
+	if event.ThreadTs != "" {
+		replyTs = event.ThreadTs // in-thread mention → reply in existing thread
+	}
+
+	if resp.Text != "" {
+		_ = h.slackClient.PostToThread(ctx, target.SlackBotToken, event.Channel, replyTs,
+			domain.MessageBlock{Text: resp.Text})
+	}
+
+	// Save thread mapping for any created issues
+	for _, issue := range resp.SideEffects.CreatedIssues {
+		thread, err := domain.NewSlackThread(
+			target.RepoOwner, target.RepoName,
+			issue.Number, 0,
+			event.Channel, replyTs,
+		)
+		if err != nil {
+			slog.Warn("failed to create thread mapping", "error", err)
+			continue
+		}
+		if err := h.threadSaver.SaveThread(ctx, thread); err != nil {
+			slog.Warn("failed to save thread mapping", "error", err, "issue", issue.Number)
+		} else {
+			slog.Info("saved thread mapping", "issue", issue.Number, "thread_ts", replyTs)
+		}
+	}
 }
 
-// slackMessageLink builds a deep link to a Slack message.
-// For thread replies, pass threadTs and cid; for top-level messages, pass empty strings.
-func (h *Handler) slackMessageLink(channel, ts, threadTs, cid string) string {
-	slackHost := "slack.com"
-	if h.slackWorkspace != "" {
-		slackHost = h.slackWorkspace + ".slack.com"
-	}
-	link := fmt.Sprintf("https://%s/archives/%s/p%s",
-		slackHost, channel, strings.ReplaceAll(ts, ".", ""))
-	if threadTs != "" {
-		link += fmt.Sprintf("?thread_ts=%s&cid=%s", threadTs, cid)
-	}
-	return link
-}
-
-// resolveTargetByChannel resolves a Slack channel ID to a target config
-// using the naming convention "productbuilding-<reponame>".
-// It tries each target's bot token to resolve the channel name.
+// resolveTargetByChannel resolves a Slack channel ID to a target config.
 func (h *Handler) resolveTargetByChannel(ctx context.Context, channelID string) (targets.TargetConfig, bool) {
-	// We need a bot token to call the Slack API. Try to get the channel name
-	// using whatever bot token we can find from the target that will eventually match.
-	// Since all targets share the same Slack workspace, any valid bot token works.
-	// We resolve the channel name first, then look up the target.
 	channelName, err := h.resolveChannelName(ctx, channelID)
 	if err != nil {
 		slog.Debug("failed to resolve channel name", "channel", channelID, "error", err)
 		return targets.TargetConfig{}, false
 	}
-
 	return h.registry.GetByChannelName(channelName)
 }
 
@@ -310,7 +283,7 @@ func (h *Handler) resolveChannelName(ctx context.Context, channelID string) (str
 	return h.slackClient.GetChannelName(ctx, token, channelID)
 }
 
-// verifySignature validates the Slack request signature using HMAC-SHA256
+// verifySignature validates the Slack request signature using HMAC-SHA256.
 func (h *Handler) verifySignature(r *http.Request, body []byte) error {
 	signature := r.Header.Get("X-Slack-Signature")
 	timestamp := r.Header.Get("X-Slack-Request-Timestamp")
@@ -319,7 +292,6 @@ func (h *Handler) verifySignature(r *http.Request, body []byte) error {
 		return fmt.Errorf("missing signature or timestamp headers")
 	}
 
-	// Reject stale timestamps (> 5 minutes old)
 	ts, err := strconv.ParseInt(timestamp, 10, 64)
 	if err != nil {
 		return fmt.Errorf("invalid timestamp: %w", err)
@@ -328,7 +300,6 @@ func (h *Handler) verifySignature(r *http.Request, body []byte) error {
 		return fmt.Errorf("timestamp too old")
 	}
 
-	// Compute expected signature
 	sigBase := "v0:" + timestamp + ":" + string(body)
 	mac := hmac.New(sha256.New, []byte(h.signingSecret))
 	mac.Write([]byte(sigBase))

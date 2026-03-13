@@ -77,6 +77,17 @@ ENVEOF
         echo "=== Slack signing secret loaded ==="
       fi
 
+      echo "=== Fetching Fireworks API key (if configured) ==="
+      FIREWORKS_API_KEY=$(aws secretsmanager get-secret-value \
+        --region "$AWS_REGION" \
+        --secret-id "$PROJECT_PREFIX/fireworks-api-key" \
+        --query "SecretString" \
+        --output text 2>/dev/null || echo "")
+      if [[ -n "$FIREWORKS_API_KEY" ]]; then
+        echo "FIREWORKS_API_KEY=$FIREWORKS_API_KEY" >> /opt/orchestrator/repo/.env
+        echo "=== Fireworks API key loaded ==="
+      fi
+
       echo "=== Fetching target secrets from Secrets Manager ==="
       TARGETS="[]"
       for secret_name in $(aws secretsmanager list-secrets \

@@ -232,6 +232,171 @@ func (c *Client) CreateIssue(ctx context.Context, owner, repo, title, body, pat 
 	return result.Number, nil
 }
 
+// IssueSearchResult represents a single issue in search results.
+type IssueSearchResult struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	State  string `json:"state"`
+	URL    string `json:"html_url"`
+}
+
+type searchIssuesResponse struct {
+	Items []struct {
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		State  string `json:"state"`
+		URL    string `json:"html_url"`
+	} `json:"items"`
+}
+
+// SearchIssues searches for issues in a repository.
+func (c *Client) SearchIssues(ctx context.Context, owner, repo, query, pat string) ([]IssueSearchResult, error) {
+	q := fmt.Sprintf("repo:%s/%s %s", owner, repo, query)
+	url := fmt.Sprintf("%s/search/issues?q=%s&per_page=10", c.apiURL(), strings.ReplaceAll(q, " ", "+"))
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("search issues: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("search issues: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	var result searchIssuesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("parse search response: %w", err)
+	}
+
+	issues := make([]IssueSearchResult, len(result.Items))
+	for i, item := range result.Items {
+		issues[i] = IssueSearchResult{
+			Number: item.Number,
+			Title:  item.Title,
+			State:  item.State,
+			URL:    item.URL,
+		}
+	}
+
+	return issues, nil
+}
+
+// IssueDetail represents full details of a GitHub issue.
+type IssueDetail struct {
+	Number int      `json:"number"`
+	Title  string   `json:"title"`
+	Body   string   `json:"body"`
+	State  string   `json:"state"`
+	URL    string   `json:"html_url"`
+	User   string   `json:"user_login"`
+	Labels []string `json:"labels"`
+}
+
+type issueDetailResponse struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	Body   string `json:"body"`
+	State  string `json:"state"`
+	URL    string `json:"html_url"`
+	User   struct {
+		Login string `json:"login"`
+	} `json:"user"`
+	Labels []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
+}
+
+func issueDetailFromResponse(r issueDetailResponse) IssueDetail {
+	labels := make([]string, len(r.Labels))
+	for i, l := range r.Labels {
+		labels[i] = l.Name
+	}
+	return IssueDetail{
+		Number: r.Number,
+		Title:  r.Title,
+		Body:   r.Body,
+		State:  r.State,
+		URL:    r.URL,
+		User:   r.User.Login,
+		Labels: labels,
+	}
+}
+
+// GetIssue retrieves details of a specific issue.
+func (c *Client) GetIssue(ctx context.Context, owner, repo string, number int, pat string) (*IssueDetail, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/issues/%d", c.apiURL(), owner, repo, number)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get issue: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("get issue: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	var result issueDetailResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("parse issue response: %w", err)
+	}
+
+	detail := issueDetailFromResponse(result)
+	return &detail, nil
+}
+
+// ListIssues lists issues in a repository.
+func (c *Client) ListIssues(ctx context.Context, owner, repo, state, pat string, limit int) ([]IssueDetail, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/issues?state=%s&per_page=%d", c.apiURL(), owner, repo, state, limit)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list issues: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("list issues: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	var items []issueDetailResponse
+	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+		return nil, fmt.Errorf("parse list response: %w", err)
+	}
+
+	issues := make([]IssueDetail, len(items))
+	for i, item := range items {
+		issues[i] = issueDetailFromResponse(item)
+	}
+
+	return issues, nil
+}
+
 // DeleteComment removes a PR comment.
 func (c *Client) DeleteComment(ctx context.Context, owner, repo string, commentID int64, pat string) error {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/comments/%d", owner, repo, commentID)

@@ -196,9 +196,10 @@ func (h *Handler) handleIssueComment(w http.ResponseWriter, r *http.Request, bod
 		return
 	}
 
-	// Skip comments posted from Slack to prevent echo loops
-	if strings.Contains(event.Comment.Body, "<!-- via-slack -->") {
-		slog.Debug("skipping comment originated from slack", "comment_id", event.Comment.ID)
+	// Skip comments posted from Slack or the agent to prevent echo loops
+	if strings.Contains(event.Comment.Body, "<!-- via-slack -->") ||
+		strings.Contains(event.Comment.Body, "<!-- via-agent -->") {
+		slog.Debug("skipping comment originated from slack/agent", "comment_id", event.Comment.ID)
 		w.WriteHeader(http.StatusOK)
 		return
 	}

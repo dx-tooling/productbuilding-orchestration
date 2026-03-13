@@ -39,6 +39,21 @@ mise run ssh -- 'sudo bash -c "
   echo \"SLACK_WORKSPACE=luminor-tech\" >> /opt/orchestrator/repo/.env
 "'
 
+echo "==> Refreshing Fireworks API key..."
+mise run ssh -- 'sudo bash -c "
+  REGION=\$(grep AWS_REGION /opt/orchestrator/repo/.env | cut -d= -f2)
+  SECRET=\$(aws secretsmanager get-secret-value --region \"\$REGION\" \
+    --secret-id productbuilder/fireworks-api-key \
+    --query SecretString --output text 2>/dev/null || echo \"\")
+  sed -i /^FIREWORKS_API_KEY=/d /opt/orchestrator/repo/.env
+  if [ -n \"\$SECRET\" ]; then
+    echo \"FIREWORKS_API_KEY=\$SECRET\" >> /opt/orchestrator/repo/.env
+    echo \"Fireworks API key loaded\"
+  else
+    echo \"No Fireworks API key configured (skipped)\"
+  fi
+"'
+
 echo "==> Rebuilding and restarting orchestrator (no cache)..."
 mise run ssh -- "cd /opt/orchestrator/repo && docker compose build --no-cache orchestrator && docker compose up -d orchestrator"
 

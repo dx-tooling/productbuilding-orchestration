@@ -11,6 +11,19 @@ resource "aws_secretsmanager_secret_version" "slack_signing_secret" {
   secret_string = var.slack_signing_secret
 }
 
+# ── Workspace-level Fireworks API key ────────────────────────────
+
+resource "aws_secretsmanager_secret" "fireworks_api_key" {
+  count = var.fireworks_api_key != "" ? 1 : 0
+  name  = "${var.project_prefix}/fireworks-api-key"
+}
+
+resource "aws_secretsmanager_secret_version" "fireworks_api_key" {
+  count         = var.fireworks_api_key != "" ? 1 : 0
+  secret_id     = aws_secretsmanager_secret.fireworks_api_key[0].id
+  secret_string = var.fireworks_api_key
+}
+
 # ── Per-target-repo resources: Secrets Manager secrets, GitHub webhooks, GitHub Actions secrets ──
 
 # Store each target's credentials in Secrets Manager

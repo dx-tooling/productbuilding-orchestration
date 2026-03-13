@@ -52,6 +52,13 @@ variable "slack_signing_secret" {
   default     = ""
 }
 
+variable "fireworks_api_key" {
+  description = "Fireworks AI API key for the orchestration agent"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "targets" {
   description = "Map of target repositories to manage"
   type = map(object({

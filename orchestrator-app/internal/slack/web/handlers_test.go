@@ -11,9 +11,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
+	agent "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/agent/domain"
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
 	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/domain"
 )
@@ -22,73 +24,131 @@ const testSigningSecret = "test-signing-secret-123"
 
 // --- Mock implementations ---
 
+type mockAgentRunner struct {
+	mu       sync.Mutex
+	response agent.RunResponse
+	err      error
+	called   bool
+	lastReq  agent.RunRequest
+}
+
+func (m *mockAgentRunner) Run(_ context.Context, req agent.RunRequest) (agent.RunResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.called = true
+	m.lastReq = req
+	return m.response, m.err
+}
+
+func (m *mockAgentRunner) wasCalled() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.called
+}
+
+func (m *mockAgentRunner) getLastReq() agent.RunRequest {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lastReq
+}
+
 type mockThreadFinder struct {
 	thread *domain.SlackThread
 	err    error
 }
 
-func (m *mockThreadFinder) FindThreadBySlackTs(ctx context.Context, threadTs string) (*domain.SlackThread, error) {
+func (m *mockThreadFinder) FindThreadBySlackTs(_ context.Context, _ string) (*domain.SlackThread, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.thread, nil
 }
 
-type mockGitHubCommenter struct {
-	called    bool
-	owner     string
-	repo      string
-	number    int
-	body      string
-	pat       string
-	commentID int64
-	err       error
+type mockThreadSaver struct {
+	mu      sync.Mutex
+	saved   []*domain.SlackThread
+	saveErr error
 }
 
-func (m *mockGitHubCommenter) CreateComment(ctx context.Context, owner, repo string, number int, body, pat string) (int64, error) {
-	m.called = true
-	m.owner = owner
-	m.repo = repo
-	m.number = number
-	m.body = body
-	m.pat = pat
-	return m.commentID, m.err
+func (m *mockThreadSaver) SaveThread(_ context.Context, thread *domain.SlackThread) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.saveErr != nil {
+		return m.saveErr
+	}
+	m.saved = append(m.saved, thread)
+	return nil
 }
 
-type mockUserInfoResolver struct {
-	name        string
-	err         error
-	channelName string
-	channelErr  error
+func (m *mockThreadSaver) getSaved() []*domain.SlackThread {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.saved
 }
 
-func (m *mockUserInfoResolver) GetUserInfo(ctx context.Context, botToken, userID string) (string, error) {
-	return m.name, m.err
+type mockSlackClient struct {
+	mu             sync.Mutex
+	channelName    string
+	channelErr     error
+	userName       string
+	userErr        error
+	postedMessages []string
+	reactions      []string
+	removedEmoji   []string
 }
 
-func (m *mockUserInfoResolver) GetChannelName(ctx context.Context, botToken, channelID string) (string, error) {
+func (m *mockSlackClient) GetUserInfo(_ context.Context, _, _ string) (string, error) {
+	return m.userName, m.userErr
+}
+
+func (m *mockSlackClient) GetChannelName(_ context.Context, _, _ string) (string, error) {
 	return m.channelName, m.channelErr
 }
 
-type mockGitHubIssueCreator struct {
-	called bool
-	owner  string
-	repo   string
-	title  string
-	body   string
-	pat    string
-	number int
-	err    error
+func (m *mockSlackClient) PostMessage(_ context.Context, _, _ string, msg domain.MessageBlock) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.postedMessages = append(m.postedMessages, msg.Text)
+	return "1234.5678", nil
 }
 
-func (m *mockGitHubIssueCreator) CreateIssue(ctx context.Context, owner, repo, title, body, pat string) (int, error) {
-	m.called = true
-	m.owner = owner
-	m.repo = repo
-	m.title = title
-	m.body = body
-	m.pat = pat
-	return m.number, m.err
+func (m *mockSlackClient) PostToThread(_ context.Context, _, _, _ string, msg domain.MessageBlock) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.postedMessages = append(m.postedMessages, msg.Text)
+	return nil
+}
+
+func (m *mockSlackClient) AddReaction(_ context.Context, _, _, _, emoji string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reactions = append(m.reactions, emoji)
+	return nil
+}
+
+func (m *mockSlackClient) RemoveReaction(_ context.Context, _, _, _, emoji string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.removedEmoji = append(m.removedEmoji, emoji)
+	return nil
+}
+
+func (m *mockSlackClient) getReactions() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.reactions
+}
+
+func (m *mockSlackClient) getRemovedEmoji() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.removedEmoji
+}
+
+func (m *mockSlackClient) getPostedMessages() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.postedMessages
 }
 
 type mockTargetRegistry struct {
@@ -99,11 +159,11 @@ type mockTargetRegistry struct {
 	botToken      string
 }
 
-func (m *mockTargetRegistry) Get(repoOwner, repoName string) (targets.TargetConfig, bool) {
+func (m *mockTargetRegistry) Get(_, _ string) (targets.TargetConfig, bool) {
 	return m.config, m.found
 }
 
-func (m *mockTargetRegistry) GetByChannelName(channelName string) (targets.TargetConfig, bool) {
+func (m *mockTargetRegistry) GetByChannelName(_ string) (targets.TargetConfig, bool) {
 	return m.channelConfig, m.channelFound
 }
 
@@ -127,6 +187,15 @@ func makeSignedRequest(t *testing.T, body []byte) *http.Request {
 	req.Header.Set("X-Slack-Signature", signRequest(body, timestamp))
 	req.Header.Set("X-Slack-Request-Timestamp", timestamp)
 	return req
+}
+
+func defaultTarget() targets.TargetConfig {
+	return targets.TargetConfig{
+		RepoOwner:     "luminor-project",
+		RepoName:      "playground",
+		GitHubPAT:     "ghp_test123",
+		SlackBotToken: "xoxb-test",
+	}
 }
 
 // --- Tests ---
@@ -178,7 +247,6 @@ func TestHandleEvent_StaleTimestamp(t *testing.T) {
 	h := NewHandler(nil, nil, nil, nil, nil, testSigningSecret, "")
 
 	body := []byte(`{"type":"url_verification","challenge":"test"}`)
-	// Timestamp 10 minutes ago
 	staleTs := strconv.FormatInt(time.Now().Unix()-600, 10)
 
 	sigBase := "v0:" + staleTs + ":" + string(body)
@@ -203,7 +271,6 @@ func TestHandleEvent_MissingSignatureHeaders(t *testing.T) {
 
 	body := []byte(`{"type":"url_verification","challenge":"test"}`)
 	req := httptest.NewRequest("POST", "/slack/events", bytes.NewReader(body))
-	// No signature headers set
 
 	rec := httptest.NewRecorder()
 	h.HandleEvent(rec, req)
@@ -213,12 +280,158 @@ func TestHandleEvent_MissingSignatureHeaders(t *testing.T) {
 	}
 }
 
-func TestHandleEvent_AppMentionWithoutThreadTs_UnknownChannel(t *testing.T) {
-	github := &mockGitHubCommenter{}
-	issueCreator := &mockGitHubIssueCreator{}
-	registry := &mockTargetRegistry{channelFound: false, botToken: "xoxb-test"}
-	userResolver := &mockUserInfoResolver{channelName: "random-channel"}
-	h := NewHandler(&mockThreadFinder{}, github, issueCreator, userResolver, registry, testSigningSecret, "")
+func TestHandleEvent_TopLevelMention_AgentRunsAndResponds(t *testing.T) {
+	agentRunner := &mockAgentRunner{
+		response: agent.RunResponse{
+			Text: "I created issue #42 for you!",
+			SideEffects: agent.SideEffects{
+				CreatedIssues: []agent.CreatedIssue{{Number: 42, Title: "Dark mode"}},
+			},
+		},
+	}
+	threadSaver := &mockThreadSaver{}
+	slackClient := &mockSlackClient{
+		userName:    "Alice Smith",
+		channelName: "productbuilding-playground",
+	}
+	registry := &mockTargetRegistry{
+		channelConfig: defaultTarget(),
+		channelFound:  true,
+		botToken:      "xoxb-test",
+	}
+
+	h := NewHandler(agentRunner, &mockThreadFinder{}, threadSaver, slackClient, registry, testSigningSecret, "")
+
+	payload := map[string]interface{}{
+		"type": "event_callback",
+		"event": map[string]interface{}{
+			"type":    "app_mention",
+			"user":    "U123",
+			"text":    "<@UBOT> Add dark mode support",
+			"channel": "C0PRODUCT",
+			"ts":      "1234567890.123456",
+		},
+		"authorizations": []map[string]string{{"user_id": "UBOT"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := makeSignedRequest(t, body)
+	rec := httptest.NewRecorder()
+
+	h.HandleEvent(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %d", rec.Code)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	if !agentRunner.wasCalled() {
+		t.Fatal("Expected agent to be called")
+	}
+
+	lastReq := agentRunner.getLastReq()
+	if lastReq.UserText != "Add dark mode support" {
+		t.Errorf("Expected stripped text, got %q", lastReq.UserText)
+	}
+	if lastReq.UserName != "Alice Smith" {
+		t.Errorf("Expected user name 'Alice Smith', got %q", lastReq.UserName)
+	}
+
+	// Check reactions: eyes added, then removed, then white_check_mark added
+	reactions := slackClient.getReactions()
+	if len(reactions) < 2 || reactions[0] != "eyes" || reactions[1] != "white_check_mark" {
+		t.Errorf("Expected [eyes, white_check_mark] reactions, got %v", reactions)
+	}
+
+	removed := slackClient.getRemovedEmoji()
+	if len(removed) < 1 || removed[0] != "eyes" {
+		t.Errorf("Expected eyes removed, got %v", removed)
+	}
+
+	// Check thread mapping saved
+	saved := threadSaver.getSaved()
+	if len(saved) != 1 {
+		t.Fatalf("Expected 1 saved thread, got %d", len(saved))
+	}
+	if saved[0].GithubIssueID != 42 {
+		t.Errorf("Expected issue ID 42, got %d", saved[0].GithubIssueID)
+	}
+
+	// Check response posted
+	msgs := slackClient.getPostedMessages()
+	if len(msgs) != 1 || msgs[0] != "I created issue #42 for you!" {
+		t.Errorf("Expected agent response posted, got %v", msgs)
+	}
+}
+
+func TestHandleEvent_InThreadMention_AgentRunsWithContext(t *testing.T) {
+	agentRunner := &mockAgentRunner{
+		response: agent.RunResponse{Text: "Done!"},
+	}
+	threadFinder := &mockThreadFinder{
+		thread: &domain.SlackThread{
+			GithubIssueID: 42,
+			RepoOwner:     "luminor-project",
+			RepoName:      "playground",
+		},
+	}
+	slackClient := &mockSlackClient{
+		userName:    "Alice",
+		channelName: "productbuilding-playground",
+	}
+	registry := &mockTargetRegistry{
+		channelConfig: defaultTarget(),
+		channelFound:  true,
+		botToken:      "xoxb-test",
+	}
+
+	h := NewHandler(agentRunner, threadFinder, &mockThreadSaver{}, slackClient, registry, testSigningSecret, "")
+
+	payload := map[string]interface{}{
+		"type": "event_callback",
+		"event": map[string]interface{}{
+			"type":      "app_mention",
+			"user":      "U123",
+			"text":      "<@UBOT> please implement this",
+			"thread_ts": "1111111111.111111",
+			"channel":   "C0PRODUCT",
+			"ts":        "2222222222.222222",
+		},
+		"authorizations": []map[string]string{{"user_id": "UBOT"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := makeSignedRequest(t, body)
+	rec := httptest.NewRecorder()
+
+	h.HandleEvent(rec, req)
+	time.Sleep(200 * time.Millisecond)
+
+	if !agentRunner.wasCalled() {
+		t.Fatal("Expected agent to be called")
+	}
+
+	lastReq := agentRunner.getLastReq()
+	if lastReq.ThreadTs != "1111111111.111111" {
+		t.Errorf("Expected thread_ts passed, got %q", lastReq.ThreadTs)
+	}
+	if lastReq.LinkedIssue == nil || lastReq.LinkedIssue.Number != 42 {
+		t.Errorf("Expected linked issue #42, got %+v", lastReq.LinkedIssue)
+	}
+}
+
+func TestHandleEvent_AgentError_PostsErrorMessage(t *testing.T) {
+	agentRunner := &mockAgentRunner{err: fmt.Errorf("LLM unreachable")}
+	slackClient := &mockSlackClient{
+		userName:    "Alice",
+		channelName: "productbuilding-playground",
+	}
+	registry := &mockTargetRegistry{
+		channelConfig: defaultTarget(),
+		channelFound:  true,
+		botToken:      "xoxb-test",
+	}
+
+	h := NewHandler(agentRunner, &mockThreadFinder{}, &mockThreadSaver{}, slackClient, registry, testSigningSecret, "")
 
 	payload := map[string]interface{}{
 		"type": "event_callback",
@@ -226,9 +439,8 @@ func TestHandleEvent_AppMentionWithoutThreadTs_UnknownChannel(t *testing.T) {
 			"type":    "app_mention",
 			"user":    "U123",
 			"text":    "<@UBOT> hello",
-			"channel": "C0UNKNOWN",
+			"channel": "C0PRODUCT",
 			"ts":      "1234567890.123456",
-			// No thread_ts — top-level mention in unknown channel
 		},
 		"authorizations": []map[string]string{{"user_id": "UBOT"}},
 	}
@@ -237,50 +449,43 @@ func TestHandleEvent_AppMentionWithoutThreadTs_UnknownChannel(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	h.HandleEvent(rec, req)
+	time.Sleep(200 * time.Millisecond)
 
-	if rec.Code != http.StatusOK {
-		t.Errorf("Expected 200, got %d", rec.Code)
+	// Should add :x: reaction
+	reactions := slackClient.getReactions()
+	hasX := false
+	for _, r := range reactions {
+		if r == "x" {
+			hasX = true
+			break
+		}
+	}
+	if !hasX {
+		t.Errorf("Expected :x: reaction on error, got %v", reactions)
 	}
 
-	time.Sleep(50 * time.Millisecond)
-
-	if github.called {
-		t.Error("Should not post GitHub comment for top-level mention")
-	}
-	if issueCreator.called {
-		t.Error("Should not create GitHub issue for unknown channel")
+	// Should post error message
+	msgs := slackClient.getPostedMessages()
+	if len(msgs) == 0 {
+		t.Fatal("Expected error message posted")
 	}
 }
 
-func TestHandleEvent_AppMentionTopLevel_CreatesIssue(t *testing.T) {
-	github := &mockGitHubCommenter{}
-	issueCreator := &mockGitHubIssueCreator{number: 99}
-	userResolver := &mockUserInfoResolver{
-		name:        "Alice Smith",
-		channelName: "productbuilding-playground",
-	}
-	registry := &mockTargetRegistry{
-		channelConfig: targets.TargetConfig{
-			RepoOwner:     "luminor-project",
-			RepoName:      "playground",
-			GitHubPAT:     "ghp_test123",
-			SlackBotToken: "xoxb-test",
-		},
-		channelFound: true,
-		botToken:     "xoxb-test",
-	}
+func TestHandleEvent_UnregisteredChannel_Ignored(t *testing.T) {
+	agentRunner := &mockAgentRunner{}
+	slackClient := &mockSlackClient{channelName: "random-channel"}
+	registry := &mockTargetRegistry{channelFound: false, botToken: "xoxb-test"}
 
-	h := NewHandler(&mockThreadFinder{}, github, issueCreator, userResolver, registry, testSigningSecret, "test-workspace")
+	h := NewHandler(agentRunner, &mockThreadFinder{}, &mockThreadSaver{}, slackClient, registry, testSigningSecret, "")
 
 	payload := map[string]interface{}{
 		"type": "event_callback",
 		"event": map[string]interface{}{
 			"type":    "app_mention",
-			"user":    "U123ALICE",
-			"text":    "<@UBOT> Add dark mode support",
-			"channel": "C0PRODUCT",
+			"user":    "U123",
+			"text":    "<@UBOT> hello",
+			"channel": "C0RANDOM",
 			"ts":      "1234567890.123456",
-			// No thread_ts — top-level mention
 		},
 		"authorizations": []map[string]string{{"user_id": "UBOT"}},
 	}
@@ -289,244 +494,9 @@ func TestHandleEvent_AppMentionTopLevel_CreatesIssue(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	h.HandleEvent(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("Expected 200, got %d", rec.Code)
-	}
-
 	time.Sleep(100 * time.Millisecond)
 
-	if github.called {
-		t.Error("Should not post a comment — should create an issue")
-	}
-
-	if !issueCreator.called {
-		t.Fatal("Expected GitHub issue to be created")
-	}
-	if issueCreator.owner != "luminor-project" || issueCreator.repo != "playground" {
-		t.Errorf("Wrong repo: %s/%s", issueCreator.owner, issueCreator.repo)
-	}
-	if issueCreator.title != "Add dark mode support" {
-		t.Errorf("Expected title 'Add dark mode support', got %q", issueCreator.title)
-	}
-	if issueCreator.pat != "ghp_test123" {
-		t.Errorf("Expected PAT ghp_test123, got %s", issueCreator.pat)
-	}
-
-	// Body should mention the requester with a deep link
-	slackLink := "https://test-workspace.slack.com/archives/C0PRODUCT/p1234567890123456"
-	expectedBody := fmt.Sprintf("Requested by Alice Smith [via Slack](%s)\n\n<!-- via-slack -->", slackLink)
-	if issueCreator.body != expectedBody {
-		t.Errorf("Unexpected issue body:\ngot:  %q\nwant: %q", issueCreator.body, expectedBody)
-	}
-}
-
-func TestHandleEvent_AppMentionInUntrackedThread(t *testing.T) {
-	github := &mockGitHubCommenter{}
-	threadFinder := &mockThreadFinder{err: fmt.Errorf("thread not found")}
-	h := NewHandler(threadFinder, github, nil, &mockUserInfoResolver{}, &mockTargetRegistry{}, testSigningSecret, "")
-
-	payload := map[string]interface{}{
-		"type": "event_callback",
-		"event": map[string]interface{}{
-			"type":      "app_mention",
-			"user":      "U123",
-			"text":      "<@UBOT> hello",
-			"thread_ts": "9999999999.999999",
-			"channel":   "C123",
-			"ts":        "1234567890.123456",
-		},
-		"authorizations": []map[string]string{{"user_id": "UBOT"}},
-	}
-	body, _ := json.Marshal(payload)
-	req := makeSignedRequest(t, body)
-	rec := httptest.NewRecorder()
-
-	h.HandleEvent(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("Expected 200, got %d", rec.Code)
-	}
-
-	time.Sleep(50 * time.Millisecond)
-
-	if github.called {
-		t.Error("Should not post GitHub comment for untracked thread")
-	}
-}
-
-func TestHandleEvent_AppMentionInTrackedThread(t *testing.T) {
-	github := &mockGitHubCommenter{commentID: 99}
-	threadFinder := &mockThreadFinder{
-		thread: &domain.SlackThread{
-			RepoOwner:     "luminor-project",
-			RepoName:      "playground",
-			GithubIssueID: 42,
-			SlackChannel:  "#productbuilding",
-			SlackThreadTs: "1111111111.111111",
-		},
-	}
-	userResolver := &mockUserInfoResolver{name: "Alice Smith"}
-	registry := &mockTargetRegistry{
-		config: targets.TargetConfig{
-			RepoOwner:     "luminor-project",
-			RepoName:      "playground",
-			GitHubPAT:     "ghp_test123",
-			SlackBotToken: "xoxb-test",
-		},
-		found: true,
-	}
-
-	h := NewHandler(threadFinder, github, nil, userResolver, registry, testSigningSecret, "test-workspace")
-
-	payload := map[string]interface{}{
-		"type": "event_callback",
-		"event": map[string]interface{}{
-			"type":      "app_mention",
-			"user":      "U123ALICE",
-			"text":      "<@UBOT> please fix the alignment",
-			"thread_ts": "1111111111.111111",
-			"channel":   "C123",
-			"ts":        "2222222222.222222",
-		},
-		"authorizations": []map[string]string{{"user_id": "UBOT"}},
-	}
-	body, _ := json.Marshal(payload)
-	req := makeSignedRequest(t, body)
-	rec := httptest.NewRecorder()
-
-	h.HandleEvent(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("Expected 200, got %d", rec.Code)
-	}
-
-	// Wait for async goroutine
-	time.Sleep(100 * time.Millisecond)
-
-	if !github.called {
-		t.Fatal("Expected GitHub comment to be posted")
-	}
-
-	if github.owner != "luminor-project" || github.repo != "playground" {
-		t.Errorf("Wrong repo: %s/%s", github.owner, github.repo)
-	}
-	if github.number != 42 {
-		t.Errorf("Expected issue number 42, got %d", github.number)
-	}
-	if github.pat != "ghp_test123" {
-		t.Errorf("Expected PAT ghp_test123, got %s", github.pat)
-	}
-
-	// Verify comment format (includes deep link to Slack message)
-	expectedBody := "**Alice Smith** [via Slack](https://test-workspace.slack.com/archives/C123/p2222222222222222?thread_ts=1111111111.111111&cid=C123):\n\nplease fix the alignment\n\n<!-- via-slack -->"
-	if github.body != expectedBody {
-		t.Errorf("Unexpected comment body:\ngot:  %q\nwant: %q", github.body, expectedBody)
-	}
-}
-
-func TestHandleEvent_AppMentionInTrackedThread_UsesPRID(t *testing.T) {
-	github := &mockGitHubCommenter{commentID: 99}
-	threadFinder := &mockThreadFinder{
-		thread: &domain.SlackThread{
-			RepoOwner:     "luminor-project",
-			RepoName:      "playground",
-			GithubIssueID: 42,
-			GithubPRID:    17, // PR phase — should use PR ID
-			SlackChannel:  "#productbuilding",
-			SlackThreadTs: "1111111111.111111",
-		},
-	}
-	userResolver := &mockUserInfoResolver{name: "Bob"}
-	registry := &mockTargetRegistry{
-		config: targets.TargetConfig{
-			RepoOwner:     "luminor-project",
-			RepoName:      "playground",
-			GitHubPAT:     "ghp_test",
-			SlackBotToken: "xoxb-test",
-		},
-		found: true,
-	}
-
-	h := NewHandler(threadFinder, github, nil, userResolver, registry, testSigningSecret, "test-workspace")
-
-	payload := map[string]interface{}{
-		"type": "event_callback",
-		"event": map[string]interface{}{
-			"type":      "app_mention",
-			"user":      "U123BOB",
-			"text":      "<@UBOT> looks good",
-			"thread_ts": "1111111111.111111",
-			"channel":   "C123",
-			"ts":        "2222222222.222222",
-		},
-		"authorizations": []map[string]string{{"user_id": "UBOT"}},
-	}
-	body, _ := json.Marshal(payload)
-	req := makeSignedRequest(t, body)
-	rec := httptest.NewRecorder()
-
-	h.HandleEvent(rec, req)
-
-	time.Sleep(100 * time.Millisecond)
-
-	if !github.called {
-		t.Fatal("Expected GitHub comment to be posted")
-	}
-	if github.number != 17 {
-		t.Errorf("Expected PR number 17, got %d", github.number)
-	}
-}
-
-func TestHandleEvent_BotMentionStripped(t *testing.T) {
-	github := &mockGitHubCommenter{commentID: 99}
-	threadFinder := &mockThreadFinder{
-		thread: &domain.SlackThread{
-			RepoOwner:     "luminor-project",
-			RepoName:      "playground",
-			GithubIssueID: 42,
-			SlackThreadTs: "1111111111.111111",
-		},
-	}
-	userResolver := &mockUserInfoResolver{name: "Charlie"}
-	registry := &mockTargetRegistry{
-		config: targets.TargetConfig{
-			GitHubPAT:     "ghp_test",
-			SlackBotToken: "xoxb-test",
-		},
-		found: true,
-	}
-
-	h := NewHandler(threadFinder, github, nil, userResolver, registry, testSigningSecret, "test-workspace")
-
-	// Text with bot mention at different positions
-	payload := map[string]interface{}{
-		"type": "event_callback",
-		"event": map[string]interface{}{
-			"type":      "app_mention",
-			"user":      "U123",
-			"text":      "<@UBOTID> hey <@UBOTID> do the thing",
-			"thread_ts": "1111111111.111111",
-			"channel":   "C123",
-			"ts":        "2222222222.222222",
-		},
-		"authorizations": []map[string]string{{"user_id": "UBOTID"}},
-	}
-	body, _ := json.Marshal(payload)
-	req := makeSignedRequest(t, body)
-	rec := httptest.NewRecorder()
-
-	h.HandleEvent(rec, req)
-
-	time.Sleep(100 * time.Millisecond)
-
-	if !github.called {
-		t.Fatal("Expected GitHub comment to be posted")
-	}
-
-	// The mention should be stripped; text should just be "hey  do the thing" trimmed
-	expectedBody := "**Charlie** [via Slack](https://test-workspace.slack.com/archives/C123/p2222222222222222?thread_ts=1111111111.111111&cid=C123):\n\nhey  do the thing\n\n<!-- via-slack -->"
-	if github.body != expectedBody {
-		t.Errorf("Unexpected comment body:\ngot:  %q\nwant: %q", github.body, expectedBody)
+	if agentRunner.wasCalled() {
+		t.Error("Agent should not be called for unregistered channel")
 	}
 }

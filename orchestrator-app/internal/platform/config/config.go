@@ -17,6 +17,8 @@ type Config struct {
 	AWSRegion          string `env:"AWS_REGION" envDefault:"eu-central-1"`
 	SlackSigningSecret string `env:"SLACK_SIGNING_SECRET"`
 	SlackWorkspace     string `env:"SLACK_WORKSPACE"` // Slack workspace subdomain (e.g. "luminor-tech")
+	FireworksAPIKey    string `env:"FIREWORKS_API_KEY"`
+	FireworksModel     string `env:"FIREWORKS_MODEL" envDefault:"accounts/fireworks/models/kimi-k2p5"`
 }
 
 func (c Config) IsProduction() bool {

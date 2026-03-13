@@ -107,50 +107,17 @@ mise run deploy             # Redeploy orchestrator to load new target (REQUIRED
 
 **Slack integration setup** (if using Slack):
 
-- Ensure `SLACK_SIGNING_SECRET` and `SLACK_WORKSPACE` are set on the orchestrator host (managed via Terraform / Secrets Manager / deploy task)
-- The Slack app needs these Bot Token Scopes: `chat:write`, `chat:write.public`, `reactions:write`, `channels:read`, `app_mentions:read`, `users:read`
+- Ensure `SLACK_SIGNING_SECRET`, `SLACK_WORKSPACE`, and `FIREWORKS_API_KEY` are set on the orchestrator host (managed via Terraform / Secrets Manager / deploy task)
+- The Slack app needs these Bot Token Scopes: `chat:write`, `chat:write.public`, `reactions:write`, `reactions:read`, `channels:read`, `channels:history`, `app_mentions:read`, `users:read`
 - Enable Event Subscriptions with `app_mention` event, Request URL: `https://api.{domain}/slack/events`
-- **Configure Slash Commands** (see below)
+- No slash commands or interactivity URL needed — all interaction is via `@ProductBuilder` mentions
 - Slack channels **must** follow the naming convention `#productbuilding-{repo-name}` (the system uses this to match channels to repos)
 - After adding scopes or event subscriptions, **reinstall the app** to the workspace
-- See `orchestrator-app/docs/SLACK_INTEGRATION.md` for the complete setup guide
 
-**Slash Commands Setup (Manual):**
-
-1. Go to **api.slack.com/apps** → Your App → **Slash Commands**
-2. Create this command:
-
-| Command | Request URL | Short Description | Usage Hint |
-|---------|-------------|-------------------|------------|
-| `/create-issue` | `https://api.{domain}/slack/commands` | Create a GitHub issue | `<issue title>` |
-
-3. Save and reinstall the app to the workspace
-
-**Slash Command Usage:**
-- `/create-issue Fix login bug` - Creates GitHub issue in the configured repository
-
-**Message Shortcuts Setup (Manual):**
-
-Message shortcuts (accessed via the "More actions" menu on messages) work in threads:
-
-1. Go to **api.slack.com/apps** → Your App → **Interactivity & Shortcuts**
-2. Enable **Interactivity** and set Request URL: `https://api.{domain}/slack/interactions`
-3. Under **Shortcuts**, create these **message shortcuts**:
-
-| Name | Short Description | Callback ID |
-|------|-------------------|-------------|
-| Create implementation plan | Request OpenCode to write an implementation plan | `create_plan` |
-| Implement this | Request OpenCode to implement the plan | `implement` |
-| Add comment | Add a comment to this GitHub issue/PR | `add_comment` |
-
-4. Save changes and reinstall the app to the workspace
-
-**Message Shortcut Usage:**
-- Click the three-dot menu (More actions) on any ProductBuilder message in a thread
-- Select the desired shortcut:
-  - **Create implementation plan** - Posts `/opencode Please write an implementation plan for this.` to GitHub
-  - **Implement this** - Posts `/opencode Please implement the plan.` to GitHub  
-  - **Add comment** - Opens a modal dialog to enter and post a comment to GitHub
+**Usage:**
+- `@ProductBuilder I want a "Forgot password" feature` — the agent searches for duplicates, creates a GitHub issue, and responds with a link
+- `@ProductBuilder please create an implementation plan` (in a thread with a linked issue) — adds a `/opencode` comment to trigger the AI coding agent
+- `@ProductBuilder where do we stand?` (in a thread) — checks issue/PR status and summarizes progress
 
 Then manually:
 
