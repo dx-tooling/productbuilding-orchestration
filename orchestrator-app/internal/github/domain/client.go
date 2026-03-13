@@ -427,6 +427,70 @@ func (c *Client) GetPRDiff(ctx context.Context, owner, repo string, prNumber int
 	return string(body), nil
 }
 
+type updateIssueStateRequest struct {
+	State string `json:"state"`
+}
+
+// CloseIssue closes a GitHub issue.
+func (c *Client) CloseIssue(ctx context.Context, owner, repo string, number int, pat string) error {
+	url := fmt.Sprintf("%s/repos/%s/%s/issues/%d", c.apiURL(), owner, repo, number)
+
+	payload, _ := json.Marshal(updateIssueStateRequest{State: "closed"})
+
+	req, err := http.NewRequestWithContext(ctx, "PATCH", url, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("close issue: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("close issue: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	return nil
+}
+
+type updatePRStateRequest struct {
+	State string `json:"state"`
+}
+
+// ClosePR closes a GitHub pull request.
+func (c *Client) ClosePR(ctx context.Context, owner, repo string, prNumber int, pat string) error {
+	url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d", c.apiURL(), owner, repo, prNumber)
+
+	payload, _ := json.Marshal(updatePRStateRequest{State: "closed"})
+
+	req, err := http.NewRequestWithContext(ctx, "PATCH", url, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("close pr: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("close pr: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	return nil
+}
+
 // DeleteComment removes a PR comment.
 func (c *Client) DeleteComment(ctx context.Context, owner, repo string, commentID int64, pat string) error {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/comments/%d", owner, repo, commentID)

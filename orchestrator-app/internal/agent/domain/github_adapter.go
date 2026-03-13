@@ -80,3 +80,11 @@ func (a *GitHubClientAdapter) ListIssues(ctx context.Context, owner, repo, state
 func (a *GitHubClientAdapter) GetPRDiff(ctx context.Context, owner, repo string, prNumber int, pat string) (string, error) {
 	return a.client.GetPRDiff(ctx, owner, repo, prNumber, pat)
 }
+
+func (a *GitHubClientAdapter) CloseIssue(ctx context.Context, owner, repo string, number int, pat string) error {
+	return a.client.CloseIssue(ctx, owner, repo, number, pat)
+}
+
+func (a *GitHubClientAdapter) ClosePR(ctx context.Context, owner, repo string, prNumber int, pat string) error {
+	return a.client.ClosePR(ctx, owner, repo, prNumber, pat)
+}

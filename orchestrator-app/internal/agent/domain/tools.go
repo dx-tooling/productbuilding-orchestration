@@ -17,6 +17,8 @@ type GitHubClient interface {
 	GetIssue(ctx context.Context, owner, repo string, number int, pat string) (*IssueDetail, error)
 	ListIssues(ctx context.Context, owner, repo, state, pat string, limit int) ([]IssueDetail, error)
 	GetPRDiff(ctx context.Context, owner, repo string, prNumber int, pat string) (string, error)
+	CloseIssue(ctx context.Context, owner, repo string, number int, pat string) error
+	ClosePR(ctx context.Context, owner, repo string, prNumber int, pat string) error
 }
 
 // IssueSearchResult is returned by SearchIssues.
@@ -75,6 +77,10 @@ func (e *GitHubToolExecutor) Execute(ctx context.Context, call ToolCall, target 
 		return e.listIssues(ctx, call.Function.Arguments, target)
 	case "search_pr_diff":
 		return e.searchPRDiff(ctx, call.Function.Arguments, target)
+	case "close_github_issue":
+		return e.closeIssue(ctx, call.Function.Arguments, target)
+	case "close_github_pr":
+		return e.closePR(ctx, call.Function.Arguments, target)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", call.Function.Name)
 	}
@@ -239,6 +245,38 @@ func (e *GitHubToolExecutor) searchPRDiff(ctx context.Context, argsJSON string, 
 	return strings.Join(matches, "\n"), nil
 }
 
+func (e *GitHubToolExecutor) closeIssue(ctx context.Context, argsJSON string, target targets.TargetConfig) (string, error) {
+	var args struct {
+		Number int `json:"number"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "", fmt.Errorf("parse arguments: %w", err)
+	}
+
+	if err := e.github.CloseIssue(ctx, target.RepoOwner, target.RepoName, args.Number, target.GitHubPAT); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("Closed issue #%d.\nURL: https://github.com/%s/%s/issues/%d",
+		args.Number, target.RepoOwner, target.RepoName, args.Number), nil
+}
+
+func (e *GitHubToolExecutor) closePR(ctx context.Context, argsJSON string, target targets.TargetConfig) (string, error) {
+	var args struct {
+		PRNumber int `json:"pr_number"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "", fmt.Errorf("parse arguments: %w", err)
+	}
+
+	if err := e.github.ClosePR(ctx, target.RepoOwner, target.RepoName, args.PRNumber, target.GitHubPAT); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("Closed PR #%d.\nURL: https://github.com/%s/%s/pull/%d",
+		args.PRNumber, target.RepoOwner, target.RepoName, args.PRNumber), nil
+}
+
 // ToolDefinitions returns the tool schemas to pass to the LLM.
 func ToolDefinitions() []ToolDef {
 	return []ToolDef{
@@ -326,6 +364,34 @@ func ToolDefinitions() []ToolDef {
 						"pattern": {"type": "string", "description": "Case-insensitive search pattern to match against diff lines"}
 					},
 					"required": ["pr_number", "pattern"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolSchema{
+				Name:        "close_github_issue",
+				Description: "Close a GitHub issue.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"number": {"type": "integer", "description": "Issue number to close"}
+					},
+					"required": ["number"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolSchema{
+				Name:        "close_github_pr",
+				Description: "Close a GitHub pull request.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"pr_number": {"type": "integer", "description": "Pull request number to close"}
+					},
+					"required": ["pr_number"]
 				}`),
 			},
 		},

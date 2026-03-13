@@ -23,9 +23,13 @@ type mockGitHubClient struct {
 	listIssuesErr       error
 	getPRDiffResult     string
 	getPRDiffErr        error
+	closeIssueErr       error
+	closePRErr          error
 
 	// Captured args
-	lastCommentBody string
+	lastCommentBody    string
+	lastClosedIssue    int
+	lastClosedPRNumber int
 }
 
 func (m *mockGitHubClient) CreateIssue(_ context.Context, _, _, _, _, _ string) (int, error) {
@@ -51,6 +55,16 @@ func (m *mockGitHubClient) ListIssues(_ context.Context, _, _, _, _ string, _ in
 
 func (m *mockGitHubClient) GetPRDiff(_ context.Context, _, _ string, _ int, _ string) (string, error) {
 	return m.getPRDiffResult, m.getPRDiffErr
+}
+
+func (m *mockGitHubClient) CloseIssue(_ context.Context, _, _ string, number int, _ string) error {
+	m.lastClosedIssue = number
+	return m.closeIssueErr
+}
+
+func (m *mockGitHubClient) ClosePR(_ context.Context, _, _ string, prNumber int, _ string) error {
+	m.lastClosedPRNumber = prNumber
+	return m.closePRErr
 }
 
 var testTarget = targets.TargetConfig{
@@ -279,9 +293,53 @@ func TestToolExecutor_SearchPRDiff_NoMatches(t *testing.T) {
 	}
 }
 
+func TestToolExecutor_CloseIssue(t *testing.T) {
+	gh := &mockGitHubClient{}
+	exec := NewToolExecutor(gh)
+
+	result, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "close_github_issue",
+			Arguments: `{"number":7}`,
+		},
+	}, testTarget)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gh.lastClosedIssue != 7 {
+		t.Errorf("expected issue 7 to be closed, got %d", gh.lastClosedIssue)
+	}
+	if !strings.Contains(result, "#7") {
+		t.Errorf("expected result to contain issue number, got: %s", result)
+	}
+}
+
+func TestToolExecutor_ClosePR(t *testing.T) {
+	gh := &mockGitHubClient{}
+	exec := NewToolExecutor(gh)
+
+	result, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "close_github_pr",
+			Arguments: `{"pr_number":35}`,
+		},
+	}, testTarget)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gh.lastClosedPRNumber != 35 {
+		t.Errorf("expected PR 35 to be closed, got %d", gh.lastClosedPRNumber)
+	}
+	if !strings.Contains(result, "#35") {
+		t.Errorf("expected result to contain PR number, got: %s", result)
+	}
+}
+
 func TestToolDefinitions_Count(t *testing.T) {
 	defs := ToolDefinitions()
-	if len(defs) != 6 {
-		t.Errorf("expected 6 tool definitions, got %d", len(defs))
+	if len(defs) != 8 {
+		t.Errorf("expected 8 tool definitions, got %d", len(defs))
 	}
 }
