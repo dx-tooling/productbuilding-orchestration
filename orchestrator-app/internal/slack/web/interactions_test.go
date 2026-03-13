@@ -993,6 +993,318 @@ func TestHandleInteractions_ViewSubmission_AddComment_SlackPostFailure(t *testin
 	}
 }
 
+// --- Tests for "Request anything" shortcut ---
+
+func TestHandleInteractions_RequestAnythingShortcut_OpensModal(t *testing.T) {
+	threadFinder := &mockThreadFinder{
+		thread: &domain.SlackThread{
+			RepoOwner:     "luminor-project",
+			RepoName:      "playground",
+			GithubIssueID: 42,
+			SlackChannel:  "C123",
+			SlackThreadTs: "1111111111.111111",
+		},
+	}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:     "luminor-project",
+			RepoName:      "playground",
+			GitHubPAT:     "ghp_test",
+			SlackBotToken: "xoxb-test",
+		},
+		found: true,
+	}
+	modalOpener := &mockModalOpener{}
+	poster := &mockResponsePoster{}
+
+	h := NewInteractionsHandler(
+		threadFinder,
+		&mockGitHubCommenter{},
+		nil,
+		&mockUserInfoResolver{},
+		nil,
+		registry,
+		poster,
+		modalOpener,
+		testSigningSecret,
+		"",
+	)
+
+	payload := map[string]interface{}{
+		"type":        "shortcut",
+		"callback_id": "request_anything",
+		"channel": map[string]string{
+			"id": "C123",
+		},
+		"message_ts": "1111111111.111111",
+		"trigger_id": "T1234567890.123456",
+		"user": map[string]string{
+			"id":   "U123",
+			"name": "charlie",
+		},
+	}
+
+	req := makeSignedInteractionRequest(t, payload)
+	rec := httptest.NewRecorder()
+
+	h.HandleInteractions(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", rec.Code)
+	}
+
+	// Verify modal was opened
+	if !modalOpener.called {
+		t.Fatal("Expected modal to be opened")
+	}
+
+	if modalOpener.triggerID != "T1234567890.123456" {
+		t.Errorf("Expected trigger_id T1234567890.123456, got %s", modalOpener.triggerID)
+	}
+
+	// Verify modal has correct structure
+	view := modalOpener.view
+	if view["type"] != "modal" {
+		t.Errorf("Expected modal type, got %v", view["type"])
+	}
+
+	// Verify callback_id is request_anything_modal
+	if view["callback_id"] != "request_anything_modal" {
+		t.Errorf("Expected callback_id 'request_anything_modal', got %v", view["callback_id"])
+	}
+
+	// Verify private_metadata contains thread info
+	privateMeta, ok := view["private_metadata"].(string)
+	if !ok || privateMeta == "" {
+		t.Error("Expected private_metadata with thread info")
+	}
+}
+
+func TestHandleInteractions_ViewSubmission_RequestAnything(t *testing.T) {
+	github := &mockGitHubCommenter{commentID: 55555}
+	threadFinder := &mockThreadFinder{
+		thread: &domain.SlackThread{
+			RepoOwner:     "luminor-project",
+			RepoName:      "playground",
+			GithubIssueID: 42,
+			SlackChannel:  "C123",
+			SlackThreadTs: "1111111111.111111",
+		},
+	}
+	threadPoster := &mockThreadPoster{}
+	userResolver := &mockUserInfoResolver{name: "Alice Smith"}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:     "luminor-project",
+			RepoName:      "playground",
+			GitHubPAT:     "ghp_test",
+			SlackBotToken: "xoxb-test",
+		},
+		found: true,
+	}
+	modalOpener := &mockModalOpener{}
+
+	h := NewInteractionsHandler(
+		threadFinder,
+		github,
+		nil,
+		&mockUserInfoResolverWithPostToThread{userResolver, threadPoster},
+		&mockUserInfoResolverWithPostToThread{userResolver, threadPoster},
+		registry,
+		&mockResponsePoster{},
+		modalOpener,
+		testSigningSecret,
+		"test-workspace",
+	)
+
+	privateMeta := map[string]string{
+		"thread_ts":  "1111111111.111111",
+		"channel":    "C123",
+		"user_id":    "U123ALICE",
+		"bot_token":  "xoxb-test",
+		"github_pat": "ghp_test",
+	}
+	privateMetaJSON, _ := json.Marshal(privateMeta)
+
+	payload := map[string]interface{}{
+		"type": "view_submission",
+		"view": map[string]interface{}{
+			"callback_id":      "request_anything_modal",
+			"private_metadata": string(privateMetaJSON),
+			"state": map[string]interface{}{
+				"values": map[string]interface{}{
+					"request_block": map[string]interface{}{
+						"request_input": map[string]interface{}{
+							"value": "refine the plan with a focus on tdd",
+						},
+					},
+				},
+			},
+		},
+		"user": map[string]string{
+			"id":   "U123ALICE",
+			"name": "alice",
+		},
+	}
+
+	req := makeSignedInteractionRequest(t, payload)
+	rec := httptest.NewRecorder()
+
+	h.HandleInteractions(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", rec.Code)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify GitHub comment was posted with /opencode command
+	if !github.called {
+		t.Fatal("Expected GitHub comment to be posted")
+	}
+
+	// Verify the comment contains /opencode (it's inside the comment body, not at the start)
+	if !strings.Contains(github.body, "/opencode") {
+		t.Errorf("Expected comment to contain '/opencode', got: %s", github.body)
+	}
+
+	// Verify the request text is included
+	if !strings.Contains(github.body, "refine the plan with a focus on tdd") {
+		t.Errorf("Expected request text in comment, got: %s", github.body)
+	}
+
+	// Verify comment includes via-slack marker
+	if !strings.Contains(github.body, "<!-- via-slack -->") {
+		t.Error("Comment should contain via-slack marker")
+	}
+
+	// Verify confirmation was posted to Slack thread
+	if !threadPoster.called {
+		t.Fatal("Expected confirmation message to be posted to thread")
+	}
+
+	// Verify confirmation message format
+	expectedURL := "https://github.com/luminor-project/playground/issues/42#issuecomment-55555"
+	if !strings.Contains(threadPoster.msg.Text, expectedURL) {
+		t.Errorf("Expected GitHub URL %s in confirmation, got: %s", expectedURL, threadPoster.msg.Text)
+	}
+	if !strings.Contains(threadPoster.msg.Text, "**Alice Smith**") {
+		t.Errorf("Expected user name in confirmation, got: %s", threadPoster.msg.Text)
+	}
+	if !strings.Contains(threadPoster.msg.Text, "|View on GitHub") {
+		t.Errorf("Expected 'View on GitHub' link text, got: %s", threadPoster.msg.Text)
+	}
+}
+
+func TestHandleInteractions_ViewSubmission_RequestAnything_Truncation(t *testing.T) {
+	github := &mockGitHubCommenter{commentID: 66666}
+	threadFinder := &mockThreadFinder{
+		thread: &domain.SlackThread{
+			RepoOwner:     "luminor-project",
+			RepoName:      "playground",
+			GithubIssueID: 42,
+			SlackChannel:  "C123",
+			SlackThreadTs: "1111111111.111111",
+		},
+	}
+	threadPoster := &mockThreadPoster{}
+	userResolver := &mockUserInfoResolver{name: "Bob Jones"}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:     "luminor-project",
+			RepoName:      "playground",
+			GitHubPAT:     "ghp_test",
+			SlackBotToken: "xoxb-test",
+		},
+		found: true,
+	}
+	modalOpener := &mockModalOpener{}
+
+	h := NewInteractionsHandler(
+		threadFinder,
+		github,
+		nil,
+		&mockUserInfoResolverWithPostToThread{userResolver, threadPoster},
+		&mockUserInfoResolverWithPostToThread{userResolver, threadPoster},
+		registry,
+		&mockResponsePoster{},
+		modalOpener,
+		testSigningSecret,
+		"",
+	)
+
+	// Create a long request (>250 chars)
+	longRequest := "This is a very long request that exceeds the 250 character limit and should be truncated. " +
+		"It contains detailed instructions for the OpenCode agent to follow including specific requirements " +
+		"about implementation details, testing approaches, and various other technical considerations."
+
+	privateMeta := map[string]string{
+		"thread_ts":  "1111111111.111111",
+		"channel":    "C123",
+		"user_id":    "U123",
+		"bot_token":  "xoxb-test",
+		"github_pat": "ghp_test",
+	}
+	privateMetaJSON, _ := json.Marshal(privateMeta)
+
+	payload := map[string]interface{}{
+		"type": "view_submission",
+		"view": map[string]interface{}{
+			"callback_id":      "request_anything_modal",
+			"private_metadata": string(privateMetaJSON),
+			"state": map[string]interface{}{
+				"values": map[string]interface{}{
+					"request_block": map[string]interface{}{
+						"request_input": map[string]interface{}{
+							"value": longRequest,
+						},
+					},
+				},
+			},
+		},
+		"user": map[string]string{
+			"id":   "U123",
+			"name": "bob",
+		},
+	}
+
+	req := makeSignedInteractionRequest(t, payload)
+	rec := httptest.NewRecorder()
+
+	h.HandleInteractions(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", rec.Code)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify GitHub comment was posted
+	if !github.called {
+		t.Fatal("Expected GitHub comment to be posted")
+	}
+
+	// Verify the comment contains /opencode
+	if !strings.Contains(github.body, "/opencode") {
+		t.Errorf("Expected comment to contain '/opencode', got: %s", github.body)
+	}
+
+	// Verify confirmation was posted with truncated text
+	if !threadPoster.called {
+		t.Fatal("Expected confirmation message to be posted to thread")
+	}
+
+	// Check that the text was truncated (should contain "...")
+	if !strings.Contains(threadPoster.msg.Text, "...") {
+		t.Errorf("Expected truncated request with '...', got: %s", threadPoster.msg.Text)
+	}
+
+	// Should still contain the beginning of the request
+	if !strings.Contains(threadPoster.msg.Text, "This is a very long request") {
+		t.Errorf("Expected start of request in message, got: %s", threadPoster.msg.Text)
+	}
+}
+
 // mockUserInfoResolverWithPostToThread combines UserInfoResolver with PostToThread capability
 type mockUserInfoResolverWithPostToThread struct {
 	*mockUserInfoResolver

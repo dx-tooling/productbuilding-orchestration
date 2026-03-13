@@ -202,6 +202,8 @@ func (h *InteractionsHandler) handleShortcut(w http.ResponseWriter, payload inte
 		h.handleImplementShortcut(payload, threadTs)
 	case "add_comment":
 		h.handleAddCommentShortcut(payload, threadTs)
+	case "request_anything":
+		h.handleRequestAnythingShortcut(payload, threadTs)
 	default:
 		slog.Warn("unknown shortcut callback_id", "callback_id", payload.CallbackID)
 		h.postResponse(payload.ResponseURL, map[string]interface{}{
@@ -413,14 +415,119 @@ func (h *InteractionsHandler) handleAddCommentShortcut(payload interactionPayloa
 	)
 }
 
-// handleViewSubmission processes modal submissions
-func (h *InteractionsHandler) handleViewSubmission(w http.ResponseWriter, payload interactionPayload) {
-	if payload.View.CallbackID != "add_comment_modal" {
-		// Not our modal - just acknowledge
-		w.WriteHeader(http.StatusOK)
+// handleRequestAnythingShortcut opens a modal for users to send custom /opencode commands
+func (h *InteractionsHandler) handleRequestAnythingShortcut(payload interactionPayload, threadTs string) {
+	// Look up the thread to ensure it's tracked
+	ctx := context.Background()
+	thread, err := h.threadFinder.FindThreadBySlackTs(ctx, threadTs)
+	if err != nil {
+		slog.Debug("shortcut used in untracked thread", "thread_ts", threadTs)
+		h.postResponse(payload.ResponseURL, map[string]interface{}{
+			"text": "This message is not tracked by ProductBuilder. Please use this shortcut on a ProductBuilder message in an issue/PR thread.",
+		})
 		return
 	}
 
+	// Look up target config
+	target, ok := h.registry.Get(thread.RepoOwner, thread.RepoName)
+	if !ok {
+		slog.Warn("no target config for tracked thread", "repo", thread.RepoOwner+"/"+thread.RepoName)
+		h.postResponse(payload.ResponseURL, map[string]interface{}{
+			"text": "Repository configuration not found.",
+		})
+		return
+	}
+
+	// Store thread info in private_metadata for later retrieval
+	privateMeta := map[string]string{
+		"thread_ts":       threadTs,
+		"channel":         payload.Channel.ID,
+		"repo_owner":      thread.RepoOwner,
+		"repo_name":       thread.RepoName,
+		"github_issue_id": fmt.Sprintf("%d", thread.GithubIssueID),
+		"github_pr_id":    fmt.Sprintf("%d", thread.GithubPRID),
+		"user_id":         payload.User.ID,
+		"bot_token":       target.SlackBotToken,
+		"github_pat":      target.GitHubPAT,
+	}
+	privateMetaJSON, _ := json.Marshal(privateMeta)
+
+	// Build modal view
+	modal := map[string]interface{}{
+		"type":        "modal",
+		"callback_id": "request_anything_modal",
+		"title": map[string]string{
+			"type": "plain_text",
+			"text": "Request from OpenCode",
+		},
+		"submit": map[string]string{
+			"type": "plain_text",
+			"text": "Send Request",
+		},
+		"close": map[string]string{
+			"type": "plain_text",
+			"text": "Cancel",
+		},
+		"private_metadata": string(privateMetaJSON),
+		"blocks": []map[string]interface{}{
+			{
+				"type": "section",
+				"text": map[string]string{
+					"type": "mrkdwn",
+					"text": fmt.Sprintf("Send a custom request to OpenCode for *%s/%s*\n\nYour request will be posted as: `/opencode <your request>`", thread.RepoOwner, thread.RepoName),
+				},
+			},
+			{
+				"type":     "input",
+				"block_id": "request_block",
+				"element": map[string]interface{}{
+					"type":      "plain_text_input",
+					"action_id": "request_input",
+					"multiline": true,
+					"placeholder": map[string]string{
+						"type": "plain_text",
+						"text": "e.g., refine the plan with a focus on TDD, or rebase your changes on main",
+					},
+				},
+				"label": map[string]string{
+					"type": "plain_text",
+					"text": "Your request",
+				},
+			},
+		},
+	}
+
+	// Open the modal
+	if err := h.modalOpener.OpenView(ctx, target.SlackBotToken, payload.TriggerID, modal); err != nil {
+		slog.Error("failed to open modal", "error", err)
+		h.postResponse(payload.ResponseURL, map[string]interface{}{
+			"text": "Failed to open request dialog. Please try again.",
+		})
+		return
+	}
+
+	slog.Info("opened request anything modal",
+		"user", payload.User.Name,
+		"repo", thread.RepoOwner+"/"+thread.RepoName,
+	)
+}
+
+// handleViewSubmission processes modal submissions
+func (h *InteractionsHandler) handleViewSubmission(w http.ResponseWriter, payload interactionPayload) {
+	// Handle different modal types
+	switch payload.View.CallbackID {
+	case "add_comment_modal":
+		h.handleAddCommentModalSubmission(w, payload)
+	case "request_anything_modal":
+		h.handleRequestAnythingModalSubmission(w, payload)
+	default:
+		// Unknown modal - just acknowledge
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+// handleAddCommentModalSubmission processes the add_comment modal submission
+func (h *InteractionsHandler) handleAddCommentModalSubmission(w http.ResponseWriter, payload interactionPayload) {
 	// Parse private_metadata
 	var privateMeta map[string]string
 	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &privateMeta); err != nil {
@@ -522,6 +629,140 @@ func (h *InteractionsHandler) handleViewSubmission(w http.ResponseWriter, payloa
 			"user", displayName,
 		)
 	}()
+}
+
+// handleRequestAnythingModalSubmission processes the request_anything modal submission
+func (h *InteractionsHandler) handleRequestAnythingModalSubmission(w http.ResponseWriter, payload interactionPayload) {
+	// Parse private_metadata
+	var privateMeta map[string]string
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &privateMeta); err != nil {
+		slog.Error("failed to parse private_metadata", "error", err)
+		// Return error to Slack modal
+		h.sendJSONResponse(w, map[string]interface{}{
+			"response_action": "errors",
+			"errors": map[string]string{
+				"request_block": "Internal error. Please try again.",
+			},
+		}, http.StatusOK)
+		return
+	}
+
+	// Extract request text from modal state
+	requestText := h.extractRequestFromState(payload.View.State)
+	if requestText == "" {
+		// Return validation error to modal
+		h.sendJSONResponse(w, map[string]interface{}{
+			"response_action": "errors",
+			"errors": map[string]string{
+				"request_block": "Please enter a request",
+			},
+		}, http.StatusOK)
+		return
+	}
+
+	// Acknowledge modal submission (close the modal)
+	w.WriteHeader(http.StatusOK)
+
+	// Process asynchronously
+	go func() {
+		ctx := context.Background()
+
+		// Get thread info
+		thread, err := h.threadFinder.FindThreadBySlackTs(ctx, privateMeta["thread_ts"])
+		if err != nil {
+			slog.Error("thread not found when processing modal submission", "error", err)
+			return
+		}
+
+		// Get user display name
+		userID := privateMeta["user_id"]
+		displayName := userID
+		botToken := privateMeta["bot_token"]
+		if botToken != "" {
+			if name, err := h.slackClient.GetUserInfo(ctx, botToken, userID); err == nil && name != "" {
+				displayName = name
+			}
+		}
+
+		// Determine GitHub number
+		number := thread.GithubIssueID
+		if thread.GithubPRID > 0 {
+			number = thread.GithubPRID
+		}
+
+		// Build Slack deep link
+		slackLink := h.slackMessageLink(privateMeta["channel"], "", "", "")
+
+		// Build /opencode command comment
+		comment := fmt.Sprintf("**%s** [via Slack](%s):\n\n/opencode %s\n\n<!-- via-slack -->",
+			displayName, slackLink, requestText)
+
+		// Post to GitHub
+		githubPAT := privateMeta["github_pat"]
+		commentID, err := h.githubClient.CreateComment(ctx, thread.RepoOwner, thread.RepoName, number, comment, githubPAT)
+		if err != nil {
+			slog.Error("failed to post github comment from modal", "error", err)
+			return
+		}
+
+		// Construct GitHub comment URL
+		githubURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d#issuecomment-%d",
+			thread.RepoOwner, thread.RepoName, number, commentID)
+
+		// Truncate request for display (250 chars max)
+		displayRequest := requestText
+		if len(displayRequest) > 250 {
+			displayRequest = displayRequest[:250] + "..."
+		}
+
+		// Format confirmation message
+		confirmationMsg := fmt.Sprintf("✅ **%s** sent a request to OpenCode: \"%s\" <%s|View on GitHub>",
+			displayName, displayRequest, githubURL)
+
+		// Post confirmation to Slack thread
+		if h.threadPoster != nil {
+			msg := domain.MessageBlock{Text: confirmationMsg}
+			if err := h.threadPoster.PostToThread(ctx, botToken, privateMeta["channel"], privateMeta["thread_ts"], msg); err != nil {
+				slog.Error("failed to post confirmation to slack thread", "error", err)
+				// Don't fail - GitHub comment was already posted successfully
+			}
+		}
+
+		slog.Info("posted opencode request from modal",
+			"repo", thread.RepoOwner+"/"+thread.RepoName,
+			"number", number,
+			"user", displayName,
+		)
+	}()
+}
+
+// extractRequestFromState extracts the request text from modal state
+func (h *InteractionsHandler) extractRequestFromState(state map[string]interface{}) string {
+	if state == nil {
+		return ""
+	}
+
+	values, ok := state["values"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	requestBlock, ok := values["request_block"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	requestInput, ok := requestBlock["request_input"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	requestText, ok := requestInput["value"].(string)
+	if !ok {
+		return ""
+	}
+
+	return requestText
 }
 
 // extractCommentFromState extracts the comment text from modal state
