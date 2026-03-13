@@ -73,6 +73,7 @@ type interactionPayload struct {
 	CallbackID  string      `json:"callback_id"`
 	TriggerID   string      `json:"trigger_id"`
 	Channel     channelInfo `json:"channel"`
+	Message     messageInfo `json:"message"`
 	MessageTs   string      `json:"message_ts"`
 	User        userInfo    `json:"user"`
 	ResponseURL string      `json:"response_url"`
@@ -81,6 +82,14 @@ type interactionPayload struct {
 
 type channelInfo struct {
 	ID string `json:"id"`
+}
+
+type messageInfo struct {
+	Type     string `json:"type"`
+	Ts       string `json:"ts"`
+	ThreadTs string `json:"thread_ts"`
+	Text     string `json:"text"`
+	User     string `json:"user"`
 }
 
 type userInfo struct {
@@ -171,16 +180,23 @@ func (h *InteractionsHandler) handleShortcut(w http.ResponseWriter, payload inte
 	// Always acknowledge immediately (required by Slack within 3 seconds)
 	w.WriteHeader(http.StatusOK)
 
+	// For message shortcuts in threads, we need the parent thread_ts, not the individual message ts
+	// If the shortcut was clicked on a threaded message, use thread_ts (parent), otherwise use message ts
+	threadTs := payload.Message.ThreadTs
+	if threadTs == "" {
+		threadTs = payload.Message.Ts
+	}
+
 	// Debug logging
-	slog.Info("shortcut received", "callback_id", payload.CallbackID, "message_ts", payload.MessageTs, "user", payload.User.Name)
+	slog.Info("shortcut received", "callback_id", payload.CallbackID, "thread_ts", threadTs, "message_ts", payload.Message.Ts, "user", payload.User.Name)
 
 	switch payload.CallbackID {
 	case "create_plan":
-		h.handleCreatePlanShortcut(payload)
+		h.handleCreatePlanShortcut(payload, threadTs)
 	case "implement":
-		h.handleImplementShortcut(payload)
+		h.handleImplementShortcut(payload, threadTs)
 	case "add_comment":
-		h.handleAddCommentShortcut(payload)
+		h.handleAddCommentShortcut(payload, threadTs)
 	default:
 		slog.Warn("unknown shortcut callback_id", "callback_id", payload.CallbackID)
 		h.postResponse(payload.ResponseURL, map[string]interface{}{
@@ -190,12 +206,12 @@ func (h *InteractionsHandler) handleShortcut(w http.ResponseWriter, payload inte
 }
 
 // handleCreatePlanShortcut processes the "Create implementation plan" shortcut
-func (h *InteractionsHandler) handleCreatePlanShortcut(payload interactionPayload) {
-	// Look up the thread
+func (h *InteractionsHandler) handleCreatePlanShortcut(payload interactionPayload, threadTs string) {
+	// Look up the thread using the parent thread timestamp
 	ctx := context.Background()
-	thread, err := h.threadFinder.FindThreadBySlackTs(ctx, payload.MessageTs)
+	thread, err := h.threadFinder.FindThreadBySlackTs(ctx, threadTs)
 	if err != nil {
-		slog.Debug("shortcut used in untracked thread", "message_ts", payload.MessageTs)
+		slog.Debug("shortcut used in untracked thread", "thread_ts", threadTs)
 		h.postResponse(payload.ResponseURL, map[string]interface{}{
 			"text": "This message is not tracked by ProductBuilder. Please use this shortcut on a ProductBuilder message in an issue/PR thread.",
 		})
@@ -243,12 +259,12 @@ func (h *InteractionsHandler) handleCreatePlanShortcut(payload interactionPayloa
 }
 
 // handleImplementShortcut processes the "Implement this" shortcut
-func (h *InteractionsHandler) handleImplementShortcut(payload interactionPayload) {
-	// Look up the thread
+func (h *InteractionsHandler) handleImplementShortcut(payload interactionPayload, threadTs string) {
+	// Look up the thread using the parent thread timestamp
 	ctx := context.Background()
-	thread, err := h.threadFinder.FindThreadBySlackTs(ctx, payload.MessageTs)
+	thread, err := h.threadFinder.FindThreadBySlackTs(ctx, threadTs)
 	if err != nil {
-		slog.Debug("shortcut used in untracked thread", "message_ts", payload.MessageTs)
+		slog.Debug("shortcut used in untracked thread", "thread_ts", threadTs)
 		h.postResponse(payload.ResponseURL, map[string]interface{}{
 			"text": "This message is not tracked by ProductBuilder. Please use this shortcut on a ProductBuilder message in an issue/PR thread.",
 		})
@@ -296,12 +312,12 @@ func (h *InteractionsHandler) handleImplementShortcut(payload interactionPayload
 }
 
 // handleAddCommentShortcut opens a modal for the user to enter a comment
-func (h *InteractionsHandler) handleAddCommentShortcut(payload interactionPayload) {
+func (h *InteractionsHandler) handleAddCommentShortcut(payload interactionPayload, threadTs string) {
 	// Look up the thread to ensure it's tracked
 	ctx := context.Background()
-	thread, err := h.threadFinder.FindThreadBySlackTs(ctx, payload.MessageTs)
+	thread, err := h.threadFinder.FindThreadBySlackTs(ctx, threadTs)
 	if err != nil {
-		slog.Debug("shortcut used in untracked thread", "message_ts", payload.MessageTs)
+		slog.Debug("shortcut used in untracked thread", "thread_ts", threadTs)
 		h.postResponse(payload.ResponseURL, map[string]interface{}{
 			"text": "This message is not tracked by ProductBuilder. Please use this shortcut on a ProductBuilder message in an issue/PR thread.",
 		})
@@ -320,7 +336,7 @@ func (h *InteractionsHandler) handleAddCommentShortcut(payload interactionPayloa
 
 	// Store thread info in private_metadata for later retrieval
 	privateMeta := map[string]string{
-		"thread_ts":       payload.MessageTs,
+		"thread_ts":       threadTs,
 		"channel":         payload.Channel.ID,
 		"repo_owner":      thread.RepoOwner,
 		"repo_name":       thread.RepoName,
