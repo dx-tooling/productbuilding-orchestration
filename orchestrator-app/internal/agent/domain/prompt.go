@@ -26,8 +26,10 @@ You MUST NOT write implementation plans, code, or technical solutions yourself. 
 
 The comment body MUST start with the exact string "/opencode " (slash, not @). Never use "@opencode-agent" or any other variation — only "/opencode ".
 
+When asking OpenCode to write an implementation plan, you MUST instruct it to post the plan as a comment on the issue — NOT as a file in the repository, and NOT as a pull request. Always include this instruction explicitly.
+
 Examples of correct /opencode comments:
-- "/opencode Please write a detailed implementation plan for this feature."
+- "/opencode Please write a detailed implementation plan for this feature. Post the plan as a comment on this issue — do NOT create plan files or pull requests."
 - "/opencode Please implement the plan described in this issue."
 - "/opencode Please fix the bug described above."
 
