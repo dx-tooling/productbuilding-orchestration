@@ -187,15 +187,15 @@ func (h *SlashCommandHandler) handleCreateIssue(w http.ResponseWriter, cmd slash
 func (h *SlashCommandHandler) handleCreatePlan(w http.ResponseWriter, cmd slashCommand) {
 	// Validate: must be in a thread
 	if cmd.ThreadTs == "" {
-		h.sendEphemeralResponse(w, "Error: This command must be used in a thread. Please reply in an existing issue/PR thread.")
+		h.sendEphemeralResponse(w, "Error: This command must be used in a thread. Please reply in a ProductBuilder thread (created when a GitHub Issue or PR is opened).")
 		return
 	}
 
-	// Look up the thread
+	// Look up the thread - must be a ProductBuilder-created thread
 	ctx := context.Background()
 	thread, err := h.threadFinder.FindThreadBySlackTs(ctx, cmd.ThreadTs)
 	if err != nil {
-		h.sendEphemeralResponse(w, "Error: This thread is not tracked. Make sure you're in an issue/PR thread.")
+		h.sendEphemeralResponse(w, "Error: This thread is not tracked by ProductBuilder. Please use this command in a thread created by ProductBuilder for a GitHub Issue or PR.")
 		return
 	}
 
@@ -253,15 +253,15 @@ func (h *SlashCommandHandler) handleCreatePlan(w http.ResponseWriter, cmd slashC
 func (h *SlashCommandHandler) handleImplement(w http.ResponseWriter, cmd slashCommand) {
 	// Validate: must be in a thread
 	if cmd.ThreadTs == "" {
-		h.sendEphemeralResponse(w, "Error: This command must be used in a thread. Please reply in an existing issue/PR thread.")
+		h.sendEphemeralResponse(w, "Error: This command must be used in a thread. Please reply in a ProductBuilder thread (created when a GitHub Issue or PR is opened).")
 		return
 	}
 
-	// Look up the thread
+	// Look up the thread - must be a ProductBuilder-created thread
 	ctx := context.Background()
 	thread, err := h.threadFinder.FindThreadBySlackTs(ctx, cmd.ThreadTs)
 	if err != nil {
-		h.sendEphemeralResponse(w, "Error: This thread is not tracked. Make sure you're in an issue/PR thread.")
+		h.sendEphemeralResponse(w, "Error: This thread is not tracked by ProductBuilder. Please use this command in a thread created by ProductBuilder for a GitHub Issue or PR.")
 		return
 	}
 
