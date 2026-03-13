@@ -129,6 +129,13 @@ func (a *Agent) Run(ctx context.Context, req RunRequest) (RunResponse, error) {
 
 	// Agent loop
 	for i := 0; i < maxIterations; i++ {
+		slog.Info("agent llm call",
+			"iteration", i+1,
+			"channel", req.ChannelID,
+			"user", req.UserName,
+			"message_count", len(messages),
+		)
+
 		resp, err := a.llm.ChatCompletion(ctx, ChatRequest{
 			Model:    a.model,
 			Messages: messages,
@@ -140,10 +147,28 @@ func (a *Agent) Run(ctx context.Context, req RunRequest) (RunResponse, error) {
 
 		// If the LLM returned a text response (no tool calls), we're done
 		if resp.FinishReason == "stop" || len(resp.ToolCalls) == 0 {
+			slog.Info("agent finished",
+				"channel", req.ChannelID,
+				"user", req.UserName,
+				"finish_reason", resp.FinishReason,
+				"tool_calls_made", i > 0,
+				"response_length", len(resp.Content),
+			)
 			return RunResponse{
 				Text:        resp.Content,
 				SideEffects: a.tools.Effects(),
 			}, nil
+		}
+
+		// Log each tool call the LLM requested
+		for _, tc := range resp.ToolCalls {
+			slog.Info("agent tool call requested",
+				"channel", req.ChannelID,
+				"user", req.UserName,
+				"tool", tc.Function.Name,
+				"tool_call_id", tc.ID,
+				"arguments", tc.Function.Arguments,
+			)
 		}
 
 		// Append assistant message with tool calls
@@ -165,8 +190,20 @@ func (a *Agent) Run(ctx context.Context, req RunRequest) (RunResponse, error) {
 			}
 
 			if execErr != nil {
-				slog.Warn("tool execution failed", "tool", tc.Function.Name, "error", execErr)
+				slog.Warn("agent tool execution failed",
+					"channel", req.ChannelID,
+					"tool", tc.Function.Name,
+					"tool_call_id", tc.ID,
+					"error", execErr,
+				)
 				result = fmt.Sprintf("Error: %s", execErr.Error())
+			} else {
+				slog.Info("agent tool execution succeeded",
+					"channel", req.ChannelID,
+					"tool", tc.Function.Name,
+					"tool_call_id", tc.ID,
+					"result_length", len(result),
+				)
 			}
 
 			messages = append(messages, Message{
@@ -178,6 +215,11 @@ func (a *Agent) Run(ctx context.Context, req RunRequest) (RunResponse, error) {
 	}
 
 	// Max iterations reached
+	slog.Warn("agent max iterations reached",
+		"channel", req.ChannelID,
+		"user", req.UserName,
+		"max_iterations", maxIterations,
+	)
 	return RunResponse{
 		Text:        "I'm having trouble processing this request. Please try again or rephrase your question.",
 		SideEffects: a.tools.Effects(),
