@@ -39,8 +39,8 @@ mise run ssh -- 'sudo bash -c "
   echo \"SLACK_WORKSPACE=luminor-tech\" >> /opt/orchestrator/repo/.env
 "'
 
-echo "==> Rebuilding and restarting orchestrator..."
-mise run ssh -- "cd /opt/orchestrator/repo && docker compose up -d --build orchestrator"
+echo "==> Rebuilding and restarting orchestrator (no cache)..."
+mise run ssh -- "cd /opt/orchestrator/repo && docker compose build --no-cache orchestrator && docker compose up -d orchestrator"
 
 echo "==> Waiting for health check..."
 # Verify via Traefik — the orchestrator has no published ports, only preview-net.
