@@ -57,26 +57,47 @@ Before you begin, ensure you have:
 
    ⚠️ **Save this token securely** - you'll need it in Step 4
 
-### Step 1b: Configure Slash Commands (Optional but Recommended)
+### Step 1b: Configure Slash Command (Optional but Recommended)
 
-Slash commands provide a more convenient alternative to @mentions:
+The `/create-issue` slash command provides a quick way to create GitHub issues from Slack channels:
 
 1. In your Slack app, go to **Slash Commands** → **Create New Command**
-2. Add these three commands:
+2. Add this command:
 
 | Command | Request URL | Short Description | Usage Hint |
 |---------|-------------|-------------------|------------|
 | `/create-issue` | `https://api.{your-domain}/slack/commands` | Create a GitHub issue | `<title>` |
-| `/create-plan` | `https://api.{your-domain}/slack/commands` | Request implementation plan | `[instructions]` |
-| `/implement` | `https://api.{your-domain}/slack/commands` | Request implementation | `[instructions]` |
 
-3. **Important**: Use the same Request URL `https://api.{your-domain}/slack/commands` for all three commands
-4. Save each command and reinstall the app to the workspace
+3. Save and reinstall the app to the workspace
 
-**Slash command usage examples:**
-- In channel: `/create-issue Fix login bug` → Creates GitHub issue
-- In thread: `/create-plan add e2e tests` → Posts `/opencode Please write an implementation plan for this. add e2e tests` to GitHub
-- In thread: `/implement optimize for mobile` → Posts `/opencode Please implement the plan. optimize for mobile` to GitHub
+**Slash command usage:**
+- In channel: `/create-issue Fix login bug` → Creates GitHub issue in the configured repository
+
+### Step 1c: Configure Message Shortcuts (Recommended for Thread Actions)
+
+Message shortcuts work in threads and provide a better UX than slash commands for issue/PR actions:
+
+1. In your Slack app, go to **Interactivity & Shortcuts**
+2. Enable **Interactivity** and set Request URL: `https://api.{your-domain}/slack/interactions`
+3. Under **Shortcuts**, click **Create New Shortcut** and select **On messages**
+4. Create these three message shortcuts:
+
+| Name | Short Description | Callback ID |
+|------|-------------------|-------------|
+| Create implementation plan | Request OpenCode to write an implementation plan | `create_plan` |
+| Implement this | Request OpenCode to implement the plan | `implement` |
+| Add comment | Add a comment to this GitHub issue/PR | `add_comment` |
+
+5. Save changes and reinstall the app to the workspace
+
+**Message shortcut usage:**
+1. In a ProductBuilder thread, click the three-dot menu (More actions) on any ProductBuilder message
+2. Select the desired action:
+   - **Create implementation plan** - Posts `/opencode Please write an implementation plan for this.` to GitHub
+   - **Implement this** - Posts `/opencode Please implement the plan.` to GitHub
+   - **Add comment** - Opens a modal dialog where you can type and submit a comment to GitHub
+
+**Note:** Message shortcuts only work on ProductBuilder-created messages in tracked threads.
 
 ---
 
@@ -217,31 +238,44 @@ Set these on the orchestrator host (e.g. in the `.env` file consumed by Docker C
 
 ## Bi-Directional Flow: Slack-to-GitHub
 
-The bot supports two interaction flows: **@mentions** (traditional) and **slash commands** (new, more convenient).
+The bot supports three interaction flows that work together:
 
-### Flow 1: Slash Commands (Recommended)
+### Flow 1: Message Shortcuts (Recommended for Threads)
 
-Slash commands provide a cleaner interface than @mentions and are easier to discover.
+Message shortcuts provide the best UX for thread-based actions. Access them via the three-dot menu (More actions) on any ProductBuilder message.
 
-| Command | Context | Action | Example |
-|---------|---------|--------|---------|
-| `/create-issue <title>` | Channel | Creates new GitHub issue | `/create-issue Fix login bug` |
-| `/create-plan [text]` | Thread only | Posts `/opencode Please write an implementation plan for this. [text]` to GitHub | `/create-plan add e2e tests` |
-| `/implement [text]` | Thread only | Posts `/opencode Please implement the plan. [text]` to GitHub | `/implement optimize for mobile` |
+| Shortcut | Where | Action |
+|----------|-------|--------|
+| **Create implementation plan** | ProductBuilder message in thread | Posts `/opencode Please write an implementation plan for this.` to GitHub |
+| **Implement this** | ProductBuilder message in thread | Posts `/opencode Please implement the plan.` to GitHub |
+| **Add comment** | ProductBuilder message in thread | Opens modal → User types comment → Posts to GitHub with attribution |
 
 **Key behaviors:**
-- Slash commands work alongside @mentions — both remain functional
-- `/create-plan` and `/implement` **must** be used in a tracked thread (they need to know which issue/PR to post to)
-- Additional text after the command is optional but recommended for context
-- Both slash commands and @mentions post to GitHub with the `<!-- via-slack -->` marker to prevent echo loops
+- Shortcuts **must** be used on ProductBuilder-created messages in tracked threads
+- The shortcut handler looks up the thread to determine which GitHub issue/PR to post to
+- Comments posted via the "Add comment" shortcut include user attribution and a deep link back to Slack
+- All posts include the `<!-- via-slack -->` marker to prevent echo loops
 
-### Flow 2: @mentions (Traditional)
+### Flow 2: Slash Command
+
+The `/create-issue` slash command provides quick issue creation from channels:
+
+| Command | Where | Action | Example |
+|---------|-------|--------|---------|
+| `/create-issue <title>` | Channel | Creates new GitHub issue | `/create-issue Fix login bug` |
+
+**Key behaviors:**
+- Works alongside message shortcuts and @mentions
+- The channel must follow the naming convention `#productbuilding-{repo-name}`
+- Creates issue with attribution and Slack deep link
+
+### Flow 3: @mentions (Traditional)
 
 The original @mention flows are still fully supported:
 
-#### 2a. In-thread @mention → GitHub comment
+#### 3a. In-thread @mention → GitHub comment
 
-When a user @mentions the bot **inside a tracked thread** (one created by the bot for an Issue or PR), the message is forwarded as a GitHub comment.
+When a user @mentions the bot **inside a tracked thread**, the message is forwarded as a GitHub comment.
 
 ```
 Slack thread (tracked)                GitHub Issue/PR
@@ -250,28 +284,27 @@ Slack thread (tracked)                GitHub Issue/PR
 ```
 
 - Only `@ProductBuilder` mentions in **tracked threads** are forwarded.
-- Plain thread replies without a bot mention are never forwarded — the team can discuss freely in Slack.
-- The bot mention (`<@UBOTID>`) is stripped from the text before posting to GitHub.
-- The GitHub comment includes attribution (`**DisplayName** [via Slack](link):`) where the link deep-links back to the exact Slack message.
-- A `<!-- via-slack -->` marker prevents the resulting GitHub webhook from echoing back to Slack (loop prevention).
+- Plain thread replies without a bot mention are never forwarded.
+- The bot mention is stripped from the text before posting.
+- The GitHub comment includes attribution with a deep link back to Slack.
+- A `<!-- via-slack -->` marker prevents echo loops.
 
-**Which GitHub number is used?** The thread's `slack_threads` record tracks both `github_issue_id` and `github_pr_id`. When both are set (PR phase), the comment is posted on the PR. Otherwise it goes to the Issue.
+**Which GitHub number is used?** When both issue and PR IDs are tracked (PR phase), the comment is posted on the PR. Otherwise it goes to the Issue.
 
-### 2. Top-level @mention → New GitHub issue
+#### 3b. Top-level @mention → New GitHub issue
 
-When a user @mentions the bot **directly in the channel** (not in a thread), a new GitHub issue is created in the linked repository.
+When a user @mentions the bot **directly in the channel** (not in a thread), a new GitHub issue is created.
 
 ```
 Slack channel #productbuilding-webapp
   @ProductBuilder Add dark mode    -->  New Issue: "Add dark mode"
-                                        Body: "Requested by Alice via Slack"
+                                         Body: "Requested by Alice via Slack"
 ```
 
-- The channel must follow the naming convention `#productbuilding-{repo-name}` — the system resolves the channel ID to its name via the Slack API, then extracts the repo name.
+- The channel must follow the naming convention `#productbuilding-{repo-name}`.
 - The issue title is the message text (with the bot mention stripped).
-- The issue body includes who requested it (Slack display name, no `@` prefix) and a deep link back to the Slack message.
-- The `<!-- via-slack -->` marker is included to prevent echo loops.
-- @mentions in channels that don't match the naming convention are silently ignored.
+- The issue body includes attribution and a deep link.
+- The `<!-- via-slack -->` marker prevents echo loops.
 
 ---
 
@@ -391,14 +424,15 @@ n.debouncer.Debounce(key, 2*time.Second, func() { ... })
 A: Not currently. One channel per repo handles both.
 
 **Q: Can I post comments from Slack to GitHub?**
-A: Yes, two ways:
-1. **Slash commands (easier)**: Use `/create-plan` or `/implement` in a tracked thread
-2. **@mentions**: @mention the ProductBuilder bot in a tracked thread and the message (minus the mention) is posted as a GitHub comment with your Slack display name and a deep link back to the Slack message. Plain thread replies are not forwarded.
+A: Yes, three ways:
+1. **Message shortcuts (recommended)**: Click "More actions" on a ProductBuilder message and select "Add comment" to open a modal dialog
+2. **Request OpenCode actions**: Use "Create implementation plan" or "Implement this" shortcuts to trigger `/opencode` commands
+3. **@mentions**: @mention the ProductBuilder bot in a tracked thread and the message (minus the mention) is posted as a GitHub comment
 
 **Q: Can I create issues from Slack?**
 A: Yes, two ways:
-1. **Slash command (easier)**: `/create-issue Add a login page`
-2. **@mention**: @mention the bot in the channel (not in a thread): `@ProductBuilder Add a login page`. The message text becomes the issue title, and the body includes your name and a link back to the Slack message.
+1. **Slash command (easiest)**: `/create-issue Add a login page`
+2. **@mention**: @mention the bot in the channel (not in a thread): `@ProductBuilder Add a login page`
 
 **Q: Will Slack-to-GitHub comments echo back to Slack?**
 A: No. Comments and issues posted from Slack include a `<!-- via-slack -->` marker. The GitHub webhook handler detects this marker and skips the Slack notification, preventing loops.

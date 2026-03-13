@@ -117,25 +117,40 @@ mise run deploy             # Redeploy orchestrator to load new target (REQUIRED
 
 **Slash Commands Setup (Manual):**
 
-The orchestrator now supports three slash commands for improved UX:
-
 1. Go to **api.slack.com/apps** → Your App → **Slash Commands**
-2. Create these three commands:
+2. Create this command:
 
 | Command | Request URL | Short Description | Usage Hint |
 |---------|-------------|-------------------|------------|
 | `/create-issue` | `https://api.{domain}/slack/commands` | Create a GitHub issue | `<issue title>` |
-| `/create-plan` | `https://api.{domain}/slack/commands` | Request implementation plan | `[additional instructions]` |
-| `/implement` | `https://api.{domain}/slack/commands` | Request implementation | `[additional instructions]` |
 
 3. Save and reinstall the app to the workspace
 
 **Slash Command Usage:**
-- `/create-issue Fix login bug` - Creates GitHub issue (channel context)
-- `/create-plan make sure to add e2e tests` - Posts `/opencode` comment requesting plan (thread context)
-- `/implement focus on performance` - Posts `/opencode` comment requesting implementation (thread context)
+- `/create-issue Fix login bug` - Creates GitHub issue in the configured repository
 
-Note: `/create-plan` and `/implement` must be used in existing issue/PR threads.
+**Message Shortcuts Setup (Manual):**
+
+Message shortcuts (accessed via the "More actions" menu on messages) work in threads:
+
+1. Go to **api.slack.com/apps** → Your App → **Interactivity & Shortcuts**
+2. Enable **Interactivity** and set Request URL: `https://api.{domain}/slack/interactions`
+3. Under **Shortcuts**, create these **message shortcuts**:
+
+| Name | Short Description | Callback ID |
+|------|-------------------|-------------|
+| Create implementation plan | Request OpenCode to write an implementation plan | `create_plan` |
+| Implement this | Request OpenCode to implement the plan | `implement` |
+| Add comment | Add a comment to this GitHub issue/PR | `add_comment` |
+
+4. Save changes and reinstall the app to the workspace
+
+**Message Shortcut Usage:**
+- Click the three-dot menu (More actions) on any ProductBuilder message in a thread
+- Select the desired shortcut:
+  - **Create implementation plan** - Posts `/opencode Please write an implementation plan for this.` to GitHub
+  - **Implement this** - Posts `/opencode Please implement the plan.` to GitHub  
+  - **Add comment** - Opens a modal dialog to enter and post a comment to GitHub
 
 Then manually:
 
