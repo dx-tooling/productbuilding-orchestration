@@ -171,6 +171,9 @@ func (h *InteractionsHandler) handleShortcut(w http.ResponseWriter, payload inte
 	// Always acknowledge immediately (required by Slack within 3 seconds)
 	w.WriteHeader(http.StatusOK)
 
+	// Debug logging
+	slog.Info("shortcut received", "callback_id", payload.CallbackID, "message_ts", payload.MessageTs, "user", payload.User.Name)
+
 	switch payload.CallbackID {
 	case "create_plan":
 		h.handleCreatePlanShortcut(payload)
