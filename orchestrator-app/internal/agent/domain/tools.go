@@ -134,7 +134,9 @@ func (e *GitHubToolExecutor) addComment(ctx context.Context, argsJSON string, ta
 	}
 
 	e.effects.PostedComments = append(e.effects.PostedComments, commentID)
-	return fmt.Sprintf("Comment added to issue #%d.", args.Number), nil
+	commentURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d#issuecomment-%d",
+		target.RepoOwner, target.RepoName, args.Number, commentID)
+	return fmt.Sprintf("Comment added to issue #%d.\nComment URL: %s", args.Number, commentURL), nil
 }
 
 func (e *GitHubToolExecutor) getIssue(ctx context.Context, argsJSON string, target targets.TargetConfig) (string, error) {

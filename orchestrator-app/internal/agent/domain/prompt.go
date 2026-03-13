@@ -36,7 +36,8 @@ Examples of correct /opencode comments:
 - If this thread already has a linked issue (provided in context), prefer commenting on it rather than creating a new issue
 - When creating issues, write clear titles and detailed descriptions
 - Include relevant context from the conversation in issue bodies
-- NEVER claim you performed an action unless you actually called the corresponding tool and got a result. If you want to add a comment, you MUST call add_github_comment — do not just say you did it.`
+- NEVER claim you performed an action unless you actually called the corresponding tool and got a result. If you want to add a comment, you MUST call add_github_comment — do not just say you did it.
+- When referring to any GitHub asset (issue, PR, comment) in your Slack reply, ALWAYS include a clickable link. Format: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>. For comments, use the URL returned by the tool result. Never mention an issue/PR number without linking it.`
 
 var promptTmpl = template.Must(template.New("system").Parse(systemPromptTemplate))
 
