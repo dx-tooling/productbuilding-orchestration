@@ -179,6 +179,11 @@ func (e *GitHubToolExecutor) addComment(ctx context.Context, argsJSON string, ta
 	}
 
 	e.effects.PostedComments = append(e.effects.PostedComments, commentID)
+
+	// Track issues delegated to OpenCode
+	if strings.HasPrefix(strings.TrimSpace(args.Body), "/opencode") {
+		e.effects.DelegatedIssues = append(e.effects.DelegatedIssues, args.Number)
+	}
 	commentURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d#issuecomment-%d",
 		target.RepoOwner, target.RepoName, args.Number, commentID)
 	return fmt.Sprintf("Comment added to issue #%d.\nComment URL: %s", args.Number, commentURL), nil

@@ -68,6 +68,7 @@ type Handler struct {
 	registry             TargetRegistry
 	signingSecret        string
 	slackWorkspace       string
+	agentTimeout         time.Duration
 }
 
 // NewHandler creates a new Slack event handler.
@@ -90,7 +91,13 @@ func NewHandler(
 		registry:             registry,
 		signingSecret:        signingSecret,
 		slackWorkspace:       slackWorkspace,
+		agentTimeout:         120 * time.Second,
 	}
+}
+
+// SetAgentTimeout overrides the default agent run timeout.
+func (h *Handler) SetAgentTimeout(d time.Duration) {
+	h.agentTimeout = d
 }
 
 // slackEnvelope represents the outer Slack Events API payload.
@@ -157,7 +164,11 @@ func (h *Handler) HandleEvent(w http.ResponseWriter, r *http.Request) {
 			if len(envelope.Authorizations) > 0 {
 				botUserID = envelope.Authorizations[0].UserID
 			}
-			go h.handleAppMention(context.Background(), event, botUserID)
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), h.agentTimeout)
+				defer cancel()
+				h.handleAppMention(ctx, event, botUserID)
+			}()
 		}
 
 		w.WriteHeader(http.StatusOK)
@@ -255,10 +266,12 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 
 	// Save thread mapping for any created issues
 	var firstCreatedIssueNumber int
+	mappedIssues := map[int]bool{}
 	for _, issue := range resp.SideEffects.CreatedIssues {
 		if firstCreatedIssueNumber == 0 {
 			firstCreatedIssueNumber = issue.Number
 		}
+		mappedIssues[issue.Number] = true
 		thread, err := domain.NewSlackThread(
 			target.RepoOwner, target.RepoName,
 			issue.Number, 0,
@@ -272,6 +285,28 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 			slog.Warn("failed to save thread mapping", "error", err, "issue", issue.Number)
 		} else {
 			slog.Info("saved thread mapping", "issue", issue.Number, "thread_ts", replyTs)
+		}
+	}
+
+	// Save thread mapping for delegated issues (skip if already mapped via CreatedIssues)
+	for _, issueNum := range resp.SideEffects.DelegatedIssues {
+		if mappedIssues[issueNum] {
+			continue
+		}
+		mappedIssues[issueNum] = true
+		thread, err := domain.NewSlackThread(
+			target.RepoOwner, target.RepoName,
+			issueNum, 0,
+			event.Channel, replyTs,
+		)
+		if err != nil {
+			slog.Warn("failed to create delegation thread mapping", "error", err)
+			continue
+		}
+		if err := h.threadSaver.SaveThread(ctx, thread); err != nil {
+			slog.Warn("failed to save delegation thread mapping", "error", err, "issue", issueNum)
+		} else {
+			slog.Info("saved delegation thread mapping", "issue", issueNum, "thread_ts", replyTs)
 		}
 	}
 

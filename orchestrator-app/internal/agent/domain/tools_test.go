@@ -174,6 +174,47 @@ func TestToolExecutor_AddComment_AppendsViaAgentMarker(t *testing.T) {
 	}
 }
 
+func TestToolExecutor_AddComment_OpenCodeDelegation(t *testing.T) {
+	gh := &mockGitHubClient{createCommentResult: 101}
+	exec := NewToolExecutor(gh)
+
+	_, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "add_github_comment",
+			Arguments: `{"number":7,"body":"/opencode Implement the login feature"}`,
+		},
+	}, testTarget)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(exec.Effects().DelegatedIssues) != 1 {
+		t.Fatalf("expected 1 delegated issue, got %d", len(exec.Effects().DelegatedIssues))
+	}
+	if exec.Effects().DelegatedIssues[0] != 7 {
+		t.Errorf("expected delegated issue 7, got %d", exec.Effects().DelegatedIssues[0])
+	}
+}
+
+func TestToolExecutor_AddComment_NonOpenCodeNoDelegation(t *testing.T) {
+	gh := &mockGitHubClient{createCommentResult: 102}
+	exec := NewToolExecutor(gh)
+
+	_, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "add_github_comment",
+			Arguments: `{"number":7,"body":"Just a regular comment"}`,
+		},
+	}, testTarget)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(exec.Effects().DelegatedIssues) != 0 {
+		t.Errorf("expected no delegated issues, got %d", len(exec.Effects().DelegatedIssues))
+	}
+}
+
 func TestToolExecutor_GetIssue(t *testing.T) {
 	gh := &mockGitHubClient{
 		getIssueResult: &IssueDetail{Number: 5, Title: "Test issue", State: "open"},

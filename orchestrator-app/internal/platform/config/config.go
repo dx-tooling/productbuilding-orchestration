@@ -19,6 +19,10 @@ type Config struct {
 	SlackWorkspace     string `env:"SLACK_WORKSPACE"` // Slack workspace subdomain (e.g. "luminor-tech")
 	FireworksAPIKey    string `env:"FIREWORKS_API_KEY"`
 	FireworksModel     string `env:"FIREWORKS_MODEL" envDefault:"accounts/fireworks/models/kimi-k2p5"`
+	LLMRequestTimeout  int    `env:"LLM_REQUEST_TIMEOUT_SECS" envDefault:"60"`
+	LLMMaxRetries      int    `env:"LLM_MAX_RETRIES" envDefault:"3"`
+	AgentRunTimeout    int    `env:"AGENT_RUN_TIMEOUT_SECS" envDefault:"120"`
+	AgentTokenBudget   int    `env:"AGENT_TOKEN_BUDGET" envDefault:"8000"`
 }
 
 func (c Config) IsProduction() bool {

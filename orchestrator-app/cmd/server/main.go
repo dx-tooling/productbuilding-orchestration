@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	// Agent vertical
 	agentdomain "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/agent/domain"
@@ -93,13 +94,22 @@ func main() {
 	)
 
 	// ── Build Agent ────────────────────────────────────────────────────
-	fireworksClient := agentdomain.NewFireworksClient(cfg.FireworksAPIKey)
+	fireworksClient := agentdomain.NewFireworksClientWithConfig(
+		cfg.FireworksAPIKey,
+		time.Duration(cfg.LLMRequestTimeout)*time.Second,
+		agentdomain.RetryConfig{
+			MaxRetries: cfg.LLMMaxRetries,
+			BaseDelay:  1 * time.Second,
+			MaxDelay:   30 * time.Second,
+		},
+	)
 	githubAdapter := agentdomain.NewGitHubClientAdapter(githubClient)
 	toolExecutor := agentdomain.NewToolExecutor(githubAdapter)
 	slackAdapter := agentdomain.NewSlackClientAdapter(slackClient)
 	convRepo := slackinfra.NewConversationRepository(db)
 	agentRunner := agentdomain.NewAgent(fireworksClient, toolExecutor, slackAdapter, cfg.FireworksModel,
 		agentdomain.WithConversationLister(convRepo, cfg.SlackWorkspace),
+		agentdomain.WithTokenBudget(agentdomain.TokenBudget{Total: cfg.AgentTokenBudget, IssueMaxTokens: 1000, ThreadMaxMessages: 20}),
 	)
 
 	// ── Build HTTP Routes ──────────────────────────────────────────────
@@ -112,6 +122,7 @@ func main() {
 
 	// Register Slack Events API routes (agent-driven @mention handling)
 	slackHandler := slackweb.NewHandler(agentRunner, slackRepo, slackRepo, convRepo, slackClient, registry, cfg.SlackSigningSecret, cfg.SlackWorkspace)
+	slackHandler.SetAgentTimeout(time.Duration(cfg.AgentRunTimeout) * time.Second)
 	slackweb.RegisterRoutes(mux, slackHandler)
 
 	// ── Health Endpoints (outside application middleware) ───────────────

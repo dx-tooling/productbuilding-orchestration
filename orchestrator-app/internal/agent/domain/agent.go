@@ -33,6 +33,7 @@ type Agent struct {
 	model               string
 	conversationLister  ConversationLister
 	workspace           string
+	tokenBudget         TokenBudget
 }
 
 // AgentOption configures optional Agent dependencies.
@@ -46,6 +47,13 @@ func WithConversationLister(lister ConversationLister, workspace string) AgentOp
 	}
 }
 
+// WithTokenBudget sets the token budget for context assembly.
+func WithTokenBudget(budget TokenBudget) AgentOption {
+	return func(a *Agent) {
+		a.tokenBudget = budget
+	}
+}
+
 // NewAgent creates a new agent with the given dependencies.
 func NewAgent(llm LLMClient, tools ToolExecutor, slackFetcher SlackThreadFetcher, model string, opts ...AgentOption) *Agent {
 	a := &Agent{
@@ -53,6 +61,7 @@ func NewAgent(llm LLMClient, tools ToolExecutor, slackFetcher SlackThreadFetcher
 		tools:        tools,
 		slackFetcher: slackFetcher,
 		model:        model,
+		tokenBudget:  DefaultTokenBudget(),
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -90,42 +99,25 @@ func (a *Agent) Run(ctx context.Context, req RunRequest) (RunResponse, error) {
 		return RunResponse{}, fmt.Errorf("render system prompt: %w", err)
 	}
 
-	messages := []Message{
-		{Role: "system", Content: systemPrompt},
-	}
-
 	// Fetch thread context if this is an in-thread mention
+	var threadMsgs []ThreadMessage
 	if req.ThreadTs != "" && a.slackFetcher != nil {
-		threadMsgs, err := a.slackFetcher.GetThreadReplies(ctx, req.Target.SlackBotToken, req.ChannelID, req.ThreadTs)
+		fetched, err := a.slackFetcher.GetThreadReplies(ctx, req.Target.SlackBotToken, req.ChannelID, req.ThreadTs)
 		if err != nil {
 			slog.Warn("failed to fetch thread replies", "error", err)
 		} else {
-			for _, msg := range threadMsgs {
-				// Skip the current message (we add it below)
+			// Filter out the current message
+			for _, msg := range fetched {
 				if msg.Ts == req.MessageTs {
 					continue
 				}
-				role := "user"
-				if msg.BotID != "" {
-					role = "assistant"
-				}
-				messages = append(messages, Message{Role: role, Content: msg.Text})
+				threadMsgs = append(threadMsgs, msg)
 			}
 		}
 	}
 
-	// Add linked issue context if available
-	if req.LinkedIssue != nil {
-		issueCtx := fmt.Sprintf("[Context: This thread is linked to GitHub issue #%d (%s) — state: %s]\n\n%s",
-			req.LinkedIssue.Number, req.LinkedIssue.Title, req.LinkedIssue.State, req.LinkedIssue.Body)
-		messages = append(messages, Message{Role: "system", Content: issueCtx})
-	}
-
-	// Add the current user message
-	messages = append(messages, Message{
-		Role:    "user",
-		Content: fmt.Sprintf("%s says: %s", req.UserName, req.UserText),
-	})
+	userMessage := fmt.Sprintf("%s says: %s", req.UserName, req.UserText)
+	messages := BuildContext(systemPrompt, userMessage, threadMsgs, req.LinkedIssue, a.tokenBudget)
 
 	tools := ToolDefinitions()
 

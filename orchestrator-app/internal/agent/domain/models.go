@@ -58,8 +58,9 @@ type CreatedIssue struct {
 
 // SideEffects tracks observable actions performed during agent execution.
 type SideEffects struct {
-	CreatedIssues  []CreatedIssue
-	PostedComments []int64
+	CreatedIssues   []CreatedIssue
+	PostedComments  []int64
+	DelegatedIssues []int
 }
 
 // IssueContext provides linked GitHub issue data to the agent.

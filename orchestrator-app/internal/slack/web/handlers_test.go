@@ -402,6 +402,110 @@ func TestHandleEvent_TopLevelMention_AgentRunsAndResponds(t *testing.T) {
 	}
 }
 
+func TestHandleEvent_DelegatedIssues_ThreadMappingSaved(t *testing.T) {
+	agentRunner := &mockAgentRunner{
+		response: agent.RunResponse{
+			Text: "I've delegated to OpenCode.",
+			SideEffects: agent.SideEffects{
+				DelegatedIssues: []int{10, 20},
+			},
+		},
+	}
+	threadSaver := &mockThreadSaver{}
+	slackClient := &mockSlackClient{
+		userName:    "Alice Smith",
+		channelName: "productbuilding-playground",
+	}
+	registry := &mockTargetRegistry{
+		channelConfig: defaultTarget(),
+		channelFound:  true,
+		botToken:      "xoxb-test",
+	}
+
+	h := NewHandler(agentRunner, &mockThreadFinder{}, threadSaver, &mockConversationRecorder{}, slackClient, registry, testSigningSecret, "")
+
+	payload := map[string]interface{}{
+		"type": "event_callback",
+		"event": map[string]interface{}{
+			"type":    "app_mention",
+			"user":    "U123",
+			"text":    "<@UBOT> delegate to opencode",
+			"channel": "C0PRODUCT",
+			"ts":      "1234567890.123456",
+		},
+		"authorizations": []map[string]string{{"user_id": "UBOT"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := makeSignedRequest(t, body)
+	rec := httptest.NewRecorder()
+
+	h.HandleEvent(rec, req)
+	time.Sleep(200 * time.Millisecond)
+
+	saved := threadSaver.getSaved()
+	if len(saved) != 2 {
+		t.Fatalf("Expected 2 saved threads for delegated issues, got %d", len(saved))
+	}
+	if saved[0].GithubIssueID != 10 {
+		t.Errorf("Expected first delegated issue 10, got %d", saved[0].GithubIssueID)
+	}
+	if saved[1].GithubIssueID != 20 {
+		t.Errorf("Expected second delegated issue 20, got %d", saved[1].GithubIssueID)
+	}
+}
+
+func TestHandleEvent_DelegatedIssues_SkipsAlreadyMappedFromCreatedIssues(t *testing.T) {
+	// If an issue is both created AND delegated, only one mapping should be saved
+	agentRunner := &mockAgentRunner{
+		response: agent.RunResponse{
+			Text: "Created and delegated.",
+			SideEffects: agent.SideEffects{
+				CreatedIssues:   []agent.CreatedIssue{{Number: 10, Title: "New issue"}},
+				DelegatedIssues: []int{10}, // same issue
+			},
+		},
+	}
+	threadSaver := &mockThreadSaver{}
+	slackClient := &mockSlackClient{
+		userName:    "Alice",
+		channelName: "productbuilding-playground",
+	}
+	registry := &mockTargetRegistry{
+		channelConfig: defaultTarget(),
+		channelFound:  true,
+		botToken:      "xoxb-test",
+	}
+
+	h := NewHandler(agentRunner, &mockThreadFinder{}, threadSaver, &mockConversationRecorder{}, slackClient, registry, testSigningSecret, "")
+
+	payload := map[string]interface{}{
+		"type": "event_callback",
+		"event": map[string]interface{}{
+			"type":    "app_mention",
+			"user":    "U123",
+			"text":    "<@UBOT> create and delegate",
+			"channel": "C0PRODUCT",
+			"ts":      "1234567890.123456",
+		},
+		"authorizations": []map[string]string{{"user_id": "UBOT"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := makeSignedRequest(t, body)
+	rec := httptest.NewRecorder()
+
+	h.HandleEvent(rec, req)
+	time.Sleep(200 * time.Millisecond)
+
+	saved := threadSaver.getSaved()
+	// Should have exactly 1 mapping (from CreatedIssues), not 2
+	if len(saved) != 1 {
+		t.Fatalf("Expected 1 saved thread (dedup), got %d", len(saved))
+	}
+	if saved[0].GithubIssueID != 10 {
+		t.Errorf("Expected issue 10, got %d", saved[0].GithubIssueID)
+	}
+}
+
 func TestHandleEvent_InThreadMention_AgentRunsWithContext(t *testing.T) {
 	agentRunner := &mockAgentRunner{
 		response: agent.RunResponse{Text: "Done!"},
@@ -506,6 +610,82 @@ func TestHandleEvent_AgentError_PostsErrorMessage(t *testing.T) {
 	msgs := slackClient.getPostedMessages()
 	if len(msgs) == 0 {
 		t.Fatal("Expected error message posted")
+	}
+}
+
+func TestHandleEvent_AgentTimeout_PostsErrorMessage(t *testing.T) {
+	// Agent blocks longer than the configured timeout
+	agentRunner := &mockAgentRunner{
+		response: agent.RunResponse{Text: "too late"},
+	}
+	// Override Run to simulate a slow agent
+	slowAgent := &slowMockAgentRunner{delay: 500 * time.Millisecond}
+	slackClient := &mockSlackClient{
+		userName:    "Alice",
+		channelName: "productbuilding-playground",
+	}
+	registry := &mockTargetRegistry{
+		channelConfig: defaultTarget(),
+		channelFound:  true,
+		botToken:      "xoxb-test",
+	}
+
+	h := NewHandler(slowAgent, &mockThreadFinder{}, &mockThreadSaver{}, nil, slackClient, registry, testSigningSecret, "")
+	h.agentTimeout = 50 * time.Millisecond // very short timeout
+
+	payload := map[string]interface{}{
+		"type": "event_callback",
+		"event": map[string]interface{}{
+			"type":    "app_mention",
+			"user":    "U123",
+			"text":    "<@UBOT> do something slow",
+			"channel": "C0PRODUCT",
+			"ts":      "1234567890.123456",
+		},
+		"authorizations": []map[string]string{{"user_id": "UBOT"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := makeSignedRequest(t, body)
+	rec := httptest.NewRecorder()
+
+	h.HandleEvent(rec, req)
+	time.Sleep(300 * time.Millisecond)
+
+	// Should add :x: reaction due to timeout error
+	reactions := slackClient.getReactions()
+	hasX := false
+	for _, r := range reactions {
+		if r == "x" {
+			hasX = true
+			break
+		}
+	}
+	if !hasX {
+		t.Errorf("Expected :x: reaction on timeout, got %v", reactions)
+	}
+
+	_ = agentRunner // suppress unused warning
+}
+
+// slowMockAgentRunner simulates a slow agent that respects context cancellation.
+type slowMockAgentRunner struct {
+	mu      sync.Mutex
+	delay   time.Duration
+	called  bool
+	lastReq agent.RunRequest
+}
+
+func (m *slowMockAgentRunner) Run(ctx context.Context, req agent.RunRequest) (agent.RunResponse, error) {
+	m.mu.Lock()
+	m.called = true
+	m.lastReq = req
+	m.mu.Unlock()
+
+	select {
+	case <-time.After(m.delay):
+		return agent.RunResponse{Text: "done"}, nil
+	case <-ctx.Done():
+		return agent.RunResponse{}, ctx.Err()
 	}
 }
 
