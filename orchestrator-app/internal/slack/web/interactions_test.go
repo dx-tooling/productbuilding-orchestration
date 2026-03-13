@@ -65,6 +65,7 @@ func TestHandleInteractions_CreatePlanShortcut_Success(t *testing.T) {
 		github,
 		nil,
 		&mockUserInfoResolver{},
+		nil,
 		registry,
 		poster,
 		modalOpener,
@@ -149,6 +150,7 @@ func TestHandleInteractions_ImplementShortcut_Success(t *testing.T) {
 		github,
 		nil,
 		&mockUserInfoResolver{},
+		nil,
 		registry,
 		poster,
 		modalOpener,
@@ -223,6 +225,7 @@ func TestHandleInteractions_AddCommentShortcut_OpensModal(t *testing.T) {
 		&mockGitHubCommenter{},
 		nil,
 		&mockUserInfoResolver{},
+		nil,
 		registry,
 		poster,
 		modalOpener,
@@ -303,6 +306,7 @@ func TestHandleInteractions_ViewSubmission_AddComment(t *testing.T) {
 		github,
 		nil,
 		&mockUserInfoResolver{},
+		nil,
 		registry,
 		poster,
 		modalOpener,
@@ -378,6 +382,7 @@ func TestHandleInteractions_Shortcut_UntrackedThread(t *testing.T) {
 		&mockGitHubCommenter{},
 		nil,
 		&mockUserInfoResolver{},
+		nil,
 		&mockTargetRegistry{},
 		poster,
 		modalOpener,
@@ -442,6 +447,7 @@ func TestHandleInteractions_Shortcut_NoTargetConfig(t *testing.T) {
 		&mockGitHubCommenter{},
 		nil,
 		&mockUserInfoResolver{},
+		nil,
 		registry,
 		poster,
 		modalOpener,
@@ -489,6 +495,7 @@ func TestHandleInteractions_BadSignature(t *testing.T) {
 	h := NewInteractionsHandler(
 		nil, nil, nil,
 		&mockUserInfoResolver{},
+		nil,
 		&mockTargetRegistry{},
 		&mockResponsePoster{},
 		&mockModalOpener{},
@@ -526,6 +533,7 @@ func TestHandleInteractions_UnknownCallbackID(t *testing.T) {
 		&mockGitHubCommenter{},
 		nil,
 		&mockUserInfoResolver{},
+		nil,
 		&mockTargetRegistry{},
 		poster,
 		modalOpener,
@@ -600,6 +608,7 @@ func TestHandleInteractions_AddCommentModal_UserNameResolution(t *testing.T) {
 		github,
 		nil,
 		userResolver,
+		nil,
 		registry,
 		poster,
 		modalOpener,
@@ -652,6 +661,346 @@ func TestHandleInteractions_AddCommentModal_UserNameResolution(t *testing.T) {
 	if !strings.Contains(github.body, "**Alice Smith**") {
 		t.Errorf("Expected resolved display name 'Alice Smith' in comment, got: %s", github.body)
 	}
+}
+
+// --- Mock Thread Poster ---
+
+type mockThreadPoster struct {
+	called   bool
+	botToken string
+	channel  string
+	threadTs string
+	msg      domain.MessageBlock
+	err      error
+}
+
+func (m *mockThreadPoster) PostToThread(ctx context.Context, botToken, channel, threadTs string, msg domain.MessageBlock) error {
+	m.called = true
+	m.botToken = botToken
+	m.channel = channel
+	m.threadTs = threadTs
+	m.msg = msg
+	return m.err
+}
+
+// --- Test for public confirmation message ---
+
+func TestHandleInteractions_ViewSubmission_AddComment_WithConfirmation(t *testing.T) {
+	github := &mockGitHubCommenter{commentID: 12345}
+	threadFinder := &mockThreadFinder{
+		thread: &domain.SlackThread{
+			RepoOwner:     "luminor-project",
+			RepoName:      "playground",
+			GithubIssueID: 42,
+			SlackChannel:  "C123",
+			SlackThreadTs: "1111111111.111111",
+		},
+	}
+	threadPoster := &mockThreadPoster{}
+	userResolver := &mockUserInfoResolver{name: "Alice Smith"}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:     "luminor-project",
+			RepoName:      "playground",
+			GitHubPAT:     "ghp_test",
+			SlackBotToken: "xoxb-test",
+		},
+		found: true,
+	}
+	modalOpener := &mockModalOpener{}
+
+	h := NewInteractionsHandler(
+		threadFinder,
+		github,
+		nil,
+		&mockUserInfoResolverWithPostToThread{userResolver, threadPoster},
+		&mockUserInfoResolverWithPostToThread{userResolver, threadPoster},
+		registry,
+		&mockResponsePoster{},
+		modalOpener,
+		testSigningSecret,
+		"test-workspace",
+	)
+
+	privateMeta := map[string]string{
+		"thread_ts":  "1111111111.111111",
+		"channel":    "C123",
+		"user_id":    "U123ALICE",
+		"bot_token":  "xoxb-test",
+		"github_pat": "ghp_test",
+	}
+	privateMetaJSON, _ := json.Marshal(privateMeta)
+
+	payload := map[string]interface{}{
+		"type": "view_submission",
+		"view": map[string]interface{}{
+			"callback_id":      "add_comment_modal",
+			"private_metadata": string(privateMetaJSON),
+			"state": map[string]interface{}{
+				"values": map[string]interface{}{
+					"comment_block": map[string]interface{}{
+						"comment_input": map[string]interface{}{
+							"value": "This is my test comment for the GitHub issue",
+						},
+					},
+				},
+			},
+		},
+		"user": map[string]string{
+			"id":   "U123ALICE",
+			"name": "alice",
+		},
+	}
+
+	req := makeSignedInteractionRequest(t, payload)
+	rec := httptest.NewRecorder()
+
+	h.HandleInteractions(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", rec.Code)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify GitHub comment was posted with correct ID
+	if !github.called {
+		t.Fatal("Expected GitHub comment to be posted")
+	}
+	if github.commentID != 12345 {
+		t.Errorf("Expected commentID 12345, got %d", github.commentID)
+	}
+
+	// Verify confirmation was posted to Slack thread
+	if !threadPoster.called {
+		t.Fatal("Expected confirmation message to be posted to thread")
+	}
+	if threadPoster.channel != "C123" {
+		t.Errorf("Expected channel C123, got %s", threadPoster.channel)
+	}
+	if threadPoster.threadTs != "1111111111.111111" {
+		t.Errorf("Expected thread_ts 1111111111.111111, got %s", threadPoster.threadTs)
+	}
+
+	// Verify confirmation message format
+	expectedURL := "https://github.com/luminor-project/playground/issues/42#issuecomment-12345"
+	if !strings.Contains(threadPoster.msg.Text, expectedURL) {
+		t.Errorf("Expected GitHub URL %s in confirmation, got: %s", expectedURL, threadPoster.msg.Text)
+	}
+	if !strings.Contains(threadPoster.msg.Text, "**Alice Smith**") {
+		t.Errorf("Expected user name in confirmation, got: %s", threadPoster.msg.Text)
+	}
+	if !strings.Contains(threadPoster.msg.Text, "This is my test comment") {
+		t.Errorf("Expected comment preview in confirmation, got: %s", threadPoster.msg.Text)
+	}
+	if !strings.Contains(threadPoster.msg.Text, "|View on GitHub") {
+		t.Errorf("Expected 'View on GitHub' link text, got: %s", threadPoster.msg.Text)
+	}
+}
+
+func TestHandleInteractions_ViewSubmission_AddComment_Truncation(t *testing.T) {
+	github := &mockGitHubCommenter{commentID: 67890}
+	threadFinder := &mockThreadFinder{
+		thread: &domain.SlackThread{
+			RepoOwner:     "luminor-project",
+			RepoName:      "playground",
+			GithubIssueID: 42,
+			SlackChannel:  "C123",
+			SlackThreadTs: "1111111111.111111",
+		},
+	}
+	threadPoster := &mockThreadPoster{}
+	userResolver := &mockUserInfoResolver{name: "Bob Jones"}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:     "luminor-project",
+			RepoName:      "playground",
+			GitHubPAT:     "ghp_test",
+			SlackBotToken: "xoxb-test",
+		},
+		found: true,
+	}
+	modalOpener := &mockModalOpener{}
+
+	h := NewInteractionsHandler(
+		threadFinder,
+		github,
+		nil,
+		&mockUserInfoResolverWithPostToThread{userResolver, threadPoster},
+		&mockUserInfoResolverWithPostToThread{userResolver, threadPoster},
+		registry,
+		&mockResponsePoster{},
+		modalOpener,
+		testSigningSecret,
+		"",
+	)
+
+	// Create a long comment (>250 chars)
+	longComment := "This is a very long comment that exceeds the 250 character limit. " +
+		"It should be truncated when displayed in the Slack confirmation message. " +
+		"We add more text here to make sure it definitely goes over the limit and gets truncated properly. " +
+		"Extra text to ensure we're well over 250 characters in total length here."
+
+	privateMeta := map[string]string{
+		"thread_ts":  "1111111111.111111",
+		"channel":    "C123",
+		"user_id":    "U123",
+		"bot_token":  "xoxb-test",
+		"github_pat": "ghp_test",
+	}
+	privateMetaJSON, _ := json.Marshal(privateMeta)
+
+	payload := map[string]interface{}{
+		"type": "view_submission",
+		"view": map[string]interface{}{
+			"callback_id":      "add_comment_modal",
+			"private_metadata": string(privateMetaJSON),
+			"state": map[string]interface{}{
+				"values": map[string]interface{}{
+					"comment_block": map[string]interface{}{
+						"comment_input": map[string]interface{}{
+							"value": longComment,
+						},
+					},
+				},
+			},
+		},
+		"user": map[string]string{
+			"id":   "U123",
+			"name": "bob",
+		},
+	}
+
+	req := makeSignedInteractionRequest(t, payload)
+	rec := httptest.NewRecorder()
+
+	h.HandleInteractions(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", rec.Code)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify confirmation was posted with truncated text
+	if !threadPoster.called {
+		t.Fatal("Expected confirmation message to be posted to thread")
+	}
+
+	// Check that the text was truncated (should be 250 chars + "...")
+	// Extract the comment portion from the confirmation message
+	if len(longComment) <= 250 {
+		t.Error("Test comment should be longer than 250 chars")
+	}
+
+	// The confirmation should contain "..." indicating truncation
+	if !strings.Contains(threadPoster.msg.Text, "...") {
+		t.Errorf("Expected truncated comment with '...', got: %s", threadPoster.msg.Text)
+	}
+
+	// Should still contain the beginning of the comment
+	if !strings.Contains(threadPoster.msg.Text, "This is a very long comment") {
+		t.Errorf("Expected start of comment in message, got: %s", threadPoster.msg.Text)
+	}
+}
+
+func TestHandleInteractions_ViewSubmission_AddComment_SlackPostFailure(t *testing.T) {
+	github := &mockGitHubCommenter{commentID: 11111}
+	threadFinder := &mockThreadFinder{
+		thread: &domain.SlackThread{
+			RepoOwner:     "luminor-project",
+			RepoName:      "playground",
+			GithubIssueID: 42,
+			SlackChannel:  "C123",
+			SlackThreadTs: "1111111111.111111",
+		},
+	}
+	threadPoster := &mockThreadPoster{err: fmt.Errorf("slack API error")}
+	userResolver := &mockUserInfoResolver{name: "Charlie Brown"}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:     "luminor-project",
+			RepoName:      "playground",
+			GitHubPAT:     "ghp_test",
+			SlackBotToken: "xoxb-test",
+		},
+		found: true,
+	}
+	modalOpener := &mockModalOpener{}
+
+	h := NewInteractionsHandler(
+		threadFinder,
+		github,
+		nil,
+		&mockUserInfoResolverWithPostToThread{userResolver, threadPoster},
+		&mockUserInfoResolverWithPostToThread{userResolver, threadPoster},
+		registry,
+		&mockResponsePoster{},
+		modalOpener,
+		testSigningSecret,
+		"",
+	)
+
+	privateMeta := map[string]string{
+		"thread_ts":  "1111111111.111111",
+		"channel":    "C123",
+		"user_id":    "U123",
+		"bot_token":  "xoxb-test",
+		"github_pat": "ghp_test",
+	}
+	privateMetaJSON, _ := json.Marshal(privateMeta)
+
+	payload := map[string]interface{}{
+		"type": "view_submission",
+		"view": map[string]interface{}{
+			"callback_id":      "add_comment_modal",
+			"private_metadata": string(privateMetaJSON),
+			"state": map[string]interface{}{
+				"values": map[string]interface{}{
+					"comment_block": map[string]interface{}{
+						"comment_input": map[string]interface{}{
+							"value": "Comment that should still post to GitHub even if Slack fails",
+						},
+					},
+				},
+			},
+		},
+		"user": map[string]string{
+			"id":   "U123",
+			"name": "charlie",
+		},
+	}
+
+	req := makeSignedInteractionRequest(t, payload)
+	rec := httptest.NewRecorder()
+
+	h.HandleInteractions(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", rec.Code)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify GitHub comment was still posted despite Slack failure
+	if !github.called {
+		t.Fatal("Expected GitHub comment to be posted even when Slack fails")
+	}
+
+	// Verify Slack was attempted
+	if !threadPoster.called {
+		t.Error("Expected Slack post attempt")
+	}
+}
+
+// mockUserInfoResolverWithPostToThread combines UserInfoResolver with PostToThread capability
+type mockUserInfoResolverWithPostToThread struct {
+	*mockUserInfoResolver
+	poster *mockThreadPoster
+}
+
+func (m *mockUserInfoResolverWithPostToThread) PostToThread(ctx context.Context, botToken, channel, threadTs string, msg domain.MessageBlock) error {
+	return m.poster.PostToThread(ctx, botToken, channel, threadTs, msg)
 }
 
 // --- Helper for interaction requests ---

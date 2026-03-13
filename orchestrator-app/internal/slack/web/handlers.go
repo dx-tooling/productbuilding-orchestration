@@ -41,6 +41,11 @@ type UserInfoResolver interface {
 	GetChannelName(ctx context.Context, botToken, channelID string) (string, error)
 }
 
+// ThreadPoster posts messages to Slack threads
+type ThreadPoster interface {
+	PostToThread(ctx context.Context, botToken, channel, threadTs string, msg domain.MessageBlock) error
+}
+
 // TargetRegistry looks up target configuration by repo or channel name
 type TargetRegistry interface {
 	Get(repoOwner, repoName string) (targets.TargetConfig, bool)

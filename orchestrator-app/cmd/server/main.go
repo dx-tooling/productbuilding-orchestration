@@ -106,7 +106,7 @@ func main() {
 	slackweb.RegisterSlashCommandRoutes(mux, slashHandler)
 
 	// Register Slack interactions routes (for message shortcuts)
-	interactionsHandler := slackweb.NewInteractionsHandler(slackRepo, githubClient, githubClient, slackClient, registry, nil, nil, cfg.SlackSigningSecret, cfg.SlackWorkspace)
+	interactionsHandler := slackweb.NewInteractionsHandler(slackRepo, githubClient, githubClient, slackClient, slackClient, registry, nil, nil, cfg.SlackSigningSecret, cfg.SlackWorkspace)
 	slackweb.RegisterInteractionsRoutes(mux, interactionsHandler)
 
 	// ── Health Endpoints (outside application middleware) ───────────────

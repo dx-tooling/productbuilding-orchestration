@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/domain"
 )
 
 // ModalOpener opens Slack modals via views.open API
@@ -29,6 +31,7 @@ type InteractionsHandler struct {
 	githubClient   GitHubCommenter
 	issueCreator   GitHubIssueCreator
 	slackClient    UserInfoResolver
+	threadPoster   ThreadPoster
 	registry       TargetRegistry
 	responsePoster ResponsePoster
 	modalOpener    ModalOpener
@@ -42,6 +45,7 @@ func NewInteractionsHandler(
 	githubClient GitHubCommenter,
 	issueCreator GitHubIssueCreator,
 	slackClient UserInfoResolver,
+	threadPoster ThreadPoster,
 	registry TargetRegistry,
 	responsePoster ResponsePoster,
 	modalOpener ModalOpener,
@@ -59,6 +63,7 @@ func NewInteractionsHandler(
 		githubClient:   githubClient,
 		issueCreator:   issueCreator,
 		slackClient:    slackClient,
+		threadPoster:   threadPoster,
 		registry:       registry,
 		responsePoster: responsePoster,
 		modalOpener:    modalOpener,
@@ -482,9 +487,33 @@ func (h *InteractionsHandler) handleViewSubmission(w http.ResponseWriter, payloa
 
 		// Post to GitHub
 		githubPAT := privateMeta["github_pat"]
-		if _, err := h.githubClient.CreateComment(ctx, thread.RepoOwner, thread.RepoName, number, comment, githubPAT); err != nil {
+		commentID, err := h.githubClient.CreateComment(ctx, thread.RepoOwner, thread.RepoName, number, comment, githubPAT)
+		if err != nil {
 			slog.Error("failed to post github comment from modal", "error", err)
 			return
+		}
+
+		// Construct GitHub comment URL
+		githubURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d#issuecomment-%d",
+			thread.RepoOwner, thread.RepoName, number, commentID)
+
+		// Truncate comment for display (250 chars max)
+		displayComment := commentText
+		if len(displayComment) > 250 {
+			displayComment = displayComment[:250] + "..."
+		}
+
+		// Format confirmation message
+		confirmationMsg := fmt.Sprintf("✅ **%s** posted a comment: \"%s\" <%s|View on GitHub>",
+			displayName, displayComment, githubURL)
+
+		// Post confirmation to Slack thread
+		if h.threadPoster != nil {
+			msg := domain.MessageBlock{Text: confirmationMsg}
+			if err := h.threadPoster.PostToThread(ctx, botToken, privateMeta["channel"], privateMeta["thread_ts"], msg); err != nil {
+				slog.Error("failed to post confirmation to slack thread", "error", err)
+				// Don't fail - GitHub comment was already posted successfully
+			}
 		}
 
 		slog.Info("posted github comment from modal",
