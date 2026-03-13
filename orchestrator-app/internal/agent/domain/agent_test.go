@@ -33,13 +33,17 @@ func (m *mockLLMClient) ChatCompletion(_ context.Context, req ChatRequest) (Chat
 
 // mockToolExecutor records calls and returns canned results.
 type mockToolExecutor struct {
-	results map[string]string
-	effects SideEffects
-	calls   []ToolCall
+	results   map[string]string
+	effects   SideEffects
+	calls     []ToolCall
+	onExecute func(ToolCall) // optional callback to mutate effects on execution
 }
 
 func (m *mockToolExecutor) Execute(_ context.Context, call ToolCall, _ targets.TargetConfig) (string, error) {
 	m.calls = append(m.calls, call)
+	if m.onExecute != nil {
+		m.onExecute(call)
+	}
 	if result, ok := m.results[call.Function.Name]; ok {
 		return result, nil
 	}
@@ -177,6 +181,11 @@ func TestAgent_MultiStepToolCalls(t *testing.T) {
 			"search_github_issues": "No issues found matching the query.",
 			"create_github_issue":  "Created issue #42",
 		},
+	}
+	tools.onExecute = func(call ToolCall) {
+		if call.Function.Name == "create_github_issue" {
+			tools.effects.CreatedIssues = append(tools.effects.CreatedIssues, CreatedIssue{Number: 42, Title: "Forgot password"})
+		}
 	}
 	agent := NewAgent(llm, tools, nil, "test-model")
 
@@ -478,5 +487,130 @@ func TestAgent_LinkedIssueContext(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected linked issue context in messages")
+	}
+}
+
+func TestAgent_HallucinationGuard_SelfCorrects(t *testing.T) {
+	// Iteration 1: LLM hallucinates ("I've asked OpenCode...") with no tool call
+	// Iteration 2: after correction, LLM makes the actual tool call
+	// Iteration 3: LLM responds truthfully with effects now populated
+	tools := &mockToolExecutor{
+		results: map[string]string{
+			"add_github_comment": "Comment posted (id: 777)",
+		},
+	}
+	tools.onExecute = func(call ToolCall) {
+		if call.Function.Name == "add_github_comment" {
+			tools.effects.PostedComments = append(tools.effects.PostedComments, 777)
+			tools.effects.DelegatedIssues = append(tools.effects.DelegatedIssues, 42)
+		}
+	}
+
+	llm := &mockLLMClient{
+		responses: []ChatResponse{
+			// Iter 1: hallucination — claims delegation without tool call
+			{Content: "I've asked OpenCode to create a plan on issue #42.", FinishReason: "stop"},
+			// Iter 2: after correction, makes the tool call
+			{
+				ToolCalls: []ToolCall{
+					{ID: "call_fix", Type: "function", Function: FunctionCall{
+						Name:      "add_github_comment",
+						Arguments: `{"issue_number":42,"body":"/opencode plan"}`,
+					}},
+				},
+				FinishReason: "tool_calls",
+			},
+			// Iter 3: truthful response
+			{Content: "Done — I've asked OpenCode to create a plan on issue #42.", FinishReason: "stop"},
+		},
+	}
+
+	agent := NewAgent(llm, tools, nil, "test-model")
+	resp, err := agent.Run(context.Background(), RunRequest{
+		ChannelID: "C123",
+		MessageTs: "123.456",
+		UserText:  "Please delegate issue 42 to OpenCode",
+		UserName:  "alice",
+		Target:    agentTarget,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// The hallucinated first response should NOT be returned
+	if !strings.Contains(resp.Text, "Done") {
+		t.Errorf("expected truthful response, got: %s", resp.Text)
+	}
+	// Tool should have been called
+	if len(tools.calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(tools.calls))
+	}
+	if tools.calls[0].Function.Name != "add_github_comment" {
+		t.Errorf("expected add_github_comment, got %s", tools.calls[0].Function.Name)
+	}
+	// Side effects should reflect actual delegation
+	if len(resp.SideEffects.DelegatedIssues) != 1 || resp.SideEffects.DelegatedIssues[0] != 42 {
+		t.Errorf("expected DelegatedIssues=[42], got %v", resp.SideEffects.DelegatedIssues)
+	}
+}
+
+func TestAgent_HallucinationGuard_ExhaustsIterations(t *testing.T) {
+	// LLM hallucinates every iteration — should eventually hit maxIterations
+	responses := make([]ChatResponse, maxIterations+1)
+	for i := range responses {
+		responses[i] = ChatResponse{
+			Content:      "I've asked OpenCode to handle this.",
+			FinishReason: "stop",
+		}
+	}
+
+	llm := &mockLLMClient{responses: responses}
+	tools := &mockToolExecutor{}
+	agent := NewAgent(llm, tools, nil, "test-model")
+
+	resp, err := agent.Run(context.Background(), RunRequest{
+		ChannelID: "C123",
+		MessageTs: "123.456",
+		UserText:  "Delegate this",
+		UserName:  "alice",
+		Target:    agentTarget,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should hit the max iterations fallback
+	if !strings.Contains(resp.Text, "having trouble") {
+		t.Errorf("expected max-iteration message, got: %s", resp.Text)
+	}
+}
+
+func TestAgent_HallucinationGuard_NoBenignFalsePositive(t *testing.T) {
+	llm := &mockLLMClient{
+		responses: []ChatResponse{
+			{Content: "I can help you with that! Let me search for existing issues.", FinishReason: "stop"},
+		},
+	}
+	tools := &mockToolExecutor{}
+	agent := NewAgent(llm, tools, nil, "test-model")
+
+	resp, err := agent.Run(context.Background(), RunRequest{
+		ChannelID: "C123",
+		MessageTs: "123.456",
+		UserText:  "Hello",
+		UserName:  "alice",
+		Target:    agentTarget,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should pass through immediately — no hallucination detected
+	if resp.Text != "I can help you with that! Let me search for existing issues." {
+		t.Errorf("expected benign response to pass through, got: %s", resp.Text)
+	}
+	// Only one LLM call should have been made
+	if llm.callIdx != 1 {
+		t.Errorf("expected 1 LLM call (no retry), got %d", llm.callIdx)
 	}
 }

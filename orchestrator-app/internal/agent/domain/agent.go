@@ -139,8 +139,19 @@ func (a *Agent) Run(ctx context.Context, req RunRequest) (RunResponse, error) {
 			return RunResponse{}, fmt.Errorf("llm completion: %w", err)
 		}
 
-		// If the LLM returned a text response (no tool calls), we're done
+		// If the LLM returned a text response (no tool calls), check for hallucination before returning
 		if resp.FinishReason == "stop" || len(resp.ToolCalls) == 0 {
+			if correction := DetectHallucination(resp.Content, a.tools.Effects()); correction != "" {
+				slog.Warn("hallucination detected, injecting correction",
+					"channel", req.ChannelID,
+					"iteration", i+1,
+					"response_preview", truncateForLog(resp.Content, 200),
+				)
+				messages = append(messages, Message{Role: "assistant", Content: resp.Content})
+				messages = append(messages, Message{Role: "user", Content: correction})
+				continue
+			}
+
 			slog.Info("agent finished",
 				"channel", req.ChannelID,
 				"user", req.UserName,
