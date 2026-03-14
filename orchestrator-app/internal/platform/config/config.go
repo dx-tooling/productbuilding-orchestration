@@ -8,12 +8,12 @@ import (
 )
 
 type Config struct {
-	AppEnv            string `env:"APP_ENV" envDefault:"development"`
-	Port              string `env:"PORT" envDefault:"8080"`
-	DatabasePath      string `env:"DATABASE_PATH" envDefault:"data/orchestrator.db"`
-	PreviewDomain     string `env:"PREVIEW_DOMAIN" envDefault:"productbuilder.luminor-tech.net"`
-	WorkspaceDir      string `env:"WORKSPACE_DIR" envDefault:"/opt/orchestrator/workspaces"`
-	TargetsConfigPath string `env:"TARGETS_CONFIG_PATH" envDefault:"/opt/orchestrator/targets.json"`
+	AppEnv             string `env:"APP_ENV" envDefault:"development"`
+	Port               string `env:"PORT" envDefault:"8080"`
+	DatabasePath       string `env:"DATABASE_PATH" envDefault:"data/orchestrator.db"`
+	PreviewDomain      string `env:"PREVIEW_DOMAIN" envDefault:"productbuilder.luminor-tech.net"`
+	WorkspaceDir       string `env:"WORKSPACE_DIR" envDefault:"/opt/orchestrator/workspaces"`
+	TargetsConfigPath  string `env:"TARGETS_CONFIG_PATH" envDefault:"/opt/orchestrator/targets.json"`
 	AWSRegion          string `env:"AWS_REGION" envDefault:"eu-central-1"`
 	SlackSigningSecret string `env:"SLACK_SIGNING_SECRET"`
 	SlackWorkspace     string `env:"SLACK_WORKSPACE"` // Slack workspace subdomain (e.g. "luminor-tech")

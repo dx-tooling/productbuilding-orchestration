@@ -1,0 +1,212 @@
+package domain
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"strings"
+	"text/template"
+)
+
+// SpecialistConfig defines a specialist's prompt, tools, and iteration limit.
+type SpecialistConfig struct {
+	Name          string
+	SystemPrompt  string // Go template string with {{.RepoOwner}} and {{.RepoName}}
+	ToolDefs      []ToolDef
+	MaxIterations int
+}
+
+// Specialist is a focused agent that handles one type of task.
+type Specialist struct {
+	config             SpecialistConfig
+	llm                LLMClient
+	tools              ToolExecutor
+	model              string
+	slackFetcher       SlackThreadFetcher
+	conversationLister ConversationLister
+	workspace          string
+	tokenBudget        TokenBudget
+}
+
+// Run executes the specialist's focused agent loop.
+func (s *Specialist) Run(ctx context.Context, req RunRequest, prior *PriorStepContext) (SpecialistResult, error) {
+	s.tools.ResetEffects()
+
+	systemPrompt, err := s.renderPrompt(req)
+	if err != nil {
+		return SpecialistResult{}, fmt.Errorf("render specialist prompt: %w", err)
+	}
+
+	// Fetch thread context if in-thread
+	var threadMsgs []ThreadMessage
+	if req.ThreadTs != "" && s.slackFetcher != nil {
+		fetched, fetchErr := s.slackFetcher.GetThreadReplies(ctx, req.Target.SlackBotToken, req.ChannelID, req.ThreadTs)
+		if fetchErr != nil {
+			slog.Warn("specialist: failed to fetch thread replies", "specialist", s.config.Name, "error", fetchErr)
+		} else {
+			for _, msg := range fetched {
+				if msg.Ts == req.MessageTs {
+					continue
+				}
+				threadMsgs = append(threadMsgs, msg)
+			}
+		}
+	}
+
+	userMessage := fmt.Sprintf("%s says: %s", req.UserName, req.UserText)
+	messages := BuildContext(systemPrompt, userMessage, threadMsgs, req.LinkedIssue, s.tokenBudget)
+
+	// Inject prior step context if chaining
+	if prior != nil {
+		priorMsg := fmt.Sprintf("Previous step (%s) result: %s", prior.StepName, prior.ResultText)
+		if len(prior.Effects.CreatedIssues) > 0 {
+			priorMsg += fmt.Sprintf("\nCreated issue #%d: %s",
+				prior.Effects.CreatedIssues[0].Number, prior.Effects.CreatedIssues[0].Title)
+		}
+		// Insert prior context as a system message before the user message
+		messages = append(messages[:len(messages)-1],
+			Message{Role: "system", Content: priorMsg},
+			messages[len(messages)-1],
+		)
+	}
+
+	// Agent loop
+	for i := 0; i < s.config.MaxIterations; i++ {
+		slog.Info("specialist llm call",
+			"specialist", s.config.Name,
+			"iteration", i+1,
+			"channel", req.ChannelID,
+			"message_count", len(messages),
+		)
+
+		resp, err := s.llm.ChatCompletion(ctx, ChatRequest{
+			Model:    s.model,
+			Messages: messages,
+			Tools:    s.config.ToolDefs,
+		})
+		if err != nil {
+			return SpecialistResult{}, fmt.Errorf("specialist %s llm completion: %w", s.config.Name, err)
+		}
+
+		// Text response (no tool calls) — check for hallucination
+		if resp.FinishReason == "stop" || len(resp.ToolCalls) == 0 {
+			if correction := DetectHallucination(resp.Content, s.tools.Effects()); correction != "" {
+				slog.Warn("specialist hallucination detected",
+					"specialist", s.config.Name,
+					"iteration", i+1,
+				)
+				messages = append(messages, Message{Role: "assistant", Content: resp.Content})
+				messages = append(messages, Message{Role: "user", Content: correction})
+				continue
+			}
+
+			return SpecialistResult{
+				Text:        resp.Content,
+				SideEffects: s.tools.Effects(),
+			}, nil
+		}
+
+		// Tool calls
+		for _, tc := range resp.ToolCalls {
+			slog.Info("specialist tool call",
+				"specialist", s.config.Name,
+				"tool", tc.Function.Name,
+				"tool_call_id", tc.ID,
+			)
+		}
+
+		messages = append(messages, Message{
+			Role:      "assistant",
+			Content:   resp.Content,
+			ToolCalls: resp.ToolCalls,
+		})
+
+		for _, tc := range resp.ToolCalls {
+			var result string
+			var execErr error
+
+			if tc.Function.Name == "list_conversations" && s.conversationLister != nil {
+				result, execErr = s.executeListConversations(ctx, tc, req.ChannelID)
+			} else {
+				result, execErr = s.tools.Execute(ctx, tc, req.Target)
+			}
+
+			if execErr != nil {
+				slog.Warn("specialist tool execution failed",
+					"specialist", s.config.Name,
+					"tool", tc.Function.Name,
+					"error", execErr,
+				)
+				result = fmt.Sprintf("Error: %s", execErr.Error())
+			}
+
+			messages = append(messages, Message{
+				Role:       "tool",
+				Content:    result,
+				ToolCallID: tc.ID,
+			})
+		}
+	}
+
+	// Max iterations reached
+	slog.Warn("specialist max iterations reached",
+		"specialist", s.config.Name,
+		"channel", req.ChannelID,
+	)
+	return SpecialistResult{
+		Text:        "I'm having trouble processing this request. Please try again or rephrase your question.",
+		SideEffects: s.tools.Effects(),
+	}, nil
+}
+
+// renderPrompt renders the specialist's system prompt template with repo context.
+func (s *Specialist) renderPrompt(req RunRequest) (string, error) {
+	tmpl, err := template.New("specialist").Parse(s.config.SystemPrompt)
+	if err != nil {
+		return "", fmt.Errorf("parse specialist prompt template: %w", err)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, PromptData{
+		RepoOwner: req.Target.RepoOwner,
+		RepoName:  req.Target.RepoName,
+	}); err != nil {
+		return "", fmt.Errorf("execute specialist prompt template: %w", err)
+	}
+	return buf.String(), nil
+}
+
+// executeListConversations handles the list_conversations tool call within a specialist.
+func (s *Specialist) executeListConversations(ctx context.Context, tc ToolCall, channelID string) (string, error) {
+	var args struct {
+		Days int `json:"days"`
+	}
+	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+		return "", fmt.Errorf("parse arguments: %w", err)
+	}
+	if args.Days <= 0 {
+		args.Days = 14
+	}
+
+	convs, err := s.conversationLister.ListRecentConversations(ctx, channelID, args.Days)
+	if err != nil {
+		return "", fmt.Errorf("list conversations: %w", err)
+	}
+
+	if len(convs) == 0 {
+		return fmt.Sprintf("No conversations found in this channel in the last %d days.", args.Days), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Found %d conversation(s) in the last %d days:\n\n", len(convs), args.Days))
+	for _, c := range convs {
+		link := SlackThreadLink(s.workspace, c.ChannelID, c.ThreadTs)
+		summary := c.Summary
+		if summary == "" {
+			summary = "(no summary)"
+		}
+		sb.WriteString(fmt.Sprintf("- %s (by %s) — <%s|view thread>\n", summary, c.UserName, link))
+	}
+	return sb.String(), nil
+}

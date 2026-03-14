@@ -1,0 +1,172 @@
+package domain
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+)
+
+// Orchestrator implements AgentRunner by routing to specialized agents.
+type Orchestrator struct {
+	router             *Router
+	specialists        map[string]*Specialist
+	llm                LLMClient
+	tools              ToolExecutor
+	model              string
+	slackFetcher       SlackThreadFetcher
+	conversationLister ConversationLister
+	workspace          string
+	tokenBudget        TokenBudget
+}
+
+// OrchestratorConfig holds optional configuration for the Orchestrator.
+type OrchestratorConfig struct {
+	ConversationLister ConversationLister
+	Workspace          string
+	TokenBudget        TokenBudget
+}
+
+// NewOrchestrator creates a new multi-agent orchestrator.
+func NewOrchestrator(llm LLMClient, tools ToolExecutor, slackFetcher SlackThreadFetcher, model string, cfg OrchestratorConfig) *Orchestrator {
+	budget := cfg.TokenBudget
+	if budget.Total == 0 {
+		budget = DefaultTokenBudget()
+	}
+
+	o := &Orchestrator{
+		router:             NewRouter(llm, model),
+		llm:                llm,
+		tools:              tools,
+		model:              model,
+		slackFetcher:       slackFetcher,
+		conversationLister: cfg.ConversationLister,
+		workspace:          cfg.Workspace,
+		tokenBudget:        budget,
+	}
+
+	o.specialists = o.buildSpecialists()
+	return o
+}
+
+// buildSpecialists creates all specialist instances.
+func (o *Orchestrator) buildSpecialists() map[string]*Specialist {
+	specs := map[string]SpecialistConfig{
+		"issue_creator": {
+			Name:          "issue_creator",
+			SystemPrompt:  issueCreatorPromptTmpl.Tree.Root.String(),
+			ToolDefs:      IssueCreatorTools(),
+			MaxIterations: 4,
+		},
+		"delegator": {
+			Name:          "delegator",
+			SystemPrompt:  delegatorPromptTmpl.Tree.Root.String(),
+			ToolDefs:      DelegatorTools(),
+			MaxIterations: 3,
+		},
+		"commenter": {
+			Name:          "commenter",
+			SystemPrompt:  commenterPromptTmpl.Tree.Root.String(),
+			ToolDefs:      CommenterTools(),
+			MaxIterations: 3,
+		},
+		"researcher": {
+			Name:          "researcher",
+			SystemPrompt:  researcherPromptTmpl.Tree.Root.String(),
+			ToolDefs:      ResearcherTools(),
+			MaxIterations: 5,
+		},
+		"closer": {
+			Name:          "closer",
+			SystemPrompt:  closerPromptTmpl.Tree.Root.String(),
+			ToolDefs:      CloserTools(),
+			MaxIterations: 3,
+		},
+	}
+
+	result := make(map[string]*Specialist, len(specs))
+	for name, cfg := range specs {
+		result[name] = &Specialist{
+			config:             cfg,
+			llm:                o.llm,
+			tools:              o.tools,
+			model:              o.model,
+			slackFetcher:       o.slackFetcher,
+			conversationLister: o.conversationLister,
+			workspace:          o.workspace,
+			tokenBudget:        o.tokenBudget,
+		}
+	}
+	return result
+}
+
+// Run implements the AgentRunner interface.
+func (o *Orchestrator) Run(ctx context.Context, req RunRequest) (RunResponse, error) {
+	slog.Info("orchestrator: routing request",
+		"channel", req.ChannelID,
+		"user", req.UserName,
+	)
+
+	// Route
+	decision, err := o.router.Route(ctx, req.UserText, req.Target, req.LinkedIssue)
+	if err != nil {
+		return RunResponse{}, fmt.Errorf("orchestrator routing: %w", err)
+	}
+
+	slog.Info("orchestrator: routing decision",
+		"steps", len(decision.Steps),
+		"channel", req.ChannelID,
+	)
+
+	// Execute specialists in sequence
+	var mergedEffects SideEffects
+	var lastText string
+	var prior *PriorStepContext
+
+	for i, step := range decision.Steps {
+		specialist, ok := o.specialists[step.Specialist]
+		if !ok {
+			slog.Warn("orchestrator: unknown specialist, falling back to researcher",
+				"specialist", step.Specialist,
+			)
+			specialist = o.specialists["researcher"]
+		}
+
+		slog.Info("orchestrator: executing specialist",
+			"step", i+1,
+			"specialist", specialist.config.Name,
+			"channel", req.ChannelID,
+		)
+
+		// If a previous step created an issue, inject it as linked issue for the next step
+		stepReq := req
+		if prior != nil && len(prior.Effects.CreatedIssues) > 0 {
+			created := prior.Effects.CreatedIssues[0]
+			stepReq.LinkedIssue = &IssueContext{
+				Number: created.Number,
+				Title:  created.Title,
+			}
+		}
+
+		result, err := specialist.Run(ctx, stepReq, prior)
+		if err != nil {
+			return RunResponse{}, fmt.Errorf("specialist %s: %w", specialist.config.Name, err)
+		}
+
+		// Merge side effects
+		mergedEffects.CreatedIssues = append(mergedEffects.CreatedIssues, result.SideEffects.CreatedIssues...)
+		mergedEffects.PostedComments = append(mergedEffects.PostedComments, result.SideEffects.PostedComments...)
+		mergedEffects.DelegatedIssues = append(mergedEffects.DelegatedIssues, result.SideEffects.DelegatedIssues...)
+
+		lastText = result.Text
+		prior = &PriorStepContext{
+			StepName:   specialist.config.Name,
+			ResultText: result.Text,
+			Effects:    result.SideEffects,
+		}
+	}
+
+	return RunResponse{
+		Text:        lastText,
+		SideEffects: mergedEffects,
+	}, nil
+}

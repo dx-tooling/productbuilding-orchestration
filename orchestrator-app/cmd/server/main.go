@@ -107,9 +107,12 @@ func main() {
 	toolExecutor := agentdomain.NewToolExecutor(githubAdapter)
 	slackAdapter := agentdomain.NewSlackClientAdapter(slackClient)
 	convRepo := slackinfra.NewConversationRepository(db)
-	agentRunner := agentdomain.NewAgent(fireworksClient, toolExecutor, slackAdapter, cfg.FireworksModel,
-		agentdomain.WithConversationLister(convRepo, cfg.SlackWorkspace),
-		agentdomain.WithTokenBudget(agentdomain.TokenBudget{Total: cfg.AgentTokenBudget, IssueMaxTokens: 1000, ThreadMaxMessages: 20}),
+	agentRunner := agentdomain.NewOrchestrator(fireworksClient, toolExecutor, slackAdapter, cfg.FireworksModel,
+		agentdomain.OrchestratorConfig{
+			ConversationLister: convRepo,
+			Workspace:          cfg.SlackWorkspace,
+			TokenBudget:        agentdomain.TokenBudget{Total: cfg.AgentTokenBudget, IssueMaxTokens: 1000, ThreadMaxMessages: 20},
+		},
 	)
 
 	// ── Build HTTP Routes ──────────────────────────────────────────────
