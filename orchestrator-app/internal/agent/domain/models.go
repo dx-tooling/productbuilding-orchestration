@@ -22,14 +22,15 @@ type ThreadMessage struct {
 
 // RunRequest contains the context for a single agent invocation.
 type RunRequest struct {
-	ChannelID   string
-	ThreadTs    string
-	MessageTs   string
-	UserText    string
-	UserName    string
-	BotUserID   string
-	Target      targets.TargetConfig
-	LinkedIssue *IssueContext
+	ChannelID      string
+	ThreadTs       string
+	MessageTs      string
+	UserText       string
+	UserName       string
+	BotUserID      string
+	Target         targets.TargetConfig
+	LinkedIssue    *IssueContext
+	ThreadMessages []ThreadMessage // Pre-fetched thread context; if set, specialist skips fetching
 }
 
 // RunResponse is returned after the agent completes.

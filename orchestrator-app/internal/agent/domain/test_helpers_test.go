@@ -55,13 +55,15 @@ func (m *mockToolExecutor) ResetEffects() {
 	m.effects = SideEffects{}
 }
 
-// mockSlackFetcher returns canned thread messages.
+// mockSlackFetcher returns canned thread messages and counts calls.
 type mockSlackFetcher struct {
-	messages []ThreadMessage
-	err      error
+	messages  []ThreadMessage
+	err       error
+	callCount int
 }
 
 func (m *mockSlackFetcher) GetThreadReplies(_ context.Context, _, _, _ string) ([]ThreadMessage, error) {
+	m.callCount++
 	return m.messages, m.err
 }
 

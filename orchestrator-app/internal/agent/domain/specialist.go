@@ -12,10 +12,11 @@ import (
 
 // SpecialistConfig defines a specialist's prompt, tools, and iteration limit.
 type SpecialistConfig struct {
-	Name          string
-	SystemPrompt  string // Go template string with {{.RepoOwner}} and {{.RepoName}}
-	ToolDefs      []ToolDef
-	MaxIterations int
+	Name           string
+	PromptTemplate *template.Template // Preferred: pre-parsed template
+	SystemPrompt   string             // Fallback: raw Go template string (used if PromptTemplate is nil)
+	ToolDefs       []ToolDef
+	MaxIterations  int
 }
 
 // Specialist is a focused agent that handles one type of task.
@@ -39,9 +40,16 @@ func (s *Specialist) Run(ctx context.Context, req RunRequest, prior *PriorStepCo
 		return SpecialistResult{}, fmt.Errorf("render specialist prompt: %w", err)
 	}
 
-	// Fetch thread context if in-thread
+	// Use pre-fetched thread messages, or fetch if not provided
 	var threadMsgs []ThreadMessage
-	if req.ThreadTs != "" && s.slackFetcher != nil {
+	if req.ThreadMessages != nil {
+		for _, msg := range req.ThreadMessages {
+			if msg.Ts == req.MessageTs {
+				continue
+			}
+			threadMsgs = append(threadMsgs, msg)
+		}
+	} else if req.ThreadTs != "" && s.slackFetcher != nil {
 		fetched, fetchErr := s.slackFetcher.GetThreadReplies(ctx, req.Target.SlackBotToken, req.ChannelID, req.ThreadTs)
 		if fetchErr != nil {
 			slog.Warn("specialist: failed to fetch thread replies", "specialist", s.config.Name, "error", fetchErr)
@@ -163,15 +171,24 @@ func (s *Specialist) Run(ctx context.Context, req RunRequest, prior *PriorStepCo
 
 // renderPrompt renders the specialist's system prompt template with repo context.
 func (s *Specialist) renderPrompt(req RunRequest) (string, error) {
+	data := PromptData{
+		RepoOwner: req.Target.RepoOwner,
+		RepoName:  req.Target.RepoName,
+	}
+
+	var buf bytes.Buffer
+	if s.config.PromptTemplate != nil {
+		if err := s.config.PromptTemplate.Execute(&buf, data); err != nil {
+			return "", fmt.Errorf("execute specialist prompt template: %w", err)
+		}
+		return buf.String(), nil
+	}
+
 	tmpl, err := template.New("specialist").Parse(s.config.SystemPrompt)
 	if err != nil {
 		return "", fmt.Errorf("parse specialist prompt template: %w", err)
 	}
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, PromptData{
-		RepoOwner: req.Target.RepoOwner,
-		RepoName:  req.Target.RepoName,
-	}); err != nil {
+	if err := tmpl.Execute(&buf, data); err != nil {
 		return "", fmt.Errorf("execute specialist prompt template: %w", err)
 	}
 	return buf.String(), nil

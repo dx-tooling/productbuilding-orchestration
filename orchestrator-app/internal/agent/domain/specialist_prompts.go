@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"bytes"
 	"fmt"
 	"text/template"
 )
@@ -114,25 +113,3 @@ Your ONLY job is to close GitHub issues or pull requests. You MUST call close_gi
 If you need to verify the issue/PR exists and is open, use get_github_issue first.
 
 When referring to issues, use: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>`))
-
-// specialistPromptTemplates maps specialist names to their prompt templates.
-var specialistPromptTemplates = map[string]*template.Template{
-	"issue_creator": issueCreatorPromptTmpl,
-	"delegator":     delegatorPromptTmpl,
-	"commenter":     commenterPromptTmpl,
-	"researcher":    researcherPromptTmpl,
-	"closer":        closerPromptTmpl,
-}
-
-// RenderSpecialistPrompt renders a specialist's system prompt with repo context.
-func RenderSpecialistPrompt(specialist, repoOwner, repoName string) (string, error) {
-	tmpl, ok := specialistPromptTemplates[specialist]
-	if !ok {
-		return "", fmt.Errorf("unknown specialist: %s", specialist)
-	}
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, PromptData{RepoOwner: repoOwner, RepoName: repoName}); err != nil {
-		return "", fmt.Errorf("render %s prompt: %w", specialist, err)
-	}
-	return buf.String(), nil
-}

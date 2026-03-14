@@ -487,6 +487,102 @@ func TestOrchestrator_ThreadContextFetched(t *testing.T) {
 	}
 }
 
+func TestOrchestrator_ThreadContextFetchedOnce_NotPerSpecialist(t *testing.T) {
+	// Multi-step chain with thread context — fetcher should be called only once.
+	routerLLM := &mockLLMClient{
+		responses: []ChatResponse{
+			{Content: `{"steps":[{"specialist":"issue_creator","params":{},"reasoning":"create"},{"specialist":"delegator","params":{},"reasoning":"delegate"}]}`, FinishReason: "stop"},
+		},
+	}
+	creatorLLM := &mockLLMClient{
+		responses: []ChatResponse{
+			{Content: "Created issue #10.", FinishReason: "stop"},
+		},
+	}
+	delegatorLLM := &mockLLMClient{
+		responses: []ChatResponse{
+			{Content: "Delegated.", FinishReason: "stop"},
+		},
+	}
+	combinedLLM := &sequentialMockLLM{clients: []*mockLLMClient{routerLLM, creatorLLM, delegatorLLM}}
+
+	tools := &mockToolExecutor{}
+	fetcher := &mockSlackFetcher{
+		messages: []ThreadMessage{
+			{User: "U001", Text: "Original question", Ts: "100.000"},
+			{User: "U002", Text: "Follow up", Ts: "100.001"},
+		},
+	}
+	orch := NewOrchestrator(combinedLLM, tools, fetcher, "test-model", OrchestratorConfig{})
+
+	_, err := orch.Run(context.Background(), RunRequest{
+		ChannelID: "C123",
+		ThreadTs:  "100.000",
+		MessageTs: "100.001",
+		UserText:  "Create and delegate",
+		UserName:  "alice",
+		Target:    agentTarget,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fetcher.callCount != 1 {
+		t.Errorf("expected slack fetcher called once, got %d", fetcher.callCount)
+	}
+}
+
+func TestOrchestrator_MaxSteps_TruncatesExcessiveRouting(t *testing.T) {
+	// Router returns 8 steps — orchestrator should only execute maxOrchestratorSteps (5).
+	steps := `{"steps":[` +
+		`{"specialist":"researcher","params":{},"reasoning":"s1"},` +
+		`{"specialist":"researcher","params":{},"reasoning":"s2"},` +
+		`{"specialist":"researcher","params":{},"reasoning":"s3"},` +
+		`{"specialist":"researcher","params":{},"reasoning":"s4"},` +
+		`{"specialist":"researcher","params":{},"reasoning":"s5"},` +
+		`{"specialist":"researcher","params":{},"reasoning":"s6"},` +
+		`{"specialist":"researcher","params":{},"reasoning":"s7"},` +
+		`{"specialist":"researcher","params":{},"reasoning":"s8"}` +
+		`]}`
+	routerLLM := &mockLLMClient{
+		responses: []ChatResponse{
+			{Content: steps, FinishReason: "stop"},
+		},
+	}
+
+	// Each specialist call produces a simple text response.
+	var specialistLLMs []*mockLLMClient
+	for i := 0; i < 8; i++ {
+		specialistLLMs = append(specialistLLMs, &mockLLMClient{
+			responses: []ChatResponse{
+				{Content: fmt.Sprintf("response %d", i+1), FinishReason: "stop"},
+			},
+		})
+	}
+
+	allClients := append([]*mockLLMClient{routerLLM}, specialistLLMs...)
+	combinedLLM := &sequentialMockLLM{clients: allClients}
+
+	tools := &mockToolExecutor{}
+	orch := NewOrchestrator(combinedLLM, tools, nil, "test-model", OrchestratorConfig{})
+
+	resp, err := orch.Run(context.Background(), RunRequest{
+		ChannelID: "C123",
+		MessageTs: "123.456",
+		UserText:  "do many things",
+		UserName:  "alice",
+		Target:    agentTarget,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Last text should be from the 5th specialist, not the 8th
+	if resp.Text != "response 5" {
+		t.Errorf("expected response from 5th step, got: %s", resp.Text)
+	}
+}
+
 // --- Test helpers ---
 
 // sequentialMockLLM serves responses from multiple mock LLM clients in order.

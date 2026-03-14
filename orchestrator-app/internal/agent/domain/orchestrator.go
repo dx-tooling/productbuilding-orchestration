@@ -6,6 +6,10 @@ import (
 	"log/slog"
 )
 
+// maxOrchestratorSteps caps the number of specialist steps per request
+// to prevent pathological routing from causing excessive LLM calls.
+const maxOrchestratorSteps = 5
+
 // Orchestrator implements AgentRunner by routing to specialized agents.
 type Orchestrator struct {
 	router             *Router
@@ -52,34 +56,34 @@ func NewOrchestrator(llm LLMClient, tools ToolExecutor, slackFetcher SlackThread
 func (o *Orchestrator) buildSpecialists() map[string]*Specialist {
 	specs := map[string]SpecialistConfig{
 		"issue_creator": {
-			Name:          "issue_creator",
-			SystemPrompt:  issueCreatorPromptTmpl.Tree.Root.String(),
-			ToolDefs:      IssueCreatorTools(),
-			MaxIterations: 4,
+			Name:           "issue_creator",
+			PromptTemplate: issueCreatorPromptTmpl,
+			ToolDefs:       IssueCreatorTools(),
+			MaxIterations:  4,
 		},
 		"delegator": {
-			Name:          "delegator",
-			SystemPrompt:  delegatorPromptTmpl.Tree.Root.String(),
-			ToolDefs:      DelegatorTools(),
-			MaxIterations: 3,
+			Name:           "delegator",
+			PromptTemplate: delegatorPromptTmpl,
+			ToolDefs:       DelegatorTools(),
+			MaxIterations:  3,
 		},
 		"commenter": {
-			Name:          "commenter",
-			SystemPrompt:  commenterPromptTmpl.Tree.Root.String(),
-			ToolDefs:      CommenterTools(),
-			MaxIterations: 3,
+			Name:           "commenter",
+			PromptTemplate: commenterPromptTmpl,
+			ToolDefs:       CommenterTools(),
+			MaxIterations:  3,
 		},
 		"researcher": {
-			Name:          "researcher",
-			SystemPrompt:  researcherPromptTmpl.Tree.Root.String(),
-			ToolDefs:      ResearcherTools(),
-			MaxIterations: 5,
+			Name:           "researcher",
+			PromptTemplate: researcherPromptTmpl,
+			ToolDefs:       ResearcherTools(),
+			MaxIterations:  5,
 		},
 		"closer": {
-			Name:          "closer",
-			SystemPrompt:  closerPromptTmpl.Tree.Root.String(),
-			ToolDefs:      CloserTools(),
-			MaxIterations: 3,
+			Name:           "closer",
+			PromptTemplate: closerPromptTmpl,
+			ToolDefs:       CloserTools(),
+			MaxIterations:  3,
 		},
 	}
 
@@ -117,12 +121,31 @@ func (o *Orchestrator) Run(ctx context.Context, req RunRequest) (RunResponse, er
 		"channel", req.ChannelID,
 	)
 
+	// Pre-fetch thread context once for all specialists
+	if req.ThreadTs != "" && req.ThreadMessages == nil && o.slackFetcher != nil {
+		fetched, fetchErr := o.slackFetcher.GetThreadReplies(ctx, req.Target.SlackBotToken, req.ChannelID, req.ThreadTs)
+		if fetchErr != nil {
+			slog.Warn("orchestrator: failed to fetch thread replies", "error", fetchErr)
+		} else {
+			req.ThreadMessages = fetched
+		}
+	}
+
 	// Execute specialists in sequence
 	var mergedEffects SideEffects
 	var lastText string
 	var prior *PriorStepContext
 
-	for i, step := range decision.Steps {
+	steps := decision.Steps
+	if len(steps) > maxOrchestratorSteps {
+		slog.Warn("orchestrator: truncating excessive routing steps",
+			"requested", len(steps),
+			"max", maxOrchestratorSteps,
+		)
+		steps = steps[:maxOrchestratorSteps]
+	}
+
+	for i, step := range steps {
 		specialist, ok := o.specialists[step.Specialist]
 		if !ok {
 			slog.Warn("orchestrator: unknown specialist, falling back to researcher",

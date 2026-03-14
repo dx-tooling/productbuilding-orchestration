@@ -208,6 +208,29 @@ func TestRouter_PromptContainsRepoInfo(t *testing.T) {
 	}
 }
 
+func TestRouter_JSONWithTrailingText(t *testing.T) {
+	llm := &mockLLMClient{
+		responses: []ChatResponse{
+			{Content: `{"steps":[{"specialist":"closer","params":{"number":"7"},"reasoning":"close it"}]} Let me know if you need anything else!`, FinishReason: "stop"},
+		},
+	}
+	r := NewRouter(llm, "test-model")
+
+	decision, err := r.Route(context.Background(), "close issue #7", targets.TargetConfig{
+		RepoOwner: "acme", RepoName: "widgets",
+	}, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(decision.Steps) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(decision.Steps))
+	}
+	if decision.Steps[0].Specialist != "closer" {
+		t.Errorf("expected closer, got %s", decision.Steps[0].Specialist)
+	}
+}
+
 func TestRouter_JSONInCodeFence(t *testing.T) {
 	llm := &mockLLMClient{
 		responses: []ChatResponse{

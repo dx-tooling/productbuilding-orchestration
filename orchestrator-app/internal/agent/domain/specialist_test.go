@@ -367,6 +367,43 @@ func TestSpecialist_ListConversations_Intercepted(t *testing.T) {
 	}
 }
 
+func TestSpecialist_TemplateRenderedFromConfigTemplate(t *testing.T) {
+	// Verify that when SpecialistConfig holds a *template.Template,
+	// renderPrompt produces the correctly rendered output.
+	llm := &mockLLMClient{
+		responses: []ChatResponse{
+			{Content: "ok", FinishReason: "stop"},
+		},
+	}
+	tools := &mockToolExecutor{}
+	s := newTestSpecialist(llm, tools)
+	s.config.PromptTemplate = issueCreatorPromptTmpl
+	s.config.SystemPrompt = "" // should be ignored when PromptTemplate is set
+
+	_, err := s.Run(context.Background(), RunRequest{
+		ChannelID: "C123",
+		MessageTs: "123.456",
+		UserText:  "Hello",
+		UserName:  "alice",
+		Target:    agentTarget,
+	}, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(llm.requests) == 0 {
+		t.Fatal("expected at least 1 LLM request")
+	}
+	sysMsg := llm.requests[0].Messages[0]
+	if !strings.Contains(sysMsg.Content, "Issue Creator") {
+		t.Errorf("expected issue creator prompt, got: %s", sysMsg.Content)
+	}
+	if !strings.Contains(sysMsg.Content, "acme/widgets") {
+		t.Errorf("expected rendered repo context, got: %s", sysMsg.Content)
+	}
+}
+
 func TestSpecialist_SideEffectsReturned(t *testing.T) {
 	tools := &mockToolExecutor{
 		results: map[string]string{

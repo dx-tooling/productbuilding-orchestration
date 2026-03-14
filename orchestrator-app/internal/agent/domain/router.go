@@ -71,6 +71,7 @@ func (r *Router) Route(ctx context.Context, userText string, target targets.Targ
 var codeFencePattern = regexp.MustCompile("(?s)```(?:json)?\\s*(.+?)\\s*```")
 
 // parseRoutingJSON extracts and parses a RoutingDecision from the LLM's text response.
+// Tolerates leading text before JSON and trailing text after it.
 func parseRoutingJSON(text string) (RoutingDecision, error) {
 	// Try stripping code fences first
 	if m := codeFencePattern.FindStringSubmatch(text); len(m) > 1 {
@@ -85,7 +86,8 @@ func parseRoutingJSON(text string) (RoutingDecision, error) {
 	text = text[idx:]
 
 	var decision RoutingDecision
-	if err := json.Unmarshal([]byte(text), &decision); err != nil {
+	dec := json.NewDecoder(strings.NewReader(text))
+	if err := dec.Decode(&decision); err != nil {
 		return RoutingDecision{}, fmt.Errorf("unmarshal routing decision: %w", err)
 	}
 	return decision, nil
