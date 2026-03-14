@@ -4,10 +4,10 @@ import "testing"
 
 func TestDetectHallucination(t *testing.T) {
 	tests := []struct {
-		name     string
-		text     string
-		effects  SideEffects
-		wantHit  bool // true = non-empty correction expected
+		name    string
+		text    string
+		effects SideEffects
+		wantHit bool // true = non-empty correction expected
 	}{
 		// --- Should detect hallucinations ---
 		{

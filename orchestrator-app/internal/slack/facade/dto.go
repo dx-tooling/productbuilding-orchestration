@@ -25,18 +25,18 @@ const (
 
 // NotificationEvent represents a notification to be sent to Slack
 type NotificationEvent struct {
-	Type        EventType
-	RepoOwner   string
-	RepoName    string
-	IssueNumber int
-	Title       string
-	Body        string
-	URL         string
-	Author      string
-	Status      string
-	PreviewURL  string
-	LogsURL     string
-	UserNote    string
+	Type              EventType
+	RepoOwner         string
+	RepoName          string
+	IssueNumber       int
+	Title             string
+	Body              string
+	URL               string
+	Author            string
+	Status            string
+	PreviewURL        string
+	LogsURL           string
+	UserNote          string
 	CommentID         int64
 	ThreadTs          string // For emoji reactions
 	Emoji             string // Emoji to add as reaction

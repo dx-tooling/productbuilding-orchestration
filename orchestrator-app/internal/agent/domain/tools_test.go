@@ -11,24 +11,24 @@ import (
 
 // mockGitHubClient is a test double for GitHubClient.
 type mockGitHubClient struct {
-	createIssueResult   int
-	createIssueErr      error
-	createCommentResult int64
-	createCommentErr    error
-	searchResults       []IssueSearchResult
-	searchErr           error
-	getIssueResult      *IssueDetail
-	getIssueErr         error
-	listIssuesResult    []IssueDetail
-	listIssuesErr       error
-	getPRDiffResult     string
-	getPRDiffErr        error
-	closeIssueErr          error
-	closePRErr             error
-	searchCodeResult       []CodeSearchResult
-	searchCodeErr          error
-	getFileContentsResult  *FileContents
-	getFileContentsErr     error
+	createIssueResult     int
+	createIssueErr        error
+	createCommentResult   int64
+	createCommentErr      error
+	searchResults         []IssueSearchResult
+	searchErr             error
+	getIssueResult        *IssueDetail
+	getIssueErr           error
+	listIssuesResult      []IssueDetail
+	listIssuesErr         error
+	getPRDiffResult       string
+	getPRDiffErr          error
+	closeIssueErr         error
+	closePRErr            error
+	searchCodeResult      []CodeSearchResult
+	searchCodeErr         error
+	getFileContentsResult *FileContents
+	getFileContentsErr    error
 
 	// Captured args
 	lastCommentBody    string

@@ -613,6 +613,156 @@ func TestNotifier_Flush_RetriesForNewIssue_FindsThreadMapping(t *testing.T) {
 	}
 }
 
+func TestNotifier_CommentOnUnknownIssue_NoNewThread(t *testing.T) {
+	// A comment on an issue/PR with no existing thread should be silently
+	// skipped — it must NOT create a new channel-level message.
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer)
+
+	target := targets.TargetConfig{
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		SlackChannel:  "#productbuilding-test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventCommentAdded,
+		RepoOwner:   "luminor-project",
+		RepoName:    "test-repo",
+		IssueNumber: 99,
+		Author:      "PrdctBldr",
+		Body:        "Deploy comment",
+	}
+
+	notifier.Notify(context.Background(), event, target)
+	// Comments flush immediately via goroutine; give it a moment
+	time.Sleep(50 * time.Millisecond)
+
+	// Read under lock since flush runs in a goroutine for comments
+	client.mu.Lock()
+	msgCount := len(client.postedMessages)
+	client.mu.Unlock()
+
+	if msgCount != 0 {
+		t.Errorf("Expected no messages for comment on unknown issue, got %d", msgCount)
+	}
+}
+
+func TestNotifier_CommentOnKnownIssue_PostsToThread(t *testing.T) {
+	// A comment on an issue with an existing thread should post to that thread.
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer)
+
+	target := targets.TargetConfig{
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		SlackChannel:  "#productbuilding-test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	repo.SaveThread(context.Background(), &SlackThread{
+		ID:            "existing-id",
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		GithubIssueID: 42,
+		SlackChannel:  "#productbuilding-test",
+		SlackThreadTs: "existing-thread-ts",
+		ThreadType:    "issue",
+	})
+
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventCommentAdded,
+		RepoOwner:   "luminor-project",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+		Author:      "alice",
+		Body:        "Looks good!",
+	}
+
+	notifier.Notify(context.Background(), event, target)
+	time.Sleep(50 * time.Millisecond)
+
+	// Read under lock since flush runs in a goroutine for comments
+	client.mu.Lock()
+	msgCount := len(client.postedMessages)
+	var thread string
+	if msgCount > 0 {
+		thread = client.postedMessages[0].Thread
+	}
+	client.mu.Unlock()
+
+	if msgCount != 1 {
+		t.Fatalf("Expected 1 message, got %d", msgCount)
+	}
+	if thread != "existing-thread-ts" {
+		t.Errorf("Expected reply in existing thread, got thread=%q", thread)
+	}
+}
+
+func TestNotifier_PRWithLinkedIssue_FindsThreadWithoutRetrySleep(t *testing.T) {
+	// When a PR has a LinkedIssueNumber, the notifier should find the issue
+	// thread via the linked issue check BEFORE the 5s retry sleep.
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer)
+
+	target := targets.TargetConfig{
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		SlackChannel:  "#productbuilding-test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	repo.SaveThread(context.Background(), &SlackThread{
+		ID:            "issue-thread-id",
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		GithubIssueID: 53,
+		SlackChannel:  "#productbuilding-test",
+		SlackThreadTs: "issue-thread-ts",
+		ThreadType:    "issue",
+	})
+
+	event := slackfacade.NotificationEvent{
+		Type:              slackfacade.EventPROpened,
+		RepoOwner:         "luminor-project",
+		RepoName:          "test-repo",
+		IssueNumber:       54,
+		Title:             "Implement feature",
+		Author:            "opencode-agent[bot]",
+		LinkedIssueNumber: 53,
+	}
+
+	notifier.Notify(context.Background(), event, target)
+
+	// Measure how long flush takes — it should NOT include the 5s retry sleep
+	start := time.Now()
+	debouncer.executeAll()
+	elapsed := time.Since(start)
+
+	if elapsed > 2*time.Second {
+		t.Errorf("flush took %v — linked issue lookup should skip the 5s retry sleep", elapsed)
+	}
+
+	// Should have posted to the issue thread
+	foundThreadReply := false
+	for _, msg := range client.postedMessages {
+		if msg.Thread == "issue-thread-ts" {
+			foundThreadReply = true
+			break
+		}
+	}
+	if !foundThreadReply {
+		t.Errorf("Expected PR notification in issue thread, got: %+v", client.postedMessages)
+	}
+}
+
 func TestSanitizeForCodeBlock(t *testing.T) {
 	tests := []struct {
 		name  string

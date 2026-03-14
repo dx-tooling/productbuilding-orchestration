@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,12 +45,15 @@ func (m *mockPreviewService) DeletePreview(ctx context.Context, req previewdomai
 }
 
 type mockSlackNotifier struct {
+	mu           sync.Mutex
 	notifyCalled bool
 	events       []facade.NotificationEvent
 	targets      []targets.TargetConfig
 }
 
 func (m *mockSlackNotifier) Notify(ctx context.Context, event facade.NotificationEvent, target targets.TargetConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.notifyCalled = true
 	m.events = append(m.events, event)
 	m.targets = append(m.targets, target)
@@ -107,6 +111,9 @@ func TestHandleWebhook_IssueOpened(t *testing.T) {
 
 	// Wait for async notification to complete
 	time.Sleep(100 * time.Millisecond)
+
+	slackNotifier.mu.Lock()
+	defer slackNotifier.mu.Unlock()
 
 	if !slackNotifier.notifyCalled {
 		t.Error("Expected Slack notification to be sent")
@@ -176,6 +183,9 @@ func TestHandleWebhook_IssueCommentCreated(t *testing.T) {
 	// Wait for async notification to complete
 	time.Sleep(100 * time.Millisecond)
 
+	slackNotifier.mu.Lock()
+	defer slackNotifier.mu.Unlock()
+
 	if !slackNotifier.notifyCalled {
 		t.Error("Expected Slack notification to be sent")
 	}
@@ -242,6 +252,9 @@ func TestHandleWebhook_PROpened_PassesLinkedIssueNumber(t *testing.T) {
 
 	// Wait for async notification
 	time.Sleep(100 * time.Millisecond)
+
+	slackNotifier.mu.Lock()
+	defer slackNotifier.mu.Unlock()
 
 	if !slackNotifier.notifyCalled {
 		t.Fatal("Expected Slack notification to be sent for PR opened")
@@ -319,7 +332,11 @@ func TestHandleWebhook_IssueCommentFromSlack_SkipsNotification(t *testing.T) {
 		t.Errorf("Expected status 200, got %d", rec.Code)
 	}
 
-	if slackNotifier.notifyCalled {
+	slackNotifier.mu.Lock()
+	called := slackNotifier.notifyCalled
+	slackNotifier.mu.Unlock()
+
+	if called {
 		t.Error("Should NOT send Slack notification for comment originated from Slack (via-slack marker)")
 	}
 }

@@ -107,28 +107,14 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 		return
 	}
 
-	// Find or create thread
-	// Use FindThreadByNumber which searches by either issue_id OR pr_id
-	// This is needed because in GitHub, PRs are also issues and share the same numbering
+	// Find existing thread for this GitHub number
 	thread, err := n.repository.FindThreadByNumber(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
 	if err != nil {
-		// "not found" error is expected for new threads, continue to create
 		thread = nil
 	}
 
-	// Retry once for new issue/PR events: the agent may have created the issue
-	// via the GitHub API and the webhook arrived before the handler saved the
-	// thread mapping. A short wait lets the handler catch up.
-	if thread == nil && (event.Type == slackfacade.EventIssueOpened || event.Type == slackfacade.EventPROpened) {
-		time.Sleep(5 * time.Second)
-		thread, err = n.repository.FindThreadByNumber(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
-		if err != nil {
-			thread = nil
-		}
-	}
-
-	// If no thread found and we have a linked issue (e.g. PR body says "Fixes #16"),
-	// try to find the thread by the linked issue number
+	// Check linked issue before retry sleep — this is the common path for
+	// agent-created PRs that reference a parent issue (e.g. "Fixes #16").
 	if thread == nil && event.LinkedIssueNumber > 0 && event.LinkedIssueNumber != event.IssueNumber {
 		thread, err = n.repository.FindThreadByNumber(ctx, event.RepoOwner, event.RepoName, event.LinkedIssueNumber)
 		if err != nil {
@@ -137,8 +123,6 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 		if thread != nil {
 			// Found the linked issue's thread — create a new mapping for this PR
 			// so future events (comments, merges) find the thread directly.
-			// A separate row (instead of updating the existing one) supports
-			// multiple PRs per issue thread.
 			if event.IsPR() {
 				prThread := &SlackThread{
 					ID:            uuid.New().String(),
@@ -162,10 +146,32 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 		}
 	}
 
+	// Retry once for new issue/PR events when no thread found yet: the agent
+	// may have created the issue via GitHub API and the webhook arrived before
+	// the handler saved the thread mapping.
+	if thread == nil && (event.Type == slackfacade.EventIssueOpened || event.Type == slackfacade.EventPROpened) {
+		time.Sleep(5 * time.Second)
+		thread, err = n.repository.FindThreadByNumber(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
+		if err != nil {
+			thread = nil
+		}
+	}
+
+	// Comments should only land in existing threads — never create a new
+	// channel-level message. This prevents a race where a bot comment on a
+	// PR arrives before the PR-opened handler creates the thread mapping.
+	if thread == nil && event.Type == slackfacade.EventCommentAdded {
+		slog.Info("skipping comment notification: no existing thread",
+			"repo", event.RepoOwner+"/"+event.RepoName,
+			"number", event.IssueNumber,
+			"author", event.Author,
+		)
+		return
+	}
+
 	newThread := false
 	if thread == nil {
 		newThread = true
-		// Create new thread
 		parentMsg := formatParentMessage(*event)
 		parentTs, err := n.client.PostMessage(ctx, target.SlackBotToken, target.SlackChannel, parentMsg)
 		if err != nil {
@@ -199,29 +205,18 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 
 		if err := n.repository.SaveThread(ctx, thread); err != nil {
 			slog.Warn("failed to save slack thread", "error", err)
-			// Continue anyway - we can still post to the thread
 		}
 
-		// Update event with thread timestamp for future reactions
 		n.mu.Lock()
 		n.reactions[parentTs] = event.Emoji
 		n.mu.Unlock()
-	} else {
-		// Found existing thread - update it to include both issue and PR IDs if needed
-		// This handles the case where an issue becomes a PR (or vice versa)
-		needsUpdate := false
-		if event.IsPR() && thread.GithubPRID == 0 && thread.GithubIssueID == event.IssueNumber {
-			// Issue became a PR - update the thread
-			thread.GithubPRID = event.IssueNumber
-			thread.ThreadType = "pull_request" // Update type
-			needsUpdate = true
-			slog.Info("updating thread from issue to PR", "repo", event.RepoOwner+"/"+event.RepoName, "number", event.IssueNumber)
-		}
-
-		if needsUpdate {
-			if err := n.repository.SaveThread(ctx, thread); err != nil {
-				slog.Warn("failed to update thread type", "error", err)
-			}
+	} else if event.IsPR() && thread.GithubPRID == 0 && thread.GithubIssueID == event.IssueNumber {
+		// Same GitHub number was first seen as an issue, now arriving as a PR
+		// (PRs are issues in GitHub and share the numbering space).
+		thread.GithubPRID = event.IssueNumber
+		thread.ThreadType = "pull_request"
+		if err := n.repository.SaveThread(ctx, thread); err != nil {
+			slog.Warn("failed to update thread type", "error", err)
 		}
 	}
 

@@ -9,14 +9,14 @@ import (
 
 // Conversation represents a tracked agent conversation in a Slack thread.
 type Conversation struct {
-	ChannelID   string
-	ThreadTs    string
-	Summary     string
-	UserName    string
+	ChannelID    string
+	ThreadTs     string
+	Summary      string
+	UserName     string
 	LastActiveAt time.Time
-	LinkedIssue int
-	RepoOwner   string
-	RepoName    string
+	LinkedIssue  int
+	RepoOwner    string
+	RepoName     string
 }
 
 // ConversationLister retrieves recent conversations for a channel.
