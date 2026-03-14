@@ -135,12 +135,23 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 			thread = nil
 		}
 		if thread != nil {
-			// Found the linked issue's thread — register this PR number so future
-			// events on this PR (comments, merges) find the thread directly
-			if event.IsPR() && thread.GithubPRID == 0 {
-				thread.GithubPRID = event.IssueNumber
-				if err := n.repository.SaveThread(ctx, thread); err != nil {
-					slog.Warn("failed to update thread with PR ID", "error", err)
+			// Found the linked issue's thread — create a new mapping for this PR
+			// so future events (comments, merges) find the thread directly.
+			// A separate row (instead of updating the existing one) supports
+			// multiple PRs per issue thread.
+			if event.IsPR() {
+				prThread := &SlackThread{
+					ID:            uuid.New().String(),
+					RepoOwner:     thread.RepoOwner,
+					RepoName:      thread.RepoName,
+					GithubPRID:    event.IssueNumber,
+					SlackChannel:  thread.SlackChannel,
+					SlackThreadTs: thread.SlackThreadTs,
+					SlackParentTs: thread.SlackParentTs,
+					ThreadType:    "pull_request",
+				}
+				if err := n.repository.SaveThread(ctx, prThread); err != nil {
+					slog.Warn("failed to save PR thread mapping", "error", err, "pr", event.IssueNumber)
 				}
 			}
 			slog.Info("linked PR to existing issue thread",

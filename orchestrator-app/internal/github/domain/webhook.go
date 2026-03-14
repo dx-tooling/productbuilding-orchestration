@@ -224,16 +224,27 @@ func ParseIssueCommentEvent(payload []byte) (*IssueCommentEvent, error) {
 // closingKeywordRe matches GitHub closing keywords: Fixes #N, Closes #N, Resolves #N (and variants)
 var closingKeywordRe = regexp.MustCompile(`(?i)\b(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?)\s+#(\d+)\b`)
 
+// issueRefRe matches any #N issue/PR reference (fallback when no closing keyword found)
+var issueRefRe = regexp.MustCompile(`#(\d+)\b`)
+
 // ExtractLinkedIssue parses a PR body for GitHub closing keywords (e.g. "Fixes #16")
-// and returns the first linked issue number, or 0 if none found.
+// and returns the first linked issue number. Falls back to any #N reference if no
+// closing keyword is found, since PRs created from issues often reference them
+// without using formal closing keywords.
 func ExtractLinkedIssue(body string) int {
+	// Prefer closing keywords (most specific)
 	match := closingKeywordRe.FindStringSubmatch(body)
-	if match == nil {
-		return 0
+	if match != nil {
+		if n, err := strconv.Atoi(match[1]); err == nil {
+			return n
+		}
 	}
-	n, err := strconv.Atoi(match[1])
-	if err != nil {
-		return 0
+	// Fallback: any #N reference
+	match = issueRefRe.FindStringSubmatch(body)
+	if match != nil {
+		if n, err := strconv.Atoi(match[1]); err == nil {
+			return n
+		}
 	}
-	return n
+	return 0
 }

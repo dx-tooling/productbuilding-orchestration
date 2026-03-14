@@ -417,6 +417,138 @@ func TestNotifier_Notify_Debouncing(t *testing.T) {
 	}
 }
 
+func TestNotifier_PRLinksToIssueThread_CreatesNewMapping(t *testing.T) {
+	// When a PR references an issue via #N, the notifier should find the
+	// issue's thread and create a separate PR thread mapping so future
+	// events on the PR (comments, merges) land in the same thread.
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer)
+
+	target := targets.TargetConfig{
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		SlackChannel:  "#productbuilding-test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	// Pre-existing issue thread
+	repo.SaveThread(context.Background(), &SlackThread{
+		ID:            "issue-thread-id",
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		GithubIssueID: 51,
+		SlackChannel:  "#productbuilding-test",
+		SlackThreadTs: "issue-thread-ts",
+		ThreadType:    "issue",
+	})
+
+	// PR #52 opened, linked to issue #51
+	event := slackfacade.NotificationEvent{
+		Type:              slackfacade.EventPROpened,
+		RepoOwner:         "luminor-project",
+		RepoName:          "test-repo",
+		IssueNumber:       52,
+		Title:             "Forgot password implemented",
+		Author:            "opencode-agent[bot]",
+		LinkedIssueNumber: 51,
+	}
+
+	notifier.Notify(context.Background(), event, target)
+	debouncer.executeAll()
+
+	// Should post to the issue thread, not create a new channel message
+	foundThreadReply := false
+	for _, msg := range client.postedMessages {
+		if msg.Thread == "issue-thread-ts" {
+			foundThreadReply = true
+			break
+		}
+	}
+	if !foundThreadReply {
+		t.Errorf("Expected PR notification in issue thread, got: %+v", client.postedMessages)
+	}
+
+	// Should have created a separate PR mapping (FindThreadByNumber for #52 should work)
+	prThread, _ := repo.FindThreadByNumber(context.Background(), "luminor-project", "test-repo", 52)
+	if prThread == nil {
+		t.Fatal("Expected PR thread mapping to be created for #52")
+	}
+	if prThread.SlackThreadTs != "issue-thread-ts" {
+		t.Errorf("PR mapping should point to issue thread, got %s", prThread.SlackThreadTs)
+	}
+	if prThread.GithubPRID != 52 {
+		t.Errorf("PR mapping should have PR ID 52, got %d", prThread.GithubPRID)
+	}
+
+	// Original issue thread should be untouched
+	issueThread, _ := repo.FindThreadByNumber(context.Background(), "luminor-project", "test-repo", 51)
+	if issueThread == nil || issueThread.GithubIssueID != 51 {
+		t.Errorf("Original issue thread should be preserved, got %+v", issueThread)
+	}
+}
+
+func TestNotifier_MultiplePRsPerIssue_AllLinkToSameThread(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer)
+
+	target := targets.TargetConfig{
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		SlackChannel:  "#productbuilding-test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	// Pre-existing issue thread
+	repo.SaveThread(context.Background(), &SlackThread{
+		ID:            "issue-thread-id",
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		GithubIssueID: 51,
+		SlackChannel:  "#productbuilding-test",
+		SlackThreadTs: "issue-thread-ts",
+		ThreadType:    "issue",
+	})
+
+	// First PR
+	event1 := slackfacade.NotificationEvent{
+		Type:              slackfacade.EventPROpened,
+		RepoOwner:         "luminor-project",
+		RepoName:          "test-repo",
+		IssueNumber:       52,
+		Title:             "Forgot password - backend",
+		LinkedIssueNumber: 51,
+	}
+	notifier.Notify(context.Background(), event1, target)
+	debouncer.executeAll()
+
+	// Second PR
+	event2 := slackfacade.NotificationEvent{
+		Type:              slackfacade.EventPROpened,
+		RepoOwner:         "luminor-project",
+		RepoName:          "test-repo",
+		IssueNumber:       53,
+		Title:             "Forgot password - frontend",
+		LinkedIssueNumber: 51,
+	}
+	notifier.Notify(context.Background(), event2, target)
+	debouncer.executeAll()
+
+	// Both PRs should resolve to the issue thread
+	pr52, _ := repo.FindThreadByNumber(context.Background(), "luminor-project", "test-repo", 52)
+	pr53, _ := repo.FindThreadByNumber(context.Background(), "luminor-project", "test-repo", 53)
+
+	if pr52 == nil || pr52.SlackThreadTs != "issue-thread-ts" {
+		t.Errorf("PR #52 should map to issue thread, got %+v", pr52)
+	}
+	if pr53 == nil || pr53.SlackThreadTs != "issue-thread-ts" {
+		t.Errorf("PR #53 should map to issue thread, got %+v", pr53)
+	}
+}
+
 func TestNotifier_Flush_RetriesForNewIssue_FindsThreadMapping(t *testing.T) {
 	// Simulates the race condition: agent creates issue, webhook fires,
 	// but the thread mapping is saved by the handler after a delay.

@@ -138,7 +138,10 @@ func TestExtractLinkedIssue(t *testing.T) {
 		{"in longer text", "This PR implements the feature.\n\nFixes #16\n\nAdded technical architecture section", 16},
 		{"no linked issue", "Just a regular PR body without any closing references", 0},
 		{"empty body", "", 0},
-		{"hash without keyword", "See issue #16 for details", 0},
+		{"hash without keyword falls back to ref", "See issue #16 for details", 16},
+		{"implements ref", "Implements #51 - forgot password feature", 51},
+		{"bare ref in body", "Created from #42", 42},
+		{"closing keyword preferred over bare ref", "See #99 for context. Fixes #10", 10},
 		{"multiple - takes first", "Fixes #10 and Closes #20", 10},
 	}
 
