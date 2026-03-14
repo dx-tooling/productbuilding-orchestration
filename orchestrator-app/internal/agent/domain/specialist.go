@@ -6,9 +6,27 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"text/template"
 )
+
+// reroutePattern matches [REROUTE:specialist_name] signals in specialist text output.
+var reroutePattern = regexp.MustCompile(`\[REROUTE:(\w+)\]`)
+
+// extractReroute returns the target specialist name if a reroute signal is present, or "".
+func extractReroute(text string) string {
+	m := reroutePattern.FindStringSubmatch(text)
+	if len(m) > 1 {
+		return m[1]
+	}
+	return ""
+}
+
+// stripReroute removes the [REROUTE:...] signal from text.
+func stripReroute(text string) string {
+	return strings.TrimSpace(reroutePattern.ReplaceAllString(text, ""))
+}
 
 // SpecialistConfig defines a specialist's prompt, tools, and iteration limit.
 type SpecialistConfig struct {
@@ -110,10 +128,22 @@ func (s *Specialist) Run(ctx context.Context, req RunRequest, prior *PriorStepCo
 				continue
 			}
 
-			return SpecialistResult{
+			result := SpecialistResult{
 				Text:        resp.Content,
 				SideEffects: s.tools.Effects(),
-			}, nil
+			}
+
+			// Check for reroute signal
+			if target := extractReroute(resp.Content); target != "" {
+				result.Text = stripReroute(resp.Content)
+				result.Reroute = target
+				slog.Info("specialist signaled reroute",
+					"specialist", s.config.Name,
+					"target", target,
+				)
+			}
+
+			return result, nil
 		}
 
 		// Tool calls

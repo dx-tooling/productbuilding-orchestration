@@ -28,13 +28,16 @@ var researcherFallback = RoutingDecision{
 }
 
 // Route makes one LLM call and returns a RoutingDecision.
-func (r *Router) Route(ctx context.Context, userText string, target targets.TargetConfig, linkedIssue *IssueContext) (RoutingDecision, error) {
+func (r *Router) Route(ctx context.Context, userText string, target targets.TargetConfig, linkedIssue *IssueContext, threadMessages []ThreadMessage) (RoutingDecision, error) {
 	systemPrompt := renderRouterPrompt(target.RepoOwner, target.RepoName)
 
 	userMsg := userText
 	if linkedIssue != nil {
 		userMsg += fmt.Sprintf("\n\n[This Slack thread is linked to GitHub issue #%d: %q (state: %s)]",
 			linkedIssue.Number, linkedIssue.Title, linkedIssue.State)
+	}
+	if summary := formatThreadSummaryForRouter(threadMessages); summary != "" {
+		userMsg += "\n\n" + summary
 	}
 
 	messages := []Message{
@@ -65,6 +68,45 @@ func (r *Router) Route(ctx context.Context, userText string, target targets.Targ
 	}
 
 	return decision, nil
+}
+
+// formatThreadSummaryForRouter builds a compact summary of the last few thread
+// messages so the router can resolve ambiguous follow-ups. Returns "" if there
+// are no messages to summarize.
+func formatThreadSummaryForRouter(msgs []ThreadMessage) string {
+	if len(msgs) == 0 {
+		return ""
+	}
+
+	const maxMessages = 5
+	const maxCharPerMsg = 200
+	const maxTotal = 2000
+
+	start := 0
+	if len(msgs) > maxMessages {
+		start = len(msgs) - maxMessages
+	}
+	recent := msgs[start:]
+
+	var sb strings.Builder
+	sb.WriteString("[Conversation history in this thread:\n")
+	for _, m := range recent {
+		role := "User"
+		if m.BotID != "" {
+			role = "Assistant"
+		}
+		text := m.Text
+		if len(text) > maxCharPerMsg {
+			text = text[:maxCharPerMsg] + "..."
+		}
+		line := fmt.Sprintf("- %s: %q\n", role, text)
+		if sb.Len()+len(line) > maxTotal {
+			break
+		}
+		sb.WriteString(line)
+	}
+	sb.WriteString("]")
+	return sb.String()
 }
 
 // codeFencePattern strips ```json ... ``` wrappers.

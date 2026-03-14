@@ -19,7 +19,7 @@ func TestRouter_SingleStepResearch(t *testing.T) {
 
 	decision, err := r.Route(context.Background(), "what issues are open?", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, nil)
+	}, nil, nil)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -42,7 +42,7 @@ func TestRouter_SingleStepIssueCreation(t *testing.T) {
 
 	decision, err := r.Route(context.Background(), "create an issue for dark mode", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, nil)
+	}, nil, nil)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -65,7 +65,7 @@ func TestRouter_MultiStep_CreateAndDelegate(t *testing.T) {
 
 	decision, err := r.Route(context.Background(), "create an issue and delegate to OpenCode", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, nil)
+	}, nil, nil)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -91,7 +91,7 @@ func TestRouter_MalformedJSON_FallsBackToResearcher(t *testing.T) {
 
 	decision, err := r.Route(context.Background(), "hello", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, nil)
+	}, nil, nil)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -114,7 +114,7 @@ func TestRouter_EmptySteps_FallsBackToResearcher(t *testing.T) {
 
 	decision, err := r.Route(context.Background(), "hello", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, nil)
+	}, nil, nil)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -135,7 +135,7 @@ func TestRouter_LLMError_PropagatesError(t *testing.T) {
 
 	_, err := r.Route(context.Background(), "hello", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, nil)
+	}, nil, nil)
 
 	if err == nil {
 		t.Fatal("expected error")
@@ -155,7 +155,7 @@ func TestRouter_IncludesLinkedIssueInPrompt(t *testing.T) {
 
 	_, err := r.Route(context.Background(), "what's the status?", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, &IssueContext{Number: 42, Title: "Login bug"})
+	}, &IssueContext{Number: 42, Title: "Login bug"}, nil)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -187,7 +187,7 @@ func TestRouter_PromptContainsRepoInfo(t *testing.T) {
 
 	_, err := r.Route(context.Background(), "hello", targets.TargetConfig{
 		RepoOwner: "myorg", RepoName: "myrepo",
-	}, nil)
+	}, nil, nil)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -218,7 +218,7 @@ func TestRouter_JSONWithTrailingText(t *testing.T) {
 
 	decision, err := r.Route(context.Background(), "close issue #7", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, nil)
+	}, nil, nil)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -241,7 +241,7 @@ func TestRouter_JSONInCodeFence(t *testing.T) {
 
 	decision, err := r.Route(context.Background(), "close issue #7", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, nil)
+	}, nil, nil)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -251,5 +251,44 @@ func TestRouter_JSONInCodeFence(t *testing.T) {
 	}
 	if decision.Steps[0].Specialist != "closer" {
 		t.Errorf("expected closer, got %s", decision.Steps[0].Specialist)
+	}
+}
+
+func TestRouter_ThreadHistoryIncludedInPrompt(t *testing.T) {
+	llm := &mockLLMClient{
+		responses: []ChatResponse{
+			{Content: `{"steps":[{"specialist":"issue_creator","params":{},"reasoning":"follow-up"}]}`, FinishReason: "stop"},
+		},
+	}
+	r := NewRouter(llm, "test-model")
+
+	threadMsgs := []ThreadMessage{
+		{User: "U001", Text: "I want to work on forgot password", Ts: "100.000"},
+		{User: "B001", Text: "I found issue #5 about password reset.", Ts: "100.001", BotID: "B001"},
+		{User: "U001", Text: "let's start fresh", Ts: "100.002"},
+	}
+
+	_, err := r.Route(context.Background(), "let's start fresh", targets.TargetConfig{
+		RepoOwner: "acme", RepoName: "widgets",
+	}, nil, threadMsgs)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(llm.requests) != 1 {
+		t.Fatalf("expected 1 LLM request, got %d", len(llm.requests))
+	}
+	// Verify thread history appears in the user message sent to the LLM
+	found := false
+	for _, msg := range llm.requests[0].Messages {
+		if strings.Contains(msg.Content, "Conversation history") &&
+			strings.Contains(msg.Content, "forgot password") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected thread history in router prompt")
 	}
 }

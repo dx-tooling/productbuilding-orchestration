@@ -476,6 +476,21 @@ func TestOrchestrator_ThreadContextFetched(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	// The router's LLM should have received thread context
+	if len(routerLLM.requests) == 0 {
+		t.Fatal("expected router LLM to be called")
+	}
+	routerFound := false
+	for _, msg := range routerLLM.requests[0].Messages {
+		if strings.Contains(msg.Content, "Conversation history") {
+			routerFound = true
+			break
+		}
+	}
+	if !routerFound {
+		t.Error("expected thread context in router's LLM request")
+	}
+
 	// The specialist's LLM should have received thread context
 	if len(specialistLLM.requests) == 0 {
 		t.Fatal("expected specialist LLM to be called")
@@ -580,6 +595,66 @@ func TestOrchestrator_MaxSteps_TruncatesExcessiveRouting(t *testing.T) {
 	// Last text should be from the 5th specialist, not the 8th
 	if resp.Text != "response 5" {
 		t.Errorf("expected response from 5th step, got: %s", resp.Text)
+	}
+}
+
+func TestOrchestrator_Reroute(t *testing.T) {
+	// Router sends to researcher; researcher signals reroute to issue_creator;
+	// orchestrator should invoke issue_creator and return its result.
+	routerLLM := &mockLLMClient{
+		responses: []ChatResponse{
+			{Content: `{"steps":[{"specialist":"researcher","params":{},"reasoning":"info"}]}`, FinishReason: "stop"},
+		},
+	}
+	// Researcher responds with a reroute signal
+	researcherLLM := &mockLLMClient{
+		responses: []ChatResponse{
+			{Content: "[REROUTE:issue_creator]", FinishReason: "stop"},
+		},
+	}
+	// Issue creator handles the request
+	issueCreatorLLM := &mockLLMClient{
+		responses: []ChatResponse{
+			{
+				ToolCalls: []ToolCall{{ID: "c1", Type: "function", Function: FunctionCall{
+					Name: "create_github_issue", Arguments: `{"title":"New issue","body":"Details"}`,
+				}}},
+				FinishReason: "tool_calls",
+			},
+			{Content: "Created issue #50!", FinishReason: "stop"},
+		},
+	}
+	combinedLLM := &sequentialMockLLM{clients: []*mockLLMClient{routerLLM, researcherLLM, issueCreatorLLM}}
+
+	tools := &mockToolExecutor{
+		results: map[string]string{
+			"create_github_issue": "Created issue #50: New issue\nURL: https://github.com/acme/widgets/issues/50",
+		},
+	}
+	tools.onExecute = func(call ToolCall) {
+		if call.Function.Name == "create_github_issue" {
+			tools.effects.CreatedIssues = append(tools.effects.CreatedIssues, CreatedIssue{Number: 50, Title: "New issue"})
+		}
+	}
+
+	orch := NewOrchestrator(combinedLLM, tools, nil, "test-model", OrchestratorConfig{})
+
+	resp, err := orch.Run(context.Background(), RunRequest{
+		ChannelID: "C123",
+		MessageTs: "123.456",
+		UserText:  "let's start fresh",
+		UserName:  "alice",
+		Target:    agentTarget,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(resp.Text, "#50") {
+		t.Errorf("expected issue_creator response, got: %s", resp.Text)
+	}
+	if len(resp.SideEffects.CreatedIssues) != 1 {
+		t.Errorf("expected 1 created issue from rerouted specialist, got %d", len(resp.SideEffects.CreatedIssues))
 	}
 }
 

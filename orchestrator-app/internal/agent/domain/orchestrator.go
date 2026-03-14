@@ -110,18 +110,7 @@ func (o *Orchestrator) Run(ctx context.Context, req RunRequest) (RunResponse, er
 		"user", req.UserName,
 	)
 
-	// Route
-	decision, err := o.router.Route(ctx, req.UserText, req.Target, req.LinkedIssue)
-	if err != nil {
-		return RunResponse{}, fmt.Errorf("orchestrator routing: %w", err)
-	}
-
-	slog.Info("orchestrator: routing decision",
-		"steps", len(decision.Steps),
-		"channel", req.ChannelID,
-	)
-
-	// Pre-fetch thread context once for all specialists
+	// Pre-fetch thread context once (for router AND specialists)
 	if req.ThreadTs != "" && req.ThreadMessages == nil && o.slackFetcher != nil {
 		fetched, fetchErr := o.slackFetcher.GetThreadReplies(ctx, req.Target.SlackBotToken, req.ChannelID, req.ThreadTs)
 		if fetchErr != nil {
@@ -130,6 +119,17 @@ func (o *Orchestrator) Run(ctx context.Context, req RunRequest) (RunResponse, er
 			req.ThreadMessages = fetched
 		}
 	}
+
+	// Route (now with thread context)
+	decision, err := o.router.Route(ctx, req.UserText, req.Target, req.LinkedIssue, req.ThreadMessages)
+	if err != nil {
+		return RunResponse{}, fmt.Errorf("orchestrator routing: %w", err)
+	}
+
+	slog.Info("orchestrator: routing decision",
+		"steps", len(decision.Steps),
+		"channel", req.ChannelID,
+	)
 
 	// Execute specialists in sequence
 	var mergedEffects SideEffects
@@ -173,6 +173,25 @@ func (o *Orchestrator) Run(ctx context.Context, req RunRequest) (RunResponse, er
 		result, err := specialist.Run(ctx, stepReq, prior)
 		if err != nil {
 			return RunResponse{}, fmt.Errorf("specialist %s: %w", specialist.config.Name, err)
+		}
+
+		// Handle reroute: if the specialist signals a different specialist should handle this
+		if result.Reroute != "" {
+			if rerouteSpec, ok := o.specialists[result.Reroute]; ok {
+				slog.Info("orchestrator: rerouting from specialist",
+					"from", specialist.config.Name,
+					"to", result.Reroute,
+					"channel", req.ChannelID,
+				)
+				result, err = rerouteSpec.Run(ctx, stepReq, nil)
+				if err != nil {
+					return RunResponse{}, fmt.Errorf("rerouted specialist %s: %w", result.Reroute, err)
+				}
+			} else {
+				slog.Warn("orchestrator: reroute target not found, keeping original result",
+					"target", result.Reroute,
+				)
+			}
 		}
 
 		// Merge side effects

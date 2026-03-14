@@ -44,7 +44,26 @@ User: "Implement the login feature" (thread linked to issue #7)
 {"steps":[{"specialist":"delegator","params":{"number":"7"},"reasoning":"delegate to OpenCode on linked issue"}]}
 
 User: "What have we discussed recently?"
-{"steps":[{"specialist":"researcher","params":{},"reasoning":"user wants conversation history"}]}`, repoOwner, repoName)
+{"steps":[{"specialist":"researcher","params":{},"reasoning":"user wants conversation history"}]}
+
+Follow-up examples (when conversation history is provided):
+
+User: "let's start fresh" (after discussing an existing issue)
+{"steps":[{"specialist":"issue_creator","params":{},"reasoning":"user wants to create a new issue from scratch"}]}
+
+User: "yes, do it"
+{"steps":[{"specialist":"delegator","params":{},"reasoning":"user confirms action from prior discussion"}]}
+
+User: "go ahead and delegate that"
+{"steps":[{"specialist":"delegator","params":{},"reasoning":"user wants to delegate the discussed issue"}]}
+
+User: "actually, just close it"
+{"steps":[{"specialist":"closer","params":{},"reasoning":"user wants to close the discussed issue"}]}
+
+User: "can you create a new one instead?"
+{"steps":[{"specialist":"issue_creator","params":{},"reasoning":"user wants a new issue rather than modifying existing"}]}
+
+When conversation history is provided, use it to resolve ambiguous follow-ups. Prefer action specialists over researcher when the user is requesting an action.`, repoOwner, repoName)
 }
 
 // --- Specialist prompts ---
@@ -61,6 +80,8 @@ Steps:
 
 Write clear titles and detailed descriptions. Include context from the user's request in the issue body.
 
+Never mention internal routing, specialists, agents, or tell the user to "contact" another agent. You are the product — respond naturally.
+
 When referring to issues in your response, ALWAYS include a clickable link: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>`))
 
 var delegatorPromptTmpl = template.Must(template.New("delegator").Parse(
@@ -76,6 +97,8 @@ Rules:
 
 If you need the issue details first, use get_github_issue.
 
+Never mention internal routing, specialists, agents, or tell the user to "contact" another agent. You are the product — respond naturally.
+
 When referring to issues, use: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>`))
 
 var commenterPromptTmpl = template.Must(template.New("commenter").Parse(
@@ -85,6 +108,8 @@ Your ONLY job is to post a comment on a GitHub issue. You MUST call add_github_c
 
 Do NOT use "/opencode" prefix — that is for delegation, not plain comments.
 If you need the issue details first, use get_github_issue.
+
+Never mention internal routing, specialists, agents, or tell the user to "contact" another agent. You are the product — respond naturally.
 
 When referring to issues, use: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>`))
 
@@ -102,6 +127,10 @@ Available actions:
 - Read file contents
 - List recent conversations in the current channel
 
+If the user asks you to create, modify, close, or delegate something, respond ONLY with [REROUTE:issue_creator] (for creating), [REROUTE:delegator] (for delegating), [REROUTE:commenter] (for commenting), or [REROUTE:closer] (for closing). Do not explain why you cannot do it.
+
+Never mention internal routing, specialists, agents, or tell the user to "contact" another agent. You are the product — respond naturally.
+
 Present findings clearly and concisely using Slack mrkdwn formatting.
 When referring to issues, use: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>`))
 
@@ -111,5 +140,7 @@ var closerPromptTmpl = template.Must(template.New("closer").Parse(
 Your ONLY job is to close GitHub issues or pull requests. You MUST call close_github_issue or close_github_pr — never claim you closed something without receiving a successful tool result.
 
 If you need to verify the issue/PR exists and is open, use get_github_issue first.
+
+Never mention internal routing, specialists, agents, or tell the user to "contact" another agent. You are the product — respond naturally.
 
 When referring to issues, use: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>`))

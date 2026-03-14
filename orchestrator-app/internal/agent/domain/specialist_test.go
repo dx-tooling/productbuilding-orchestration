@@ -449,3 +449,68 @@ func TestSpecialist_SideEffectsReturned(t *testing.T) {
 		t.Errorf("expected issue #99, got #%d", result.SideEffects.CreatedIssues[0].Number)
 	}
 }
+
+func TestExtractReroute(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"[REROUTE:issue_creator]", "issue_creator"},
+		{"Some text [REROUTE:delegator] more text", "delegator"},
+		{"No reroute here", ""},
+		{"[REROUTE:closer]", "closer"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := extractReroute(tt.input)
+		if got != tt.want {
+			t.Errorf("extractReroute(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestStripReroute(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"[REROUTE:issue_creator]", ""},
+		{"Some text [REROUTE:delegator] more text", "Some text  more text"},
+		{"No reroute here", "No reroute here"},
+		{"Create this please [REROUTE:issue_creator]", "Create this please"},
+	}
+	for _, tt := range tests {
+		got := stripReroute(tt.input)
+		if got != tt.want {
+			t.Errorf("stripReroute(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestSpecialist_RerouteSignalPopulated(t *testing.T) {
+	llm := &mockLLMClient{
+		responses: []ChatResponse{
+			{Content: "[REROUTE:issue_creator]", FinishReason: "stop"},
+		},
+	}
+	tools := &mockToolExecutor{}
+	s := newTestSpecialist(llm, tools)
+
+	result, err := s.Run(context.Background(), RunRequest{
+		ChannelID: "C123",
+		MessageTs: "123.456",
+		UserText:  "Create an issue please",
+		UserName:  "alice",
+		Target:    agentTarget,
+	}, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Reroute != "issue_creator" {
+		t.Errorf("expected Reroute=issue_creator, got %q", result.Reroute)
+	}
+	if result.Text != "" {
+		t.Errorf("expected empty text after stripping reroute, got %q", result.Text)
+	}
+}

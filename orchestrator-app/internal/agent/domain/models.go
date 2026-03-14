@@ -131,6 +131,7 @@ type PriorStepContext struct {
 type SpecialistResult struct {
 	Text        string
 	SideEffects SideEffects
+	Reroute     string // If non-empty, the orchestrator should invoke this specialist instead
 }
 
 // PromptData holds the values injected into system prompt templates.
