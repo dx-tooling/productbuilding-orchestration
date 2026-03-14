@@ -116,6 +116,17 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 		thread = nil
 	}
 
+	// Retry once for new issue/PR events: the agent may have created the issue
+	// via the GitHub API and the webhook arrived before the handler saved the
+	// thread mapping. A short wait lets the handler catch up.
+	if thread == nil && (event.Type == slackfacade.EventIssueOpened || event.Type == slackfacade.EventPROpened) {
+		time.Sleep(5 * time.Second)
+		thread, err = n.repository.FindThreadByNumber(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
+		if err != nil {
+			thread = nil
+		}
+	}
+
 	// If no thread found and we have a linked issue (e.g. PR body says "Fixes #16"),
 	// try to find the thread by the linked issue number
 	if thread == nil && event.LinkedIssueNumber > 0 && event.LinkedIssueNumber != event.IssueNumber {

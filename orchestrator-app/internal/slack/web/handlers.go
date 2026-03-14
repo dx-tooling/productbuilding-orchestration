@@ -261,29 +261,8 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 		replyTs = event.ThreadTs // in-thread mention → reply in existing thread
 	}
 
-	// Synthesize fallback if agent returned no text but did create/delegate issues
-	if resp.Text == "" && len(resp.SideEffects.CreatedIssues) > 0 {
-		issue := resp.SideEffects.CreatedIssues[0]
-		resp.Text = fmt.Sprintf("Created <https://github.com/%s/%s/issues/%d|#%d>: %s",
-			target.RepoOwner, target.RepoName, issue.Number, issue.Number, issue.Title)
-	}
-	if resp.Text == "" && len(resp.SideEffects.DelegatedIssues) > 0 {
-		var parts []string
-		for _, num := range resp.SideEffects.DelegatedIssues {
-			parts = append(parts, fmt.Sprintf("<https://github.com/%s/%s/issues/%d|#%d>",
-				target.RepoOwner, target.RepoName, num, num))
-		}
-		resp.Text = fmt.Sprintf("Delegated to %s", strings.Join(parts, ", "))
-	}
-
-	if resp.Text != "" {
-		if err := h.slackClient.PostToThread(ctx, target.SlackBotToken, event.Channel, replyTs,
-			domain.MessageBlock{Text: resp.Text}); err != nil {
-			slog.Error("failed to post thread reply", "error", err, "channel", event.Channel, "thread_ts", replyTs)
-		}
-	}
-
-	// Save thread mapping for any created issues
+	// Save thread mappings FIRST so the notifier can find them when the
+	// GitHub webhook fires (race: webhook may arrive before agent returns).
 	var firstCreatedIssueNumber int
 	mappedIssues := map[int]bool{}
 	for _, issue := range resp.SideEffects.CreatedIssues {
@@ -307,7 +286,6 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 		}
 	}
 
-	// Save thread mapping for delegated issues (skip if already mapped via CreatedIssues)
 	for _, issueNum := range resp.SideEffects.DelegatedIssues {
 		if mappedIssues[issueNum] {
 			continue
@@ -326,6 +304,28 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 			slog.Warn("failed to save delegation thread mapping", "error", err, "issue", issueNum)
 		} else {
 			slog.Info("saved delegation thread mapping", "issue", issueNum, "thread_ts", replyTs)
+		}
+	}
+
+	// Synthesize fallback if agent returned no text but did create/delegate issues
+	if resp.Text == "" && len(resp.SideEffects.CreatedIssues) > 0 {
+		issue := resp.SideEffects.CreatedIssues[0]
+		resp.Text = fmt.Sprintf("Created <https://github.com/%s/%s/issues/%d|#%d>: %s",
+			target.RepoOwner, target.RepoName, issue.Number, issue.Number, issue.Title)
+	}
+	if resp.Text == "" && len(resp.SideEffects.DelegatedIssues) > 0 {
+		var parts []string
+		for _, num := range resp.SideEffects.DelegatedIssues {
+			parts = append(parts, fmt.Sprintf("<https://github.com/%s/%s/issues/%d|#%d>",
+				target.RepoOwner, target.RepoName, num, num))
+		}
+		resp.Text = fmt.Sprintf("Delegated to %s", strings.Join(parts, ", "))
+	}
+
+	if resp.Text != "" {
+		if err := h.slackClient.PostToThread(ctx, target.SlackBotToken, event.Channel, replyTs,
+			domain.MessageBlock{Text: resp.Text}); err != nil {
+			slog.Error("failed to post thread reply", "error", err, "channel", event.Channel, "thread_ts", replyTs)
 		}
 	}
 

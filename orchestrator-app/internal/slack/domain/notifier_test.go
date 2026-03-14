@@ -417,6 +417,70 @@ func TestNotifier_Notify_Debouncing(t *testing.T) {
 	}
 }
 
+func TestNotifier_Flush_RetriesForNewIssue_FindsThreadMapping(t *testing.T) {
+	// Simulates the race condition: agent creates issue, webhook fires,
+	// but the thread mapping is saved by the handler after a delay.
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer)
+
+	target := targets.TargetConfig{
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		SlackChannel:  "#productbuilding-test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventIssueOpened,
+		RepoOwner:   "luminor-project",
+		RepoName:    "test-repo",
+		IssueNumber: 50,
+		Title:       "Forgot Password",
+		Author:      "PrdctBldr",
+	}
+
+	// Buffer the event
+	notifier.Notify(context.Background(), event, target)
+
+	// Simulate handler saving the mapping after a delay (during the retry window)
+	go func() {
+		time.Sleep(2 * time.Second)
+		repo.SaveThread(context.Background(), &SlackThread{
+			ID:            "agent-thread-id",
+			RepoOwner:     "luminor-project",
+			RepoName:      "test-repo",
+			GithubIssueID: 50,
+			SlackChannel:  "#productbuilding-test",
+			SlackThreadTs: "agent-thread-ts",
+			ThreadType:    "issue",
+		})
+	}()
+
+	// Execute the debounced flush — it will retry and find the mapping
+	debouncer.executeAll()
+
+	// Should post to the existing thread, NOT create a new parent message
+	foundThreadReply := false
+	for _, msg := range client.postedMessages {
+		if msg.Thread == "agent-thread-ts" {
+			foundThreadReply = true
+			break
+		}
+	}
+	if !foundThreadReply {
+		t.Errorf("Expected thread reply to agent-thread-ts, got messages: %+v", client.postedMessages)
+	}
+
+	// Should NOT have created a new channel-level message
+	for _, msg := range client.postedMessages {
+		if msg.Thread == "" && strings.Contains(msg.Text, "#50") {
+			t.Errorf("Should not have created a new channel message, got: %+v", msg)
+		}
+	}
+}
+
 func TestSanitizeForCodeBlock(t *testing.T) {
 	tests := []struct {
 		name  string
