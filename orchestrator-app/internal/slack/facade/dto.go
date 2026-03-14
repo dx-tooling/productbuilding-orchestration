@@ -53,6 +53,11 @@ func (e NotificationEvent) IsPR() bool {
 	}
 }
 
+// IsComment returns true if the event is a comment (added or edited)
+func (e NotificationEvent) IsComment() bool {
+	return e.Type == EventCommentAdded || e.Type == EventCommentEdited
+}
+
 // IssueOrPR returns the string "Issue" or "Pull Request"
 func (e NotificationEvent) IssueOrPR() string {
 	if e.IsPR() {

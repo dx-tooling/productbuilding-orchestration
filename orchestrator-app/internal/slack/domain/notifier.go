@@ -36,13 +36,20 @@ type Debouncer interface {
 	Debounce(key string, wait time.Duration, fn func())
 }
 
+// pendingFlush separates status events (deduped by overwrite) from comments (queued).
+type pendingFlush struct {
+	status   *slackfacade.NotificationEvent   // latest lifecycle/status event (overwrite)
+	comments []*slackfacade.NotificationEvent // all comments in arrival order (append)
+}
+
 // Notifier sends notifications to Slack with debouncing and emoji reactions
 type Notifier struct {
 	client     SlackClient
 	repository ThreadRepository
 	debouncer  Debouncer
-	buffer     map[string]*slackfacade.NotificationEvent // key: channel#issue -> latest event
-	reactions  map[string]string                         // threadTs -> current emoji
+	pending    map[string]*pendingFlush // key: channel#issue -> two-lane buffer
+	reactions  map[string]string        // threadTs -> current emoji
+	retryWait  time.Duration            // wait before retry lookups (default 5s)
 	mu         sync.Mutex
 }
 
@@ -52,8 +59,9 @@ func NewNotifier(client SlackClient, repository ThreadRepository, debouncer Debo
 		client:     client,
 		repository: repository,
 		debouncer:  debouncer,
-		buffer:     make(map[string]*slackfacade.NotificationEvent),
+		pending:    make(map[string]*pendingFlush),
 		reactions:  make(map[string]string),
+		retryWait:  5 * time.Second,
 	}
 }
 
@@ -66,9 +74,18 @@ func (n *Notifier) Notify(ctx context.Context, event slackfacade.NotificationEve
 
 	key := fmt.Sprintf("%s#%d", target.SlackChannel, event.IssueNumber)
 
-	// Buffer the event (keep only latest)
+	// Buffer event in two-lane pending: comments queue, status overwrites
 	n.mu.Lock()
-	n.buffer[key] = &event
+	p := n.pending[key]
+	if p == nil {
+		p = &pendingFlush{}
+		n.pending[key] = p
+	}
+	if event.IsComment() {
+		p.comments = append(p.comments, &event)
+	} else {
+		p.status = &event
+	}
 	currentEmoji := n.reactions[event.ThreadTs]
 	n.mu.Unlock()
 
@@ -81,14 +98,7 @@ func (n *Notifier) Notify(ctx context.Context, event slackfacade.NotificationEve
 		n.reactions[event.ThreadTs] = event.Emoji
 	}
 
-	// Comments should be posted immediately (each is unique content),
-	// while status updates benefit from debouncing (rapid state transitions).
-	if event.Type == slackfacade.EventCommentAdded {
-		go n.flush(ctx, key, target)
-		return nil
-	}
-
-	// Debounce the message posting
+	// All events go through debouncer — comments no longer bypass
 	n.debouncer.Debounce(key, 2*time.Second, func() {
 		n.flush(ctx, key, target)
 	})
@@ -96,142 +106,178 @@ func (n *Notifier) Notify(ctx context.Context, event slackfacade.NotificationEve
 	return nil
 }
 
-// flush sends the buffered notification
+// flush sends the buffered notification (status-first, then comments)
 func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetConfig) {
 	n.mu.Lock()
-	event := n.buffer[key]
-	delete(n.buffer, key)
+	p := n.pending[key]
+	delete(n.pending, key)
 	n.mu.Unlock()
 
-	if event == nil {
+	if p == nil {
 		return
 	}
 
-	// Find existing thread for this GitHub number
-	thread, err := n.repository.FindThreadByNumber(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
-	if err != nil {
-		thread = nil
-	}
+	var thread *SlackThread
 
-	// Check linked issue before retry sleep — this is the common path for
-	// agent-created PRs that reference a parent issue (e.g. "Fixes #16").
-	if thread == nil && event.LinkedIssueNumber > 0 && event.LinkedIssueNumber != event.IssueNumber {
-		thread, err = n.repository.FindThreadByNumber(ctx, event.RepoOwner, event.RepoName, event.LinkedIssueNumber)
-		if err != nil {
-			thread = nil
-		}
-		if thread != nil {
-			// Found the linked issue's thread — create a new mapping for this PR
-			// so future events (comments, merges) find the thread directly.
-			if event.IsPR() {
-				prThread := &SlackThread{
-					ID:            uuid.New().String(),
-					RepoOwner:     thread.RepoOwner,
-					RepoName:      thread.RepoName,
-					GithubPRID:    event.IssueNumber,
-					SlackChannel:  thread.SlackChannel,
-					SlackThreadTs: thread.SlackThreadTs,
-					SlackParentTs: thread.SlackParentTs,
-					ThreadType:    "pull_request",
-				}
-				if err := n.repository.SaveThread(ctx, prThread); err != nil {
-					slog.Warn("failed to save PR thread mapping", "error", err, "pr", event.IssueNumber)
-				}
-			}
-			slog.Info("linked PR to existing issue thread",
-				"pr", event.IssueNumber,
-				"linkedIssue", event.LinkedIssueNumber,
-				"repo", event.RepoOwner+"/"+event.RepoName,
-			)
-		}
-	}
+	// Phase 1: process status event (creates/finds thread)
+	if p.status != nil {
+		event := p.status
 
-	// Retry once for new issue/PR events when no thread found yet: the agent
-	// may have created the issue via GitHub API and the webhook arrived before
-	// the handler saved the thread mapping.
-	if thread == nil && (event.Type == slackfacade.EventIssueOpened || event.Type == slackfacade.EventPROpened) {
-		time.Sleep(5 * time.Second)
+		// Find existing thread for this GitHub number
+		var err error
 		thread, err = n.repository.FindThreadByNumber(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
 		if err != nil {
 			thread = nil
 		}
+
+		// Check linked issue before retry sleep — this is the common path for
+		// agent-created PRs that reference a parent issue (e.g. "Fixes #16").
+		if thread == nil && event.LinkedIssueNumber > 0 && event.LinkedIssueNumber != event.IssueNumber {
+			thread, err = n.repository.FindThreadByNumber(ctx, event.RepoOwner, event.RepoName, event.LinkedIssueNumber)
+			if err != nil {
+				thread = nil
+			}
+			if thread != nil {
+				// Found the linked issue's thread — create a new mapping for this PR
+				// so future events (comments, merges) find the thread directly.
+				if event.IsPR() {
+					prThread := &SlackThread{
+						ID:            uuid.New().String(),
+						RepoOwner:     thread.RepoOwner,
+						RepoName:      thread.RepoName,
+						GithubPRID:    event.IssueNumber,
+						SlackChannel:  thread.SlackChannel,
+						SlackThreadTs: thread.SlackThreadTs,
+						SlackParentTs: thread.SlackParentTs,
+						ThreadType:    "pull_request",
+					}
+					if err := n.repository.SaveThread(ctx, prThread); err != nil {
+						slog.Warn("failed to save PR thread mapping", "error", err, "pr", event.IssueNumber)
+					}
+				}
+				slog.Info("linked PR to existing issue thread",
+					"pr", event.IssueNumber,
+					"linkedIssue", event.LinkedIssueNumber,
+					"repo", event.RepoOwner+"/"+event.RepoName,
+				)
+			}
+		}
+
+		// Retry once for new issue/PR events when no thread found yet: the agent
+		// may have created the issue via GitHub API and the webhook arrived before
+		// the handler saved the thread mapping.
+		if thread == nil && (event.Type == slackfacade.EventIssueOpened || event.Type == slackfacade.EventPROpened) {
+			time.Sleep(n.retryWait)
+			thread, err = n.repository.FindThreadByNumber(ctx, event.RepoOwner, event.RepoName, event.IssueNumber)
+			if err != nil {
+				thread = nil
+			}
+		}
+
+		newThread := false
+		if thread == nil {
+			newThread = true
+			parentMsg := formatParentMessage(*event)
+			parentTs, err := n.client.PostMessage(ctx, target.SlackBotToken, target.SlackChannel, parentMsg)
+			if err != nil {
+				slog.Warn("failed to create slack thread",
+					"error", err,
+					"channel", target.SlackChannel,
+					"repo", event.RepoOwner+"/"+event.RepoName,
+					"issue", event.IssueNumber,
+				)
+				return
+			}
+
+			var issueID, prID int
+			if event.IsPR() {
+				prID = event.IssueNumber
+			} else {
+				issueID = event.IssueNumber
+			}
+
+			thread = &SlackThread{
+				ID:            uuid.New().String(),
+				RepoOwner:     event.RepoOwner,
+				RepoName:      event.RepoName,
+				GithubIssueID: issueID,
+				GithubPRID:    prID,
+				SlackChannel:  target.SlackChannel,
+				SlackThreadTs: parentTs,
+				SlackParentTs: parentTs,
+				ThreadType:    event.ThreadType(),
+			}
+
+			if err := n.repository.SaveThread(ctx, thread); err != nil {
+				slog.Warn("failed to save slack thread", "error", err)
+			}
+
+			n.mu.Lock()
+			n.reactions[parentTs] = event.Emoji
+			n.mu.Unlock()
+		} else if event.IsPR() && thread.GithubPRID == 0 && thread.GithubIssueID == event.IssueNumber {
+			// Same GitHub number was first seen as an issue, now arriving as a PR
+			// (PRs are issues in GitHub and share the numbering space).
+			thread.GithubPRID = event.IssueNumber
+			thread.ThreadType = "pull_request"
+			if err := n.repository.SaveThread(ctx, thread); err != nil {
+				slog.Warn("failed to update thread type", "error", err)
+			}
+		}
+
+		// Post status update to thread (only if not the first message creating the thread)
+		if !newThread {
+			updateMsg := formatEventMessage(*event)
+			if err := n.client.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, updateMsg); err != nil {
+				slog.Warn("failed to post to slack thread",
+					"error", err,
+					"channel", thread.SlackChannel,
+					"thread", thread.SlackThreadTs,
+				)
+			}
+		}
 	}
 
-	// Comments should only land in existing threads — never create a new
-	// channel-level message. This prevents a race where a bot comment on a
-	// PR arrives before the PR-opened handler creates the thread mapping.
-	if thread == nil && event.Type == slackfacade.EventCommentAdded {
-		slog.Info("skipping comment notification: no existing thread",
-			"repo", event.RepoOwner+"/"+event.RepoName,
-			"number", event.IssueNumber,
-			"author", event.Author,
-		)
-		return
-	}
+	// Phase 2: process comments
+	if len(p.comments) > 0 {
+		// If thread wasn't resolved in phase 1, look it up
+		if thread == nil {
+			ref := p.comments[0]
+			var err error
+			thread, err = n.repository.FindThreadByNumber(ctx, ref.RepoOwner, ref.RepoName, ref.IssueNumber)
+			if err != nil {
+				thread = nil
+			}
+			// Retry once — covers the case where another handler is creating
+			// the thread concurrently (e.g. agent created the issue via API).
+			if thread == nil {
+				time.Sleep(n.retryWait)
+				thread, err = n.repository.FindThreadByNumber(ctx, ref.RepoOwner, ref.RepoName, ref.IssueNumber)
+				if err != nil {
+					thread = nil
+				}
+			}
+		}
 
-	newThread := false
-	if thread == nil {
-		newThread = true
-		parentMsg := formatParentMessage(*event)
-		parentTs, err := n.client.PostMessage(ctx, target.SlackBotToken, target.SlackChannel, parentMsg)
-		if err != nil {
-			slog.Warn("failed to create slack thread",
-				"error", err,
-				"channel", target.SlackChannel,
-				"repo", event.RepoOwner+"/"+event.RepoName,
-				"issue", event.IssueNumber,
+		if thread == nil {
+			slog.Info("skipping comment notifications: no thread found",
+				"repo", p.comments[0].RepoOwner+"/"+p.comments[0].RepoName,
+				"number", p.comments[0].IssueNumber,
+				"count", len(p.comments),
 			)
 			return
 		}
 
-		var issueID, prID int
-		if event.IsPR() {
-			prID = event.IssueNumber
-		} else {
-			issueID = event.IssueNumber
+		for _, comment := range p.comments {
+			updateMsg := formatEventMessage(*comment)
+			if err := n.client.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, updateMsg); err != nil {
+				slog.Warn("failed to post comment to slack thread",
+					"error", err,
+					"channel", thread.SlackChannel,
+					"thread", thread.SlackThreadTs,
+				)
+			}
 		}
-
-		thread = &SlackThread{
-			ID:            uuid.New().String(),
-			RepoOwner:     event.RepoOwner,
-			RepoName:      event.RepoName,
-			GithubIssueID: issueID,
-			GithubPRID:    prID,
-			SlackChannel:  target.SlackChannel,
-			SlackThreadTs: parentTs,
-			SlackParentTs: parentTs,
-			ThreadType:    event.ThreadType(),
-		}
-
-		if err := n.repository.SaveThread(ctx, thread); err != nil {
-			slog.Warn("failed to save slack thread", "error", err)
-		}
-
-		n.mu.Lock()
-		n.reactions[parentTs] = event.Emoji
-		n.mu.Unlock()
-	} else if event.IsPR() && thread.GithubPRID == 0 && thread.GithubIssueID == event.IssueNumber {
-		// Same GitHub number was first seen as an issue, now arriving as a PR
-		// (PRs are issues in GitHub and share the numbering space).
-		thread.GithubPRID = event.IssueNumber
-		thread.ThreadType = "pull_request"
-		if err := n.repository.SaveThread(ctx, thread); err != nil {
-			slog.Warn("failed to update thread type", "error", err)
-		}
-	}
-
-	// Post update to thread (only if not the first message creating the thread)
-	if newThread {
-		return // Parent message already posted as update
-	}
-
-	updateMsg := formatEventMessage(*event)
-	if err := n.client.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, updateMsg); err != nil {
-		slog.Warn("failed to post to slack thread",
-			"error", err,
-			"channel", thread.SlackChannel,
-			"thread", thread.SlackThreadTs,
-		)
 	}
 }
 

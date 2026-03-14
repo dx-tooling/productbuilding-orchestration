@@ -175,6 +175,7 @@ func (m *mockDebouncer) executeAll() {
 	for i, c := range m.calls {
 		calls[i] = c.fn
 	}
+	m.calls = m.calls[:0]
 	m.mu.Unlock()
 
 	for _, fn := range calls {
@@ -620,6 +621,7 @@ func TestNotifier_CommentOnUnknownIssue_NoNewThread(t *testing.T) {
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
 	notifier := NewNotifier(client, repo, debouncer)
+	notifier.retryWait = 10 * time.Millisecond
 
 	target := targets.TargetConfig{
 		RepoOwner:     "luminor-project",
@@ -638,16 +640,10 @@ func TestNotifier_CommentOnUnknownIssue_NoNewThread(t *testing.T) {
 	}
 
 	notifier.Notify(context.Background(), event, target)
-	// Comments flush immediately via goroutine; give it a moment
-	time.Sleep(50 * time.Millisecond)
+	debouncer.executeAll()
 
-	// Read under lock since flush runs in a goroutine for comments
-	client.mu.Lock()
-	msgCount := len(client.postedMessages)
-	client.mu.Unlock()
-
-	if msgCount != 0 {
-		t.Errorf("Expected no messages for comment on unknown issue, got %d", msgCount)
+	if len(client.postedMessages) != 0 {
+		t.Errorf("Expected no messages for comment on unknown issue, got %d", len(client.postedMessages))
 	}
 }
 
@@ -685,22 +681,13 @@ func TestNotifier_CommentOnKnownIssue_PostsToThread(t *testing.T) {
 	}
 
 	notifier.Notify(context.Background(), event, target)
-	time.Sleep(50 * time.Millisecond)
+	debouncer.executeAll()
 
-	// Read under lock since flush runs in a goroutine for comments
-	client.mu.Lock()
-	msgCount := len(client.postedMessages)
-	var thread string
-	if msgCount > 0 {
-		thread = client.postedMessages[0].Thread
+	if len(client.postedMessages) != 1 {
+		t.Fatalf("Expected 1 message, got %d", len(client.postedMessages))
 	}
-	client.mu.Unlock()
-
-	if msgCount != 1 {
-		t.Fatalf("Expected 1 message, got %d", msgCount)
-	}
-	if thread != "existing-thread-ts" {
-		t.Errorf("Expected reply in existing thread, got thread=%q", thread)
+	if client.postedMessages[0].Thread != "existing-thread-ts" {
+		t.Errorf("Expected reply in existing thread, got thread=%q", client.postedMessages[0].Thread)
 	}
 }
 
@@ -847,6 +834,342 @@ func TestFormatParentMessage_BodyInCodeBlock(t *testing.T) {
 	}
 	if strings.Contains(msg.Text, "[a link]") {
 		t.Error("Expected markdown link to be converted to plain text")
+	}
+}
+
+func TestNotifier_TwoComments_PreservedInOrder(t *testing.T) {
+	// Two comments on the same issue should both be posted in arrival order.
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer)
+
+	target := targets.TargetConfig{
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		SlackChannel:  "#productbuilding-test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	repo.SaveThread(context.Background(), &SlackThread{
+		ID:            "existing-id",
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		GithubIssueID: 42,
+		SlackChannel:  "#productbuilding-test",
+		SlackThreadTs: "thread-ts-42",
+		ThreadType:    "issue",
+	})
+
+	comment1 := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventCommentAdded,
+		RepoOwner:   "luminor-project",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+		Author:      "alice",
+		Body:        "first comment",
+	}
+	comment2 := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventCommentAdded,
+		RepoOwner:   "luminor-project",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+		Author:      "bob",
+		Body:        "second comment",
+	}
+
+	notifier.Notify(context.Background(), comment1, target)
+	notifier.Notify(context.Background(), comment2, target)
+	debouncer.executeAll()
+
+	if len(client.postedMessages) != 2 {
+		t.Fatalf("Expected 2 posted messages, got %d", len(client.postedMessages))
+	}
+	if !strings.Contains(client.postedMessages[0].Text, "first comment") {
+		t.Errorf("First message should contain 'first comment', got: %s", client.postedMessages[0].Text)
+	}
+	if !strings.Contains(client.postedMessages[1].Text, "second comment") {
+		t.Errorf("Second message should contain 'second comment', got: %s", client.postedMessages[1].Text)
+	}
+	if client.postedMessages[0].Thread != "thread-ts-42" || client.postedMessages[1].Thread != "thread-ts-42" {
+		t.Errorf("Both comments should be in thread thread-ts-42")
+	}
+}
+
+func TestNotifier_PROpenedPlusComment_SameBatch(t *testing.T) {
+	// PR opened + comment in the same debounce window: status creates thread,
+	// comment posts to it.
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer)
+	notifier.retryWait = 10 * time.Millisecond
+
+	target := targets.TargetConfig{
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		SlackChannel:  "#productbuilding-test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	prEvent := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventPROpened,
+		RepoOwner:   "luminor-project",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+		Title:       "Add feature",
+		Author:      "alice",
+	}
+	commentEvent := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventCommentAdded,
+		RepoOwner:   "luminor-project",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+		Author:      "bot",
+		Body:        "Deploy started",
+	}
+
+	notifier.Notify(context.Background(), prEvent, target)
+	notifier.Notify(context.Background(), commentEvent, target)
+	debouncer.executeAll()
+
+	// Should have 2 messages: parent (from PR) + thread reply (from comment)
+	if len(client.postedMessages) != 2 {
+		t.Fatalf("Expected 2 posted messages, got %d: %+v", len(client.postedMessages), client.postedMessages)
+	}
+	// First message is the parent (PostMessage, no thread)
+	if client.postedMessages[0].Thread != "" {
+		t.Errorf("First message should be a parent (no thread), got thread=%q", client.postedMessages[0].Thread)
+	}
+	// Second message is the comment (PostToThread)
+	if client.postedMessages[1].Thread == "" {
+		t.Error("Second message should be a thread reply")
+	}
+	if !strings.Contains(client.postedMessages[1].Text, "Deploy started") {
+		t.Errorf("Thread reply should contain comment body, got: %s", client.postedMessages[1].Text)
+	}
+}
+
+func TestNotifier_CommentBeforeLifecycle_SameBatch(t *testing.T) {
+	// Comment arrives before PR opened in the same batch — status should
+	// still be processed first (creates thread), then comment posts to it.
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer)
+	notifier.retryWait = 10 * time.Millisecond
+
+	target := targets.TargetConfig{
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		SlackChannel:  "#productbuilding-test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	// Comment arrives FIRST
+	commentEvent := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventCommentAdded,
+		RepoOwner:   "luminor-project",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+		Author:      "bot",
+		Body:        "Deploy started",
+	}
+	// PR opened arrives SECOND
+	prEvent := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventPROpened,
+		RepoOwner:   "luminor-project",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+		Title:       "Add feature",
+		Author:      "alice",
+	}
+
+	notifier.Notify(context.Background(), commentEvent, target)
+	notifier.Notify(context.Background(), prEvent, target)
+	debouncer.executeAll()
+
+	// Should have 2 messages: parent (from PR, processed first) + thread reply (comment)
+	if len(client.postedMessages) != 2 {
+		t.Fatalf("Expected 2 posted messages, got %d: %+v", len(client.postedMessages), client.postedMessages)
+	}
+	if client.postedMessages[0].Thread != "" {
+		t.Errorf("First message should be a parent, got thread=%q", client.postedMessages[0].Thread)
+	}
+	if client.postedMessages[1].Thread == "" {
+		t.Error("Second message should be a thread reply")
+	}
+}
+
+func TestNotifier_StatusDedup_StillWorks(t *testing.T) {
+	// Multiple status events should be deduped (only latest survives).
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer)
+	notifier.retryWait = 10 * time.Millisecond
+
+	target := targets.TargetConfig{
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		SlackChannel:  "#productbuilding-test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	event1 := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventPROpened,
+		RepoOwner:   "luminor-project",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+		Title:       "Add feature",
+		Author:      "alice",
+	}
+	event2 := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventPRReady,
+		RepoOwner:   "luminor-project",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+		Title:       "Add feature",
+		PreviewURL:  "https://preview.example.com",
+	}
+
+	notifier.Notify(context.Background(), event1, target)
+	notifier.Notify(context.Background(), event2, target)
+	debouncer.executeAll()
+
+	// PRReady overwrites PROpened; only 1 parent message created
+	if len(client.postedMessages) != 1 {
+		t.Fatalf("Expected 1 message (status dedup), got %d: %+v", len(client.postedMessages), client.postedMessages)
+	}
+	if !strings.Contains(client.postedMessages[0].Text, "*Pull Request #42*") {
+		t.Errorf("Expected parent message, got: %s", client.postedMessages[0].Text)
+	}
+}
+
+func TestNotifier_OrphanComment_RetriesGivesUp(t *testing.T) {
+	// A comment on an issue with no thread ever → 0 messages after retry.
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer)
+	notifier.retryWait = 10 * time.Millisecond
+
+	target := targets.TargetConfig{
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		SlackChannel:  "#productbuilding-test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventCommentAdded,
+		RepoOwner:   "luminor-project",
+		RepoName:    "test-repo",
+		IssueNumber: 99,
+		Author:      "bot",
+		Body:        "Orphan comment",
+	}
+
+	notifier.Notify(context.Background(), event, target)
+	debouncer.executeAll()
+
+	if len(client.postedMessages) != 0 {
+		t.Errorf("Expected 0 messages for orphan comment, got %d", len(client.postedMessages))
+	}
+}
+
+func TestNotifier_OrphanComment_RetriesFindsThread(t *testing.T) {
+	// A comment arrives with no thread, but the thread is created during the retry window.
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer)
+	notifier.retryWait = 200 * time.Millisecond
+
+	target := targets.TargetConfig{
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		SlackChannel:  "#productbuilding-test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventCommentAdded,
+		RepoOwner:   "luminor-project",
+		RepoName:    "test-repo",
+		IssueNumber: 50,
+		Author:      "bot",
+		Body:        "Deploy started",
+	}
+
+	notifier.Notify(context.Background(), event, target)
+
+	// Simulate thread being created during the retry window
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		repo.SaveThread(context.Background(), &SlackThread{
+			ID:            "late-thread-id",
+			RepoOwner:     "luminor-project",
+			RepoName:      "test-repo",
+			GithubIssueID: 50,
+			SlackChannel:  "#productbuilding-test",
+			SlackThreadTs: "late-thread-ts",
+			ThreadType:    "issue",
+		})
+	}()
+
+	debouncer.executeAll()
+
+	if len(client.postedMessages) != 1 {
+		t.Fatalf("Expected 1 message after retry found thread, got %d", len(client.postedMessages))
+	}
+	if client.postedMessages[0].Thread != "late-thread-ts" {
+		t.Errorf("Expected reply in late-thread-ts, got thread=%q", client.postedMessages[0].Thread)
+	}
+}
+
+func TestNotifier_FlushIdempotent(t *testing.T) {
+	// Calling flush twice should only post once (grab-and-delete clears pending).
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer)
+
+	target := targets.TargetConfig{
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		SlackChannel:  "#productbuilding-test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	repo.SaveThread(context.Background(), &SlackThread{
+		ID:            "existing-id",
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		GithubIssueID: 42,
+		SlackChannel:  "#productbuilding-test",
+		SlackThreadTs: "thread-ts-42",
+		ThreadType:    "issue",
+	})
+
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventCommentAdded,
+		RepoOwner:   "luminor-project",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+		Author:      "alice",
+		Body:        "Hello",
+	}
+
+	notifier.Notify(context.Background(), event, target)
+
+	// Manually call flush twice with the same key
+	key := fmt.Sprintf("%s#%d", target.SlackChannel, event.IssueNumber)
+	notifier.flush(context.Background(), key, target)
+	notifier.flush(context.Background(), key, target)
+
+	if len(client.postedMessages) != 1 {
+		t.Errorf("Expected 1 message after double flush, got %d", len(client.postedMessages))
 	}
 }
 
