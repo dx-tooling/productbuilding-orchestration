@@ -113,7 +113,9 @@ func (r *SQLiteRepository) FindThreadBySlackTs(ctx context.Context, threadTs str
 		       slack_channel, slack_thread_ts, slack_parent_ts, thread_type,
 		       created_at, updated_at
 		FROM slack_threads
-		WHERE slack_thread_ts = ?`,
+		WHERE slack_thread_ts = ?
+		ORDER BY created_at DESC
+		LIMIT 1`,
 		threadTs,
 	)
 

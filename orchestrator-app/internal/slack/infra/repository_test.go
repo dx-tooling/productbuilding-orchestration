@@ -258,6 +258,58 @@ func TestRepository_FindThreadBySlackTs_NotFound(t *testing.T) {
 	}
 }
 
+func TestRepository_FindThreadBySlackTs_ReturnsNewestMapping(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewSQLiteRepository(db)
+	ctx := context.Background()
+
+	// Save first mapping: issue #41, created earlier
+	thread1 := &domain.SlackThread{
+		ID:            "test-id-old",
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		GithubIssueID: 41,
+		SlackChannel:  "#productbuilding-test",
+		SlackThreadTs: "1111111111.111111",
+		ThreadType:    "issue",
+		CreatedAt:     time.Now().Add(-1 * time.Hour),
+		UpdatedAt:     time.Now().Add(-1 * time.Hour),
+	}
+	if err := repo.SaveThread(ctx, thread1); err != nil {
+		t.Fatalf("SaveThread(#41) error = %v", err)
+	}
+
+	// Save second mapping: issue #49, created later, same slack_thread_ts
+	thread2 := &domain.SlackThread{
+		ID:            "test-id-new",
+		RepoOwner:     "luminor-project",
+		RepoName:      "test-repo",
+		GithubIssueID: 49,
+		SlackChannel:  "#productbuilding-test",
+		SlackThreadTs: "1111111111.111111",
+		ThreadType:    "issue",
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+	if err := repo.SaveThread(ctx, thread2); err != nil {
+		t.Fatalf("SaveThread(#49) error = %v", err)
+	}
+
+	// FindThreadBySlackTs should return the newest mapping (#49)
+	found, err := repo.FindThreadBySlackTs(ctx, "1111111111.111111")
+	if err != nil {
+		t.Fatalf("FindThreadBySlackTs() error = %v", err)
+	}
+	if found.GithubIssueID != 49 {
+		t.Errorf("Expected most recent issue #49, got #%d", found.GithubIssueID)
+	}
+	if found.ID != "test-id-new" {
+		t.Errorf("Expected ID test-id-new, got %s", found.ID)
+	}
+}
+
 func TestRepository_UpdateThread(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()

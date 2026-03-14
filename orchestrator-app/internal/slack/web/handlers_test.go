@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -87,9 +88,9 @@ func (m *mockThreadSaver) getSaved() []*domain.SlackThread {
 }
 
 type mockConversationRecorder struct {
-	mu     sync.Mutex
-	convs  []agent.Conversation
-	err    error
+	mu    sync.Mutex
+	convs []agent.Conversation
+	err   error
 }
 
 func (m *mockConversationRecorder) UpsertConversation(_ context.Context, conv agent.Conversation) error {
@@ -109,14 +110,15 @@ func (m *mockConversationRecorder) getConversations() []agent.Conversation {
 }
 
 type mockSlackClient struct {
-	mu             sync.Mutex
-	channelName    string
-	channelErr     error
-	userName       string
-	userErr        error
-	postedMessages []string
-	reactions      []string
-	removedEmoji   []string
+	mu              sync.Mutex
+	channelName     string
+	channelErr      error
+	userName        string
+	userErr         error
+	postedMessages  []string
+	reactions       []string
+	removedEmoji    []string
+	postToThreadErr error
 }
 
 func (m *mockSlackClient) GetUserInfo(_ context.Context, _, _ string) (string, error) {
@@ -138,7 +140,7 @@ func (m *mockSlackClient) PostToThread(_ context.Context, _, _, _ string, msg do
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.postedMessages = append(m.postedMessages, msg.Text)
-	return nil
+	return m.postToThreadErr
 }
 
 func (m *mockSlackClient) AddReaction(_ context.Context, _, _, _, emoji string) error {
@@ -686,6 +688,155 @@ func (m *slowMockAgentRunner) Run(ctx context.Context, req agent.RunRequest) (ag
 		return agent.RunResponse{Text: "done"}, nil
 	case <-ctx.Done():
 		return agent.RunResponse{}, ctx.Err()
+	}
+}
+
+func TestHandleEvent_EmptyTextWithCreatedIssues_SynthesizesFallback(t *testing.T) {
+	agentRunner := &mockAgentRunner{
+		response: agent.RunResponse{
+			Text: "", // LLM returned no text
+			SideEffects: agent.SideEffects{
+				CreatedIssues: []agent.CreatedIssue{{Number: 49, Title: "Forgot Password"}},
+			},
+		},
+	}
+	threadSaver := &mockThreadSaver{}
+	slackClient := &mockSlackClient{
+		userName:    "Alice",
+		channelName: "productbuilding-playground",
+	}
+	registry := &mockTargetRegistry{
+		channelConfig: defaultTarget(),
+		channelFound:  true,
+		botToken:      "xoxb-test",
+	}
+
+	h := NewHandler(agentRunner, &mockThreadFinder{}, threadSaver, &mockConversationRecorder{}, slackClient, registry, testSigningSecret, "")
+
+	payload := map[string]interface{}{
+		"type": "event_callback",
+		"event": map[string]interface{}{
+			"type":    "app_mention",
+			"user":    "U123",
+			"text":    "<@UBOT> let's start fresh",
+			"channel": "C0PRODUCT",
+			"ts":      "1234567890.123456",
+		},
+		"authorizations": []map[string]string{{"user_id": "UBOT"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := makeSignedRequest(t, body)
+	rec := httptest.NewRecorder()
+
+	h.HandleEvent(rec, req)
+	time.Sleep(200 * time.Millisecond)
+
+	msgs := slackClient.getPostedMessages()
+	if len(msgs) != 1 {
+		t.Fatalf("Expected 1 posted message, got %d: %v", len(msgs), msgs)
+	}
+	if !strings.Contains(msgs[0], "#49") {
+		t.Errorf("Expected fallback message containing #49, got %q", msgs[0])
+	}
+	if !strings.Contains(msgs[0], "Forgot Password") {
+		t.Errorf("Expected fallback message containing title, got %q", msgs[0])
+	}
+}
+
+func TestHandleEvent_EmptyTextWithDelegatedIssues_SynthesizesFallback(t *testing.T) {
+	agentRunner := &mockAgentRunner{
+		response: agent.RunResponse{
+			Text: "", // LLM returned no text
+			SideEffects: agent.SideEffects{
+				DelegatedIssues: []int{10, 20},
+			},
+		},
+	}
+	slackClient := &mockSlackClient{
+		userName:    "Alice",
+		channelName: "productbuilding-playground",
+	}
+	registry := &mockTargetRegistry{
+		channelConfig: defaultTarget(),
+		channelFound:  true,
+		botToken:      "xoxb-test",
+	}
+
+	h := NewHandler(agentRunner, &mockThreadFinder{}, &mockThreadSaver{}, &mockConversationRecorder{}, slackClient, registry, testSigningSecret, "")
+
+	payload := map[string]interface{}{
+		"type": "event_callback",
+		"event": map[string]interface{}{
+			"type":    "app_mention",
+			"user":    "U123",
+			"text":    "<@UBOT> delegate these",
+			"channel": "C0PRODUCT",
+			"ts":      "1234567890.123456",
+		},
+		"authorizations": []map[string]string{{"user_id": "UBOT"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := makeSignedRequest(t, body)
+	rec := httptest.NewRecorder()
+
+	h.HandleEvent(rec, req)
+	time.Sleep(200 * time.Millisecond)
+
+	msgs := slackClient.getPostedMessages()
+	if len(msgs) != 1 {
+		t.Fatalf("Expected 1 posted message, got %d: %v", len(msgs), msgs)
+	}
+	if !strings.Contains(msgs[0], "#10") || !strings.Contains(msgs[0], "#20") {
+		t.Errorf("Expected fallback message containing #10 and #20, got %q", msgs[0])
+	}
+}
+
+func TestHandleEvent_PostToThreadError_LogsAndContinues(t *testing.T) {
+	agentRunner := &mockAgentRunner{
+		response: agent.RunResponse{Text: "Here's the result!"},
+	}
+	slackClient := &mockSlackClient{
+		userName:        "Alice",
+		channelName:     "productbuilding-playground",
+		postToThreadErr: fmt.Errorf("slack API timeout"),
+	}
+	registry := &mockTargetRegistry{
+		channelConfig: defaultTarget(),
+		channelFound:  true,
+		botToken:      "xoxb-test",
+	}
+
+	h := NewHandler(agentRunner, &mockThreadFinder{}, &mockThreadSaver{}, &mockConversationRecorder{}, slackClient, registry, testSigningSecret, "")
+
+	payload := map[string]interface{}{
+		"type": "event_callback",
+		"event": map[string]interface{}{
+			"type":    "app_mention",
+			"user":    "U123",
+			"text":    "<@UBOT> hello",
+			"channel": "C0PRODUCT",
+			"ts":      "1234567890.123456",
+		},
+		"authorizations": []map[string]string{{"user_id": "UBOT"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := makeSignedRequest(t, body)
+	rec := httptest.NewRecorder()
+
+	h.HandleEvent(rec, req)
+	time.Sleep(200 * time.Millisecond)
+
+	// Should still add :white_check_mark: even if PostToThread fails
+	reactions := slackClient.getReactions()
+	hasCheckmark := false
+	for _, r := range reactions {
+		if r == "white_check_mark" {
+			hasCheckmark = true
+			break
+		}
+	}
+	if !hasCheckmark {
+		t.Errorf("Expected white_check_mark reaction despite PostToThread error, got %v", reactions)
 	}
 }
 
