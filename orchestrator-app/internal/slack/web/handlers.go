@@ -402,6 +402,8 @@ func userFacingErrorMessage(err error) string {
 		strings.Contains(msg, "status 502") ||
 		strings.Contains(msg, "status 504"):
 		return "The AI service is temporarily unavailable. Please try again in a few minutes."
+	case strings.Contains(msg, "status 429") && strings.Contains(msg, "overloaded"):
+		return "The AI service is currently overloaded. Please try again in a few minutes."
 	case strings.Contains(msg, "status 429"):
 		return "The AI service is rate-limited right now. Please try again shortly."
 	default:
