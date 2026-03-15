@@ -127,6 +127,7 @@ Available actions:
 - Read file contents
 - List GitHub Actions workflow runs (CI/CD status) for a branch
 - Get workflow run job details to investigate CI failures
+- Get failure context from CI job logs (error output with surrounding lines)
 - List recent conversations in the current channel
 
 If the user asks you to create, modify, close, or delegate something, respond ONLY with [REROUTE:issue_creator] (for creating), [REROUTE:delegator] (for delegating), [REROUTE:commenter] (for commenting), or [REROUTE:closer] (for closing). Do not explain why you cannot do it.

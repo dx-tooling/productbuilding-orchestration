@@ -155,6 +155,10 @@ func (a *GitHubClientAdapter) ListWorkflowRunJobs(ctx context.Context, owner, re
 	return out, nil
 }
 
+func (a *GitHubClientAdapter) GetJobLogs(ctx context.Context, owner, repo string, jobID int64, pat string) (string, error) {
+	return a.client.GetJobLogs(ctx, owner, repo, jobID, pat)
+}
+
 func (a *GitHubClientAdapter) GetFileContents(ctx context.Context, owner, repo, path, ref, pat string) (*FileContents, error) {
 	result, err := a.client.GetFileContents(ctx, owner, repo, path, ref, pat)
 	if err != nil {

@@ -23,6 +23,7 @@ type GitHubClient interface {
 	GetFileContents(ctx context.Context, owner, repo, path, ref, pat string) (*FileContents, error)
 	ListWorkflowRuns(ctx context.Context, owner, repo, branch, pat string, limit int) ([]WorkflowRun, error)
 	ListWorkflowRunJobs(ctx context.Context, owner, repo string, runID int64, pat string) ([]WorkflowRunJob, error)
+	GetJobLogs(ctx context.Context, owner, repo string, jobID int64, pat string) (string, error)
 }
 
 // WorkflowRun represents a GitHub Actions workflow run.
@@ -154,6 +155,8 @@ func (e *GitHubToolExecutor) Execute(ctx context.Context, call ToolCall, target 
 		return e.listWorkflowRuns(ctx, call.Function.Arguments, target)
 	case "get_workflow_run_jobs":
 		return e.getWorkflowRunJobs(ctx, call.Function.Arguments, target)
+	case "get_job_failure_context":
+		return e.getJobFailureContext(ctx, call.Function.Arguments, target)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", call.Function.Name)
 	}
@@ -516,6 +519,89 @@ func (e *GitHubToolExecutor) getWorkflowRunJobs(ctx context.Context, argsJSON st
 	return sb.String(), nil
 }
 
+func (e *GitHubToolExecutor) getJobFailureContext(ctx context.Context, argsJSON string, target targets.TargetConfig) (string, error) {
+	var args struct {
+		JobID int64 `json:"job_id"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "", fmt.Errorf("parse arguments: %w", err)
+	}
+
+	log, err := e.github.GetJobLogs(ctx, target.RepoOwner, target.RepoName, args.JobID, target.GitHubPAT)
+	if err != nil {
+		return "", err
+	}
+
+	return extractFailureContext(log, 10), nil
+}
+
+// extractFailureContext extracts lines around ##[error] markers in a GitHub Actions log.
+// Falls back to the last contextLines lines if no error markers are found.
+func extractFailureContext(logText string, contextLines int) string {
+	if strings.TrimSpace(logText) == "" {
+		return "No log output."
+	}
+
+	lines := strings.Split(logText, "\n")
+	// Remove trailing empty line from split
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+
+	// Find error marker positions
+	var errorIdxs []int
+	for i, line := range lines {
+		if strings.Contains(line, "##[error]") {
+			errorIdxs = append(errorIdxs, i)
+		}
+	}
+
+	// Fallback: last contextLines lines
+	if len(errorIdxs) == 0 {
+		start := len(lines) - contextLines
+		if start < 0 {
+			start = 0
+		}
+		var sb strings.Builder
+		sb.WriteString("No ##[error] markers found. Last lines of log:\n\n")
+		for i := start; i < len(lines); i++ {
+			sb.WriteString(fmt.Sprintf("%4d  %s\n", i+1, lines[i]))
+		}
+		return sb.String()
+	}
+
+	// Build a set of line indices to include (merging overlapping windows)
+	include := make(map[int]bool)
+	for _, errIdx := range errorIdxs {
+		start := errIdx - contextLines
+		if start < 0 {
+			start = 0
+		}
+		for i := start; i <= errIdx; i++ {
+			include[i] = true
+		}
+	}
+
+	// Collect included lines in order, cap at 50
+	var sb strings.Builder
+	count := 0
+	prevIdx := -2
+	for i := 0; i < len(lines) && count < 50; i++ {
+		if !include[i] {
+			continue
+		}
+		// Insert separator when there's a gap
+		if prevIdx >= 0 && i > prevIdx+1 {
+			sb.WriteString("  ...\n")
+		}
+		sb.WriteString(fmt.Sprintf("%4d  %s\n", i+1, lines[i]))
+		prevIdx = i
+		count++
+	}
+
+	return sb.String()
+}
+
 // ToolDefinitions returns the tool schemas to pass to the LLM.
 func ToolDefinitions() []ToolDef {
 	return []ToolDef{
@@ -688,6 +774,20 @@ func ToolDefinitions() []ToolDef {
 						"run_id": {"type": "integer", "description": "Workflow run ID (from list_workflow_runs)"}
 					},
 					"required": ["run_id"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolSchema{
+				Name:        "get_job_failure_context",
+				Description: "Extract log output around failure points from a GitHub Actions job. Returns ~10 lines of context before each error. Use after get_workflow_run_jobs identifies a failed job.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"job_id": {"type": "integer", "description": "Job ID from get_workflow_run_jobs"}
+					},
+					"required": ["job_id"]
 				}`),
 			},
 		},

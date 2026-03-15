@@ -38,15 +38,16 @@ func CommenterTools() []ToolDef {
 // ResearcherTools returns tools for the researcher specialist.
 func ResearcherTools() []ToolDef {
 	return filterTools(map[string]bool{
-		"search_github_issues":  true,
-		"get_github_issue":      true,
-		"list_github_issues":    true,
-		"search_pr_diff":        true,
-		"search_repo_code":      true,
-		"get_file_contents":     true,
-		"list_conversations":    true,
-		"list_workflow_runs":    true,
-		"get_workflow_run_jobs": true,
+		"search_github_issues":    true,
+		"get_github_issue":        true,
+		"list_github_issues":      true,
+		"search_pr_diff":          true,
+		"search_repo_code":        true,
+		"get_file_contents":       true,
+		"list_conversations":      true,
+		"list_workflow_runs":      true,
+		"get_workflow_run_jobs":   true,
+		"get_job_failure_context": true,
 	})
 }
 

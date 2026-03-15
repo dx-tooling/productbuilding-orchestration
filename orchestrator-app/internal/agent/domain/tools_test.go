@@ -33,6 +33,8 @@ type mockGitHubClient struct {
 	listWorkflowRunsErr       error
 	listWorkflowRunJobsResult []WorkflowRunJob
 	listWorkflowRunJobsErr    error
+	getJobLogsResult          string
+	getJobLogsErr             error
 
 	// Captured args
 	lastCommentBody    string
@@ -89,6 +91,10 @@ func (m *mockGitHubClient) ListWorkflowRuns(_ context.Context, _, _, _, _ string
 
 func (m *mockGitHubClient) ListWorkflowRunJobs(_ context.Context, _, _ string, _ int64, _ string) ([]WorkflowRunJob, error) {
 	return m.listWorkflowRunJobsResult, m.listWorkflowRunJobsErr
+}
+
+func (m *mockGitHubClient) GetJobLogs(_ context.Context, _, _ string, _ int64, _ string) (string, error) {
+	return m.getJobLogsResult, m.getJobLogsErr
 }
 
 var testTarget = targets.TargetConfig{
@@ -596,9 +602,81 @@ func TestToolExecutor_GetWorkflowRunJobs(t *testing.T) {
 	}
 }
 
+func TestExtractFailureContext_WithErrorMarkers(t *testing.T) {
+	log := "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\n##[error]Build failed\nline 13\n"
+	result := extractFailureContext(log, 10)
+	if !strings.Contains(result, "##[error]Build failed") {
+		t.Errorf("expected error marker in result, got: %s", result)
+	}
+	if !strings.Contains(result, "line 2") {
+		t.Errorf("expected context line in result, got: %s", result)
+	}
+}
+
+func TestExtractFailureContext_NoErrorMarkers(t *testing.T) {
+	log := "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\n"
+	result := extractFailureContext(log, 10)
+	// Fallback: last 10 lines
+	if !strings.Contains(result, "line 12") {
+		t.Errorf("expected last lines in result, got: %s", result)
+	}
+	if strings.Contains(result, "line 1\n") {
+		t.Errorf("expected first line to be excluded from fallback, got: %s", result)
+	}
+}
+
+func TestExtractFailureContext_EmptyLog(t *testing.T) {
+	result := extractFailureContext("", 10)
+	if result != "No log output." {
+		t.Errorf("expected empty log message, got: %s", result)
+	}
+}
+
+func TestExtractFailureContext_OverlappingWindows(t *testing.T) {
+	// Two errors close together — windows should merge, no duplicate lines
+	lines := []string{
+		"step 1", "step 2", "step 3", "step 4", "step 5",
+		"##[error]First error",
+		"step 7", "step 8",
+		"##[error]Second error",
+	}
+	log := strings.Join(lines, "\n")
+	result := extractFailureContext(log, 10)
+	if !strings.Contains(result, "First error") {
+		t.Errorf("expected first error in result, got: %s", result)
+	}
+	if !strings.Contains(result, "Second error") {
+		t.Errorf("expected second error in result, got: %s", result)
+	}
+	// Count occurrences of "step 1" — should appear exactly once
+	if strings.Count(result, "step 1") != 1 {
+		t.Errorf("expected 'step 1' exactly once (no duplicates), got: %s", result)
+	}
+}
+
+func TestToolExecutor_GetJobFailureContext(t *testing.T) {
+	log := "line 1\nline 2\nline 3\n##[error]Test failed: expected 4 got 5\nline 5\n"
+	gh := &mockGitHubClient{getJobLogsResult: log}
+	exec := NewToolExecutor(gh)
+
+	result, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "get_job_failure_context",
+			Arguments: `{"job_id":200}`,
+		},
+	}, testTarget)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "Test failed") {
+		t.Errorf("expected error context in result, got: %s", result)
+	}
+}
+
 func TestToolDefinitions_Count(t *testing.T) {
 	defs := ToolDefinitions()
-	if len(defs) != 13 {
-		t.Errorf("expected 13 tool definitions, got %d", len(defs))
+	if len(defs) != 14 {
+		t.Errorf("expected 14 tool definitions, got %d", len(defs))
 	}
 }

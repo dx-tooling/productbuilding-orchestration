@@ -752,6 +752,37 @@ func (c *Client) ListWorkflowRunJobs(ctx context.Context, owner, repo string, ru
 	return result.Jobs, nil
 }
 
+// GetJobLogs downloads the logs for a specific GitHub Actions job.
+func (c *Client) GetJobLogs(ctx context.Context, owner, repo string, jobID int64, pat string) (string, error) {
+	u := fmt.Sprintf("%s/repos/%s/%s/actions/jobs/%d/logs", c.apiURL(), owner, repo, jobID)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("get job logs: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("get job logs: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	// Cap at 1MB to protect against huge logs
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", fmt.Errorf("read job logs: %w", err)
+	}
+
+	return string(body), nil
+}
+
 // DeleteComment removes a PR comment.
 func (c *Client) DeleteComment(ctx context.Context, owner, repo string, commentID int64, pat string) error {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/comments/%d", owner, repo, commentID)
