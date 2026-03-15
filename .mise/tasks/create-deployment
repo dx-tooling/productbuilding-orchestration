@@ -52,99 +52,7 @@ fi
 
 # ── Helper functions ────────────────────────────────────────────────
 
-section_header() {
-    echo ""
-    echo "─── $1 ───────────────────────────────────────────────"
-    echo ""
-}
-
-prompt_required() {
-    local label="$1" default="${2:-}" explanation="${3:-}"
-    if [[ -n "$explanation" ]]; then
-        echo "  $explanation"
-        echo ""
-    fi
-    local value=""
-    while [[ -z "$value" ]]; do
-        if [[ -n "$default" ]]; then
-            read -rp "  $label [$default]: " value
-            value="${value:-$default}"
-        else
-            read -rp "  $label: " value
-        fi
-        if [[ -z "$value" ]]; then
-            echo "  (required)"
-        fi
-    done
-    echo "$value"
-}
-
-prompt_optional() {
-    local label="$1" default="${2:-}" explanation="${3:-}"
-    if [[ -n "$explanation" ]]; then
-        echo "  $explanation"
-        echo ""
-    fi
-    local value=""
-    if [[ -n "$default" ]]; then
-        read -rp "  $label [$default]: " value
-        value="${value:-$default}"
-    else
-        read -rp "  $label: " value
-    fi
-    echo "$value"
-}
-
-prompt_yesno() {
-    local question="$1" default="${2:-n}"
-    local suffix="[y/N]"
-    [[ "$default" == "y" ]] && suffix="[Y/n]"
-    read -rp "  $question $suffix: " answer
-    answer="${answer:-$default}"
-    [[ "$answer" =~ ^[Yy]$ ]]
-}
-
-mask_secret() {
-    local val="$1"
-    local len=${#val}
-    if [[ $len -le 8 ]]; then
-        echo "****"
-    else
-        echo "${val:0:4}...${val: -4}"
-    fi
-}
-
-detect_ssh_key() {
-    local keys=()
-    for f in ~/.ssh/id_*.pub; do
-        [[ -f "$f" ]] && keys+=("$f")
-    done
-    if [[ ${#keys[@]} -eq 1 ]]; then
-        echo "  Auto-detected: ${keys[0]}" >&2
-        local default_key
-        default_key=$(cat "${keys[0]}")
-        read -rp "  SSH public key [${keys[0]}]: " SSH_INPUT
-        if [[ -z "$SSH_INPUT" ]]; then
-            echo "$default_key"
-        else
-            echo "$SSH_INPUT"
-        fi
-    elif [[ ${#keys[@]} -gt 1 ]]; then
-        echo "  Multiple SSH keys found:" >&2
-        for i in "${!keys[@]}"; do
-            echo "    $((i+1)). ${keys[$i]}" >&2
-        done
-        read -rp "  Choose [1-${#keys[@]}] or paste key: " SSH_INPUT
-        if [[ "$SSH_INPUT" =~ ^[0-9]+$ ]] && [[ "$SSH_INPUT" -ge 1 ]] && [[ "$SSH_INPUT" -le ${#keys[@]} ]]; then
-            cat "${keys[$((SSH_INPUT-1))]}"
-        else
-            echo "$SSH_INPUT"
-        fi
-    else
-        read -rp "  SSH public key: " SSH_INPUT
-        echo "$SSH_INPUT"
-    fi
-}
+source "$(dirname "$0")/../lib/create-deployment-helpers.sh"
 
 # ── Interactive collection ──────────────────────────────────────────
 
@@ -181,7 +89,7 @@ echo "  EC2, Route53, S3, DynamoDB, IAM, Secrets Manager, VPC."
 echo ""
 
 read -rp "  AWS Access Key ID: " CFG_AWS_ACCESS_KEY_ID
-while [[ ! "$CFG_AWS_ACCESS_KEY_ID" =~ ^AKIA[A-Z0-9]{16}$ ]]; do
+while ! validate_aws_key_id "$CFG_AWS_ACCESS_KEY_ID"; do
     echo "  (must start with AKIA and be 20 characters)"
     read -rp "  AWS Access Key ID: " CFG_AWS_ACCESS_KEY_ID
 done
@@ -247,14 +155,12 @@ echo "  After provisioning, you'll need to delegate DNS from your registrar."
 echo ""
 
 read -rp "  Preview domain (e.g., productbuilder.mycompany.net): " CFG_PREVIEW_DOMAIN
-while [[ -z "$CFG_PREVIEW_DOMAIN" || ! "$CFG_PREVIEW_DOMAIN" =~ \. ]]; do
+while ! validate_domain "$CFG_PREVIEW_DOMAIN"; do
     echo "  (must be a valid domain like productbuilder.mycompany.net)"
     read -rp "  Preview domain: " CFG_PREVIEW_DOMAIN
 done
 
-# Derive ACME email default from domain root
-DOMAIN_ROOT=$(echo "$CFG_PREVIEW_DOMAIN" | rev | cut -d. -f1-2 | rev)
-ACME_DEFAULT="admin@${DOMAIN_ROOT}"
+ACME_DEFAULT=$(derive_acme_email "$CFG_PREVIEW_DOMAIN")
 echo ""
 echo "  Email for Let's Encrypt certificate registration."
 read -rp "  ACME email [$ACME_DEFAULT]: " CFG_ACME_EMAIL
@@ -275,7 +181,7 @@ CFG_INSTANCE_TYPE="${CFG_INSTANCE_TYPE:-t3.xlarge}"
 echo ""
 echo "  SSH public key for EC2 instance access."
 CFG_SSH_PUBLIC_KEY=$(detect_ssh_key)
-while [[ -z "$CFG_SSH_PUBLIC_KEY" || ! "$CFG_SSH_PUBLIC_KEY" =~ ^ssh- ]]; do
+while ! validate_ssh_key_format "$CFG_SSH_PUBLIC_KEY"; do
     echo "  (must start with ssh-rsa, ssh-ed25519, etc.)"
     read -rp "  SSH public key: " CFG_SSH_PUBLIC_KEY
 done

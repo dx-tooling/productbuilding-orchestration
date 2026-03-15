@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Run bats tests for create-deployment helpers"
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+
+exec bats "$PROJECT_DIR/tests/create-deployment-helpers.bats"
