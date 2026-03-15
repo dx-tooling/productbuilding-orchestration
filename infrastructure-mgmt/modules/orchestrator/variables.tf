@@ -62,6 +62,11 @@ variable "orchestration_repo" {
   type        = string
 }
 
+variable "orchestration_github_org" {
+  description = "GitHub organization hosting the orchestration repo"
+  type        = string
+}
+
 variable "targets" {
   description = "Map of target repositories to manage"
   type = map(object({

@@ -417,18 +417,19 @@ cat > "$DEPLOY_DIR/infrastructure-mgmt/main/main.tf" <<EOF
 module "orchestrator" {
   source = "../../../${ORCH_DIRNAME}/infrastructure-mgmt/modules/orchestrator"
 
-  aws_region           = var.aws_region
-  project_prefix       = var.project_prefix
-  github_org           = var.github_org
-  github_mgmt_pat      = var.github_mgmt_pat
-  preview_domain       = var.preview_domain
-  instance_type        = var.instance_type
-  ssh_public_key       = var.ssh_public_key
-  slack_workspace      = var.slack_workspace
-  slack_signing_secret = var.slack_signing_secret
-  fireworks_api_key    = var.fireworks_api_key
-  targets              = var.targets
-  orchestration_repo   = "${ORCH_DIRNAME}"
+  aws_region               = var.aws_region
+  project_prefix           = var.project_prefix
+  github_org               = var.github_org
+  github_mgmt_pat          = var.github_mgmt_pat
+  preview_domain           = var.preview_domain
+  instance_type            = var.instance_type
+  ssh_public_key           = var.ssh_public_key
+  slack_workspace          = var.slack_workspace
+  slack_signing_secret     = var.slack_signing_secret
+  fireworks_api_key        = var.fireworks_api_key
+  targets                  = var.targets
+  orchestration_repo       = "${ORCH_DIRNAME}"
+  orchestration_github_org = var.orchestration_github_org
 }
 EOF
 
@@ -489,6 +490,11 @@ variable "fireworks_api_key" {
   type        = string
   sensitive   = true
   default     = ""
+}
+
+variable "orchestration_github_org" {
+  description = "GitHub organization hosting the orchestration repo"
+  type        = string
 }
 
 variable "targets" {

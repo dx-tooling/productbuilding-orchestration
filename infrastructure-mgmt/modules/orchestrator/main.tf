@@ -187,7 +187,7 @@ resource "aws_instance" "orchestrator" {
     preview_domain  = var.preview_domain
     hosted_zone_id  = aws_route53_zone.preview.zone_id
     slack_workspace = var.slack_workspace
-    repo_clone_url  = "https://x-access-token:${var.github_mgmt_pat}@github.com/${var.github_org}/${var.orchestration_repo}.git"
+    repo_clone_url  = "https://x-access-token:${var.github_mgmt_pat}@github.com/${var.orchestration_github_org}/${var.orchestration_repo}.git"
   })
 
   root_block_device {
