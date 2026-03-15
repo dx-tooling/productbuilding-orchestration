@@ -2,12 +2,24 @@
 #MISE description="Scaffold a new deployment repo"
 set -euo pipefail
 
+# ── Argument parsing ────────────────────────────────────────────────
+
 NAME="${1:-}"
+NON_INTERACTIVE=false
+for arg in "$@"; do
+    if [[ "$arg" == "--non-interactive" ]]; then
+        NON_INTERACTIVE=true
+    fi
+done
+
 if [[ -z "$NAME" ]]; then
-    echo "Usage: mise run create-deployment <name>"
+    echo "Usage: mise run create-deployment <name> [--non-interactive]"
     echo ""
     echo "Creates ../productbuilding-deployment-<name>/ with all infrastructure,"
     echo "secrets, and operational tasks needed to run your own deployment."
+    echo ""
+    echo "Options:"
+    echo "  --non-interactive   Scaffold with placeholders only (no prompts, no bootstrap)"
     exit 1
 fi
 
@@ -20,9 +32,321 @@ if [[ -d "$DEPLOY_DIR" ]]; then
     exit 1
 fi
 
-echo "Creating deployment repo at $DEPLOY_DIR"
+# ── Prerequisite checks ────────────────────────────────────────────
+
+if [[ "$NON_INTERACTIVE" == false ]]; then
+    MISSING_TOOLS=()
+    for cmd in age age-keygen tofu aws openssl; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            MISSING_TOOLS+=("$cmd")
+        fi
+    done
+    if [[ ${#MISSING_TOOLS[@]} -gt 0 ]]; then
+        echo "Error: Missing required tools: ${MISSING_TOOLS[*]}" >&2
+        echo ""
+        echo "Install with:"
+        echo "  brew install age opentofu awscli openssl"
+        exit 1
+    fi
+fi
+
+# ── Helper functions ────────────────────────────────────────────────
+
+section_header() {
+    echo ""
+    echo "─── $1 ───────────────────────────────────────────────"
+    echo ""
+}
+
+prompt_required() {
+    local label="$1" default="${2:-}" explanation="${3:-}"
+    if [[ -n "$explanation" ]]; then
+        echo "  $explanation"
+        echo ""
+    fi
+    local value=""
+    while [[ -z "$value" ]]; do
+        if [[ -n "$default" ]]; then
+            read -rp "  $label [$default]: " value
+            value="${value:-$default}"
+        else
+            read -rp "  $label: " value
+        fi
+        if [[ -z "$value" ]]; then
+            echo "  (required)"
+        fi
+    done
+    echo "$value"
+}
+
+prompt_optional() {
+    local label="$1" default="${2:-}" explanation="${3:-}"
+    if [[ -n "$explanation" ]]; then
+        echo "  $explanation"
+        echo ""
+    fi
+    local value=""
+    if [[ -n "$default" ]]; then
+        read -rp "  $label [$default]: " value
+        value="${value:-$default}"
+    else
+        read -rp "  $label: " value
+    fi
+    echo "$value"
+}
+
+prompt_yesno() {
+    local question="$1" default="${2:-n}"
+    local suffix="[y/N]"
+    [[ "$default" == "y" ]] && suffix="[Y/n]"
+    read -rp "  $question $suffix: " answer
+    answer="${answer:-$default}"
+    [[ "$answer" =~ ^[Yy]$ ]]
+}
+
+mask_secret() {
+    local val="$1"
+    local len=${#val}
+    if [[ $len -le 8 ]]; then
+        echo "****"
+    else
+        echo "${val:0:4}...${val: -4}"
+    fi
+}
+
+detect_ssh_key() {
+    local keys=()
+    for f in ~/.ssh/id_*.pub; do
+        [[ -f "$f" ]] && keys+=("$f")
+    done
+    if [[ ${#keys[@]} -eq 1 ]]; then
+        echo "  Auto-detected: ${keys[0]}" >&2
+        local default_key
+        default_key=$(cat "${keys[0]}")
+        read -rp "  SSH public key [${keys[0]}]: " SSH_INPUT
+        if [[ -z "$SSH_INPUT" ]]; then
+            echo "$default_key"
+        else
+            echo "$SSH_INPUT"
+        fi
+    elif [[ ${#keys[@]} -gt 1 ]]; then
+        echo "  Multiple SSH keys found:" >&2
+        for i in "${!keys[@]}"; do
+            echo "    $((i+1)). ${keys[$i]}" >&2
+        done
+        read -rp "  Choose [1-${#keys[@]}] or paste key: " SSH_INPUT
+        if [[ "$SSH_INPUT" =~ ^[0-9]+$ ]] && [[ "$SSH_INPUT" -ge 1 ]] && [[ "$SSH_INPUT" -le ${#keys[@]} ]]; then
+            cat "${keys[$((SSH_INPUT-1))]}"
+        else
+            echo "$SSH_INPUT"
+        fi
+    else
+        read -rp "  SSH public key: " SSH_INPUT
+        echo "$SSH_INPUT"
+    fi
+}
+
+# ── Interactive collection ──────────────────────────────────────────
+
+# Defaults for non-interactive mode
+CFG_AWS_ACCESS_KEY_ID=""
+CFG_AWS_SECRET_ACCESS_KEY=""
+CFG_AWS_REGION="eu-central-1"
+CFG_GITHUB_PAT_MGMT=""
+CFG_GITHUB_ORG=""
+CFG_ORCH_GITHUB_ORG="dx-tooling"
+CFG_PREVIEW_DOMAIN=""
+CFG_ACME_EMAIL=""
+CFG_PROJECT_PREFIX="productbuilder"
+CFG_INSTANCE_TYPE="t3.xlarge"
+CFG_SSH_PUBLIC_KEY=""
+CFG_SLACK_WORKSPACE=""
+CFG_SLACK_SIGNING_SECRET=""
+CFG_FIREWORKS_API_KEY=""
+CFG_AWS_ACCOUNT_ID=""
+
+if [[ "$NON_INTERACTIVE" == false ]]; then
+
+echo "Creating deployment repo: productbuilding-deployment-${NAME}"
 echo "Orchestration repo: $ORCH_DIRNAME"
+
+# ── 1. AWS ──
+
+section_header "AWS Configuration"
+echo "  Credentials for provisioning infrastructure (EC2, Route53, Secrets Manager)"
+echo "  and the Terraform state backend (S3 + DynamoDB)."
 echo ""
+echo "  Create an IAM user with AdministratorAccess, or a policy covering:"
+echo "  EC2, Route53, S3, DynamoDB, IAM, Secrets Manager, VPC."
+echo ""
+
+read -rp "  AWS Access Key ID: " CFG_AWS_ACCESS_KEY_ID
+while [[ ! "$CFG_AWS_ACCESS_KEY_ID" =~ ^AKIA[A-Z0-9]{16}$ ]]; do
+    echo "  (must start with AKIA and be 20 characters)"
+    read -rp "  AWS Access Key ID: " CFG_AWS_ACCESS_KEY_ID
+done
+
+read -rp "  AWS Secret Access Key: " CFG_AWS_SECRET_ACCESS_KEY
+while [[ -z "$CFG_AWS_SECRET_ACCESS_KEY" ]]; do
+    echo "  (required)"
+    read -rp "  AWS Secret Access Key: " CFG_AWS_SECRET_ACCESS_KEY
+done
+
+read -rp "  AWS Region [eu-central-1]: " CFG_AWS_REGION
+CFG_AWS_REGION="${CFG_AWS_REGION:-eu-central-1}"
+
+echo ""
+echo "  Verifying AWS credentials..."
+if CFG_AWS_ACCOUNT_ID=$(AWS_ACCESS_KEY_ID="$CFG_AWS_ACCESS_KEY_ID" \
+    AWS_SECRET_ACCESS_KEY="$CFG_AWS_SECRET_ACCESS_KEY" \
+    AWS_DEFAULT_REGION="$CFG_AWS_REGION" \
+    aws sts get-caller-identity --query Account --output text 2>/dev/null); then
+    echo "  Verified: AWS account $CFG_AWS_ACCOUNT_ID"
+else
+    echo "  ERROR: AWS credentials are invalid." >&2
+    echo "  Please check and try again." >&2
+    exit 1
+fi
+
+# ── 2. GitHub ──
+
+section_header "GitHub Configuration"
+echo "  The management PAT is used by Terraform to create webhooks and"
+echo "  manage repo secrets across all target repositories."
+echo ""
+echo "  Create a classic PAT at: https://github.com/settings/tokens/new"
+echo "  Required scopes: repo (full), admin:repo_hook, read:org"
+echo ""
+
+read -rp "  GitHub Management PAT: " CFG_GITHUB_PAT_MGMT
+while [[ -z "$CFG_GITHUB_PAT_MGMT" ]]; do
+    echo "  (required)"
+    read -rp "  GitHub Management PAT: " CFG_GITHUB_PAT_MGMT
+done
+
+echo ""
+read -rp "  GitHub organization (where target repos live): " CFG_GITHUB_ORG
+while [[ -z "$CFG_GITHUB_ORG" ]]; do
+    echo "  (required)"
+    read -rp "  GitHub organization: " CFG_GITHUB_ORG
+done
+
+echo ""
+echo "  The orchestration repo org — where productbuilding-orchestration lives."
+read -rp "  Orchestration GitHub org [dx-tooling]: " CFG_ORCH_GITHUB_ORG
+CFG_ORCH_GITHUB_ORG="${CFG_ORCH_GITHUB_ORG:-dx-tooling}"
+
+# ── 3. Domain ──
+
+section_header "Domain & Certificates"
+echo "  A Route53 hosted zone and wildcard DNS record will be created."
+echo "  Preview environments will be accessible at:"
+echo "    {repo}-pr-{N}.{domain}"
+echo ""
+echo "  After provisioning, you'll need to delegate DNS from your registrar."
+echo ""
+
+read -rp "  Preview domain (e.g., productbuilder.mycompany.net): " CFG_PREVIEW_DOMAIN
+while [[ -z "$CFG_PREVIEW_DOMAIN" || ! "$CFG_PREVIEW_DOMAIN" =~ \. ]]; do
+    echo "  (must be a valid domain like productbuilder.mycompany.net)"
+    read -rp "  Preview domain: " CFG_PREVIEW_DOMAIN
+done
+
+# Derive ACME email default from domain root
+DOMAIN_ROOT=$(echo "$CFG_PREVIEW_DOMAIN" | rev | cut -d. -f1-2 | rev)
+ACME_DEFAULT="admin@${DOMAIN_ROOT}"
+echo ""
+echo "  Email for Let's Encrypt certificate registration."
+read -rp "  ACME email [$ACME_DEFAULT]: " CFG_ACME_EMAIL
+CFG_ACME_EMAIL="${CFG_ACME_EMAIL:-$ACME_DEFAULT}"
+
+# ── 4. Infrastructure ──
+
+section_header "Infrastructure"
+echo "  Resource naming prefix and EC2 instance configuration."
+echo ""
+
+read -rp "  Project prefix [productbuilder]: " CFG_PROJECT_PREFIX
+CFG_PROJECT_PREFIX="${CFG_PROJECT_PREFIX:-productbuilder}"
+
+read -rp "  EC2 instance type [t3.xlarge]: " CFG_INSTANCE_TYPE
+CFG_INSTANCE_TYPE="${CFG_INSTANCE_TYPE:-t3.xlarge}"
+
+echo ""
+echo "  SSH public key for EC2 instance access."
+CFG_SSH_PUBLIC_KEY=$(detect_ssh_key)
+while [[ -z "$CFG_SSH_PUBLIC_KEY" || ! "$CFG_SSH_PUBLIC_KEY" =~ ^ssh- ]]; do
+    echo "  (must start with ssh-rsa, ssh-ed25519, etc.)"
+    read -rp "  SSH public key: " CFG_SSH_PUBLIC_KEY
+done
+
+# ── 5. Slack (optional) ──
+
+section_header "Slack Integration (optional)"
+echo "  Enables webhook request verification and deep links to your Slack workspace."
+echo ""
+
+if prompt_yesno "Enable Slack integration?" "n"; then
+    echo ""
+    echo "  Your Slack workspace subdomain (e.g., 'myteam' from myteam.slack.com)."
+    read -rp "  Slack workspace: " CFG_SLACK_WORKSPACE
+    echo ""
+    echo "  The signing secret from your Slack app's Basic Information page."
+    echo "  Used to verify that webhook requests actually come from Slack."
+    read -rp "  Slack signing secret: " CFG_SLACK_SIGNING_SECRET
+fi
+
+# ── 6. AI Integration (optional) ──
+
+section_header "AI Integration (optional)"
+echo "  Fireworks API key for the AI agent. Can also be configured per-target later."
+echo "  Get one at: https://fireworks.ai/account/api-keys"
+echo ""
+
+read -rp "  Fireworks API key (leave empty to skip): " CFG_FIREWORKS_API_KEY
+
+# ── Summary ──
+
+section_header "Summary"
+echo "  Deployment:     productbuilding-deployment-${NAME}"
+echo "  Deploy dir:     $DEPLOY_DIR"
+echo ""
+echo "  AWS Account:    $CFG_AWS_ACCOUNT_ID"
+echo "  AWS Region:     $CFG_AWS_REGION"
+echo "  AWS Key:        $(mask_secret "$CFG_AWS_ACCESS_KEY_ID")"
+echo ""
+echo "  GitHub Org:     $CFG_GITHUB_ORG"
+echo "  Orch Org:       $CFG_ORCH_GITHUB_ORG"
+echo "  Mgmt PAT:       $(mask_secret "$CFG_GITHUB_PAT_MGMT")"
+echo ""
+echo "  Preview Domain: $CFG_PREVIEW_DOMAIN"
+echo "  ACME Email:     $CFG_ACME_EMAIL"
+echo "  Project Prefix: $CFG_PROJECT_PREFIX"
+echo "  Instance Type:  $CFG_INSTANCE_TYPE"
+echo "  SSH Key:        ${CFG_SSH_PUBLIC_KEY:0:30}..."
+echo ""
+if [[ -n "$CFG_SLACK_WORKSPACE" ]]; then
+    echo "  Slack:          $CFG_SLACK_WORKSPACE"
+fi
+if [[ -n "$CFG_FIREWORKS_API_KEY" ]]; then
+    echo "  Fireworks:      $(mask_secret "$CFG_FIREWORKS_API_KEY")"
+fi
+echo ""
+
+if ! prompt_yesno "Proceed?" "y"; then
+    echo "Aborted."
+    exit 0
+fi
+
+else
+    echo "Creating deployment repo at $DEPLOY_DIR"
+    echo "Orchestration repo: $ORCH_DIRNAME"
+    echo ""
+fi
+
+# ══════════════════════════════════════════════════════════════════════
+# SCAFFOLDING — Generate all files
+# ══════════════════════════════════════════════════════════════════════
 
 # ── Create directory structure ──────────────────────────────────────
 mkdir -p "$DEPLOY_DIR"/{infrastructure-mgmt/{main,bootstrap},secrets,.mise/{tasks,lib},docs}
@@ -363,17 +687,17 @@ resource "aws_dynamodb_table" "tfstate_lock" {
 data "aws_caller_identity" "current" {}
 EOF
 
-cat > "$DEPLOY_DIR/infrastructure-mgmt/bootstrap/variables.tf" <<'EOF'
+cat > "$DEPLOY_DIR/infrastructure-mgmt/bootstrap/variables.tf" <<EOF
 variable "aws_region" {
   description = "AWS region for all resources"
   type        = string
-  default     = "eu-central-1"
+  default     = "${CFG_AWS_REGION:-eu-central-1}"
 }
 
 variable "project_prefix" {
   description = "Prefix for resource naming"
   type        = string
-  default     = "productbuilder"
+  default     = "${CFG_PROJECT_PREFIX:-productbuilder}"
 }
 EOF
 
@@ -428,26 +752,29 @@ module "orchestrator" {
   slack_signing_secret     = var.slack_signing_secret
   fireworks_api_key        = var.fireworks_api_key
   targets                  = var.targets
+  acme_email               = var.acme_email
   orchestration_repo       = "${ORCH_DIRNAME}"
   orchestration_github_org = var.orchestration_github_org
 }
 EOF
 
-cat > "$DEPLOY_DIR/infrastructure-mgmt/main/variables.tf" <<'EOF'
+cat > "$DEPLOY_DIR/infrastructure-mgmt/main/variables.tf" <<EOF
 variable "aws_region" {
   description = "AWS region for all resources"
   type        = string
-  default     = "eu-central-1"
+  default     = "${CFG_AWS_REGION:-eu-central-1}"
 }
 
 variable "project_prefix" {
   description = "Prefix for resource naming"
   type        = string
+  default     = "${CFG_PROJECT_PREFIX:-productbuilder}"
 }
 
 variable "github_org" {
   description = "GitHub organization name"
   type        = string
+  default     = "${CFG_GITHUB_ORG}"
 }
 
 variable "github_mgmt_pat" {
@@ -459,12 +786,13 @@ variable "github_mgmt_pat" {
 variable "preview_domain" {
   description = "Domain for preview environments"
   type        = string
+  default     = "${CFG_PREVIEW_DOMAIN}"
 }
 
 variable "instance_type" {
   description = "EC2 instance type for the orchestrator host"
   type        = string
-  default     = "t3.xlarge"
+  default     = "${CFG_INSTANCE_TYPE:-t3.xlarge}"
 }
 
 variable "ssh_public_key" {
@@ -475,26 +803,33 @@ variable "ssh_public_key" {
 variable "slack_workspace" {
   description = "Slack workspace subdomain"
   type        = string
-  default     = ""
+  default     = "${CFG_SLACK_WORKSPACE}"
 }
 
 variable "slack_signing_secret" {
   description = "Slack app signing secret"
   type        = string
   sensitive   = true
-  default     = ""
+  default     = "${CFG_SLACK_SIGNING_SECRET}"
 }
 
 variable "fireworks_api_key" {
   description = "Fireworks AI API key"
   type        = string
   sensitive   = true
-  default     = ""
+  default     = "${CFG_FIREWORKS_API_KEY}"
+}
+
+variable "acme_email" {
+  description = "Email for Let's Encrypt ACME certificate registration"
+  type        = string
+  default     = "${CFG_ACME_EMAIL}"
 }
 
 variable "orchestration_github_org" {
   description = "GitHub organization hosting the orchestration repo"
   type        = string
+  default     = "${CFG_ORCH_GITHUB_ORG:-dx-tooling}"
 }
 
 variable "targets" {
@@ -538,14 +873,14 @@ provider "github" {
 }
 EOF
 
-cat > "$DEPLOY_DIR/infrastructure-mgmt/main/backend.tf" <<'EOF'
+cat > "$DEPLOY_DIR/infrastructure-mgmt/main/backend.tf" <<EOF
 # TODO: Run 'tofu init' in infrastructure-mgmt/bootstrap/ first to create the S3 bucket,
 # then fill in these values from its outputs.
 terraform {
   backend "s3" {
     bucket         = "REPLACE_ME"  # From bootstrap output: tfstate_bucket_name
     key            = "main/terraform.tfstate"
-    region         = "eu-central-1"
+    region         = "${CFG_AWS_REGION:-eu-central-1}"
     dynamodb_table = "REPLACE_ME"  # From bootstrap output: tfstate_lock_table_name
     encrypt        = true
   }
@@ -1412,26 +1747,151 @@ The orchestrator polls `https://pr-{number}-preview.{domain}{healthcheck_path}` 
 4. **App reinstalled** — after changing scopes or events, reinstall the app to the workspace
 EOF
 
-# ── Initialize git repo ─────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# POST-SCAFFOLD — Interactive mode: write secrets, generate keys, bootstrap
+# ══════════════════════════════════════════════════════════════════════
 
-cd "$DEPLOY_DIR"
-git init -q
-git add -A
-git commit -q -m "Initial deployment scaffold (generated by create-deployment)"
+if [[ "$NON_INTERACTIVE" == false && -n "$CFG_AWS_ACCESS_KEY_ID" ]]; then
 
-echo ""
-echo "Deployment repo created at: $DEPLOY_DIR"
-echo ""
-echo "Next steps:"
-echo "  1. cd $DEPLOY_DIR"
-echo "  2. Generate age keypair: age-keygen -o secrets/.key"
-echo "     Copy the public key (age1...) into secrets/public-key.txt"
-echo "  3. Create secrets.yaml with your AWS credentials"
-echo "  4. Create infrastructure-mgmt/main/terraform.tfvars with deployment values"
-echo "  5. Bootstrap: eval \"\$(.mise/lib/load-secrets)\" && cd infrastructure-mgmt/bootstrap && tofu init && tofu apply"
-echo "  6. Fill in infrastructure-mgmt/main/backend.tf with bootstrap outputs"
-echo "  7. mise run infra-apply"
-echo "  8. Set up DNS delegation"
-echo "  9. mise run deploy"
-echo ""
-echo "See README.md and docs/runbook.md for detailed instructions."
+    echo ""
+    echo "==> Generating age encryption keypair..."
+    AGE_OUTPUT=$(age-keygen -o "$DEPLOY_DIR/secrets/.key" 2>&1)
+    AGE_PUBLIC_KEY=$(echo "$AGE_OUTPUT" | grep 'Public key:' | sed 's/.*: //')
+    echo "$AGE_PUBLIC_KEY" > "$DEPLOY_DIR/secrets/public-key.txt"
+    chmod 600 "$DEPLOY_DIR/secrets/.key"
+    echo "    Public key: $AGE_PUBLIC_KEY"
+    echo "    Secret key: secrets/.key"
+    echo "    IMPORTANT: Back up secrets/.key to a password manager!"
+
+    echo ""
+    echo "==> Writing secrets.yaml..."
+    cat > "$DEPLOY_DIR/secrets.yaml" <<SECRETSEOF
+access_key_id: ${CFG_AWS_ACCESS_KEY_ID}
+secret_access_key: ${CFG_AWS_SECRET_ACCESS_KEY}
+
+github_pat_mgmt: ${CFG_GITHUB_PAT_MGMT}
+SECRETSEOF
+    chmod 600 "$DEPLOY_DIR/secrets.yaml"
+
+    echo "==> Writing terraform.tfvars..."
+    cat > "$DEPLOY_DIR/infrastructure-mgmt/main/terraform.tfvars" <<TFVARSEOF
+github_mgmt_pat      = "${CFG_GITHUB_PAT_MGMT}"
+ssh_public_key       = "${CFG_SSH_PUBLIC_KEY}"
+slack_workspace      = "${CFG_SLACK_WORKSPACE}"
+slack_signing_secret = "${CFG_SLACK_SIGNING_SECRET}"
+fireworks_api_key    = "${CFG_FIREWORKS_API_KEY}"
+TFVARSEOF
+    chmod 600 "$DEPLOY_DIR/infrastructure-mgmt/main/terraform.tfvars"
+
+    echo "==> Writing empty targets.auto.tfvars..."
+    echo 'targets = {}' > "$DEPLOY_DIR/infrastructure-mgmt/main/targets.auto.tfvars"
+
+    echo "==> Encrypting secrets..."
+    (cd "$DEPLOY_DIR" && ./encrypt-secrets.sh)
+
+    # ── Git init (before bootstrap, so we can amend after) ──
+    echo ""
+    echo "==> Initializing git repo..."
+    cd "$DEPLOY_DIR"
+    git init -q
+    git add -A
+    git commit -q -m "Initial deployment scaffold (generated by create-deployment)"
+
+    # ── Bootstrap ──
+    echo ""
+    echo "==> Bootstrapping Terraform state backend (S3 + DynamoDB)..."
+    echo "    This creates two AWS resources in ${CFG_AWS_REGION} (~15 seconds)."
+    (
+        export AWS_ACCESS_KEY_ID="$CFG_AWS_ACCESS_KEY_ID"
+        export AWS_SECRET_ACCESS_KEY="$CFG_AWS_SECRET_ACCESS_KEY"
+        export AWS_DEFAULT_REGION="$CFG_AWS_REGION"
+        cd "$DEPLOY_DIR/infrastructure-mgmt/bootstrap"
+        tofu init -input=false >/dev/null 2>&1
+        tofu apply -auto-approve -input=false
+    )
+
+    # Capture outputs
+    BUCKET_NAME=$(
+        AWS_ACCESS_KEY_ID="$CFG_AWS_ACCESS_KEY_ID" \
+        AWS_SECRET_ACCESS_KEY="$CFG_AWS_SECRET_ACCESS_KEY" \
+        AWS_DEFAULT_REGION="$CFG_AWS_REGION" \
+        tofu -chdir="$DEPLOY_DIR/infrastructure-mgmt/bootstrap" output -raw tfstate_bucket_name
+    )
+    LOCK_TABLE=$(
+        AWS_ACCESS_KEY_ID="$CFG_AWS_ACCESS_KEY_ID" \
+        AWS_SECRET_ACCESS_KEY="$CFG_AWS_SECRET_ACCESS_KEY" \
+        AWS_DEFAULT_REGION="$CFG_AWS_REGION" \
+        tofu -chdir="$DEPLOY_DIR/infrastructure-mgmt/bootstrap" output -raw tfstate_lock_table_name
+    )
+
+    echo ""
+    echo "==> Configuring backend: bucket=$BUCKET_NAME, table=$LOCK_TABLE"
+    cat > "$DEPLOY_DIR/infrastructure-mgmt/main/backend.tf" <<BACKENDEOF
+terraform {
+  backend "s3" {
+    bucket         = "${BUCKET_NAME}"
+    key            = "main/terraform.tfstate"
+    region         = "${CFG_AWS_REGION}"
+    dynamodb_table = "${LOCK_TABLE}"
+    encrypt        = true
+  }
+}
+BACKENDEOF
+
+    echo "==> Initializing main infrastructure..."
+    (
+        export AWS_ACCESS_KEY_ID="$CFG_AWS_ACCESS_KEY_ID"
+        export AWS_SECRET_ACCESS_KEY="$CFG_AWS_SECRET_ACCESS_KEY"
+        export AWS_DEFAULT_REGION="$CFG_AWS_REGION"
+        cd "$DEPLOY_DIR/infrastructure-mgmt/main"
+        tofu init -input=false >/dev/null 2>&1
+    )
+    echo "    Main infrastructure initialized."
+
+    # Commit the backend.tf with real values
+    cd "$DEPLOY_DIR"
+    git add infrastructure-mgmt/main/backend.tf
+    git commit -q -m "Configure S3 backend from bootstrap outputs"
+
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    echo ""
+    echo "  Deployment repo created at: $DEPLOY_DIR"
+    echo ""
+    echo "  Age secret key: secrets/.key"
+    echo "  IMPORTANT: Back up this key to a password manager!"
+    echo ""
+    echo "  Next steps:"
+    echo "    1. cd $DEPLOY_DIR"
+    echo "    2. mise run infra-apply        # Creates EC2, Route53, etc."
+    echo "    3. Set up DNS delegation        # Add NS records at registrar"
+    echo "    4. mise run deploy              # Deploy the orchestrator"
+    echo "    5. mise run onboard-target      # Register target repos"
+    echo ""
+    echo "  See docs/runbook.md for detailed instructions."
+    echo ""
+
+else
+    # Non-interactive: just git init and print old-style instructions
+    cd "$DEPLOY_DIR"
+    git init -q
+    git add -A
+    git commit -q -m "Initial deployment scaffold (generated by create-deployment)"
+
+    echo ""
+    echo "Deployment repo created at: $DEPLOY_DIR"
+    echo ""
+    echo "Next steps:"
+    echo "  1. cd $DEPLOY_DIR"
+    echo "  2. Generate age keypair: age-keygen -o secrets/.key"
+    echo "     Copy the public key (age1...) into secrets/public-key.txt"
+    echo "  3. Create secrets.yaml with your AWS credentials"
+    echo "  4. Create infrastructure-mgmt/main/terraform.tfvars with deployment values"
+    echo "  5. Bootstrap: eval \"\$(.mise/lib/load-secrets)\" && cd infrastructure-mgmt/bootstrap && tofu init && tofu apply"
+    echo "  6. Fill in infrastructure-mgmt/main/backend.tf with bootstrap outputs"
+    echo "  7. mise run infra-apply"
+    echo "  8. Set up DNS delegation"
+    echo "  9. mise run deploy"
+    echo ""
+    echo "See README.md and docs/runbook.md for detailed instructions."
+fi
