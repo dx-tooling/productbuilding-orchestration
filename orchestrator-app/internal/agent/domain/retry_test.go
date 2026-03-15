@@ -98,13 +98,13 @@ func TestSleepWithContext_CancelledEarly(t *testing.T) {
 
 func TestDefaultRetryConfig(t *testing.T) {
 	cfg := DefaultRetryConfig()
-	if cfg.MaxRetries != 3 {
-		t.Errorf("expected MaxRetries 3, got %d", cfg.MaxRetries)
+	if cfg.MaxRetries != 6 {
+		t.Errorf("expected MaxRetries 6, got %d", cfg.MaxRetries)
 	}
-	if cfg.BaseDelay != 1*time.Second {
-		t.Errorf("expected BaseDelay 1s, got %v", cfg.BaseDelay)
+	if cfg.BaseDelay != 500*time.Millisecond {
+		t.Errorf("expected BaseDelay 500ms, got %v", cfg.BaseDelay)
 	}
-	if cfg.MaxDelay != 30*time.Second {
-		t.Errorf("expected MaxDelay 30s, got %v", cfg.MaxDelay)
+	if cfg.MaxDelay != 20*time.Second {
+		t.Errorf("expected MaxDelay 20s, got %v", cfg.MaxDelay)
 	}
 }
