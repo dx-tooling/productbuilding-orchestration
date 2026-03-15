@@ -3,7 +3,7 @@ package domain
 import (
 	"context"
 
-	githubdomain "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/github/domain"
+	githubdomain "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/github/domain"
 )
 
 // GitHubClientAdapter wraps a github domain Client to satisfy the agent's GitHubClient interface.

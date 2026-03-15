@@ -45,7 +45,7 @@ func TestParsePREvent(t *testing.T) {
 			}
 		},
 		"repository": {
-			"owner": {"login": "luminor-project"},
+			"owner": {"login": "example-org"},
 			"name": "my-app"
 		}
 	}`)
@@ -58,8 +58,8 @@ func TestParsePREvent(t *testing.T) {
 	if event.Action != "opened" {
 		t.Errorf("Action = %q, want %q", event.Action, "opened")
 	}
-	if event.RepoOwner != "luminor-project" {
-		t.Errorf("RepoOwner = %q, want %q", event.RepoOwner, "luminor-project")
+	if event.RepoOwner != "example-org" {
+		t.Errorf("RepoOwner = %q, want %q", event.RepoOwner, "example-org")
 	}
 	if event.RepoName != "my-app" {
 		t.Errorf("RepoName = %q, want %q", event.RepoName, "my-app")
@@ -97,7 +97,7 @@ func TestParsePREvent_ExtractsBodyTitleAuthor(t *testing.T) {
 			}
 		},
 		"repository": {
-			"owner": {"login": "luminor-project"},
+			"owner": {"login": "example-org"},
 			"name": "playground"
 		}
 	}`)

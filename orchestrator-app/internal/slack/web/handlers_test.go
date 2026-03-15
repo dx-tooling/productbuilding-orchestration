@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	agent "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/agent/domain"
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/domain"
+	agent "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/agent/domain"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/domain"
 )
 
 const testSigningSecret = "test-signing-secret-123"
@@ -215,7 +215,7 @@ func makeSignedRequest(t *testing.T, body []byte) *http.Request {
 
 func defaultTarget() targets.TargetConfig {
 	return targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "playground",
 		GitHubPAT:     "ghp_test123",
 		SlackBotToken: "xoxb-test",
@@ -515,7 +515,7 @@ func TestHandleEvent_InThreadMention_AgentRunsWithContext(t *testing.T) {
 	threadFinder := &mockThreadFinder{
 		thread: &domain.SlackThread{
 			GithubIssueID: 42,
-			RepoOwner:     "luminor-project",
+			RepoOwner:     "example-org",
 			RepoName:      "playground",
 		},
 	}

@@ -268,7 +268,7 @@ func TestClient_GetChannelName(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"ok": true,
 			"channel": map[string]interface{}{
-				"name": "productbuilding-luminor-core-go-playground",
+				"name": "productbuilding-my-app",
 			},
 		})
 	}))
@@ -280,8 +280,8 @@ func TestClient_GetChannelName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetChannelName() error = %v", err)
 	}
-	if name != "productbuilding-luminor-core-go-playground" {
-		t.Errorf("GetChannelName() = %q, want %q", name, "productbuilding-luminor-core-go-playground")
+	if name != "productbuilding-my-app" {
+		t.Errorf("GetChannelName() = %q, want %q", name, "productbuilding-my-app")
 	}
 }
 

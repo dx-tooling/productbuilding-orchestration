@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
-	slackfacade "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/facade"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
+	slackfacade "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/facade"
 )
 
 // SlackNotifier defines the interface for sending Slack notifications
@@ -152,7 +152,7 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 		Branch:       req.Branch,
 		PreviewURL:   fmt.Sprintf("https://%s-pr-%d.%s", req.RepoName, req.PRNumber, s.previewDomain),
 		LogsURL:      fmt.Sprintf("https://api.%s/previews/%s/%s/%d/logs", s.previewDomain, req.RepoOwner, req.RepoName, req.PRNumber),
-		AnimationURL: "https://raw.githubusercontent.com/luminor-project/assets/refs/heads/main/productbuilding/crane-building-animation-128x128.gif",
+		AnimationURL: "https://raw.githubusercontent.com/dx-tooling/productbuilding-assets/refs/heads/main/crane-building-animation-128x128.gif",
 	}
 
 	// 1. Delete previous bot comment and post new acknowledgment (before acquiring mutex)

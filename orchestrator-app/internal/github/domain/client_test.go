@@ -14,8 +14,8 @@ func TestClient_CreateIssue(t *testing.T) {
 		if r.Method != "POST" {
 			t.Errorf("Expected POST, got %s", r.Method)
 		}
-		if r.URL.Path != "/repos/luminor-project/playground/issues" {
-			t.Errorf("Expected path /repos/luminor-project/playground/issues, got %s", r.URL.Path)
+		if r.URL.Path != "/repos/example-org/playground/issues" {
+			t.Errorf("Expected path /repos/example-org/playground/issues, got %s", r.URL.Path)
 		}
 
 		auth := r.Header.Get("Authorization")
@@ -46,7 +46,7 @@ func TestClient_CreateIssue(t *testing.T) {
 
 	client := &Client{httpClient: &http.Client{}, baseURL: server.URL}
 
-	number, err := client.CreateIssue(context.Background(), "luminor-project", "playground", "Add dark mode support", "Created via Slack", "ghp_test123")
+	number, err := client.CreateIssue(context.Background(), "example-org", "playground", "Add dark mode support", "Created via Slack", "ghp_test123")
 	if err != nil {
 		t.Fatalf("CreateIssue() error = %v", err)
 	}

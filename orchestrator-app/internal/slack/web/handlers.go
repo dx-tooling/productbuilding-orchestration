@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
-	agent "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/agent/domain"
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/domain"
+	agent "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/agent/domain"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/domain"
 )
 
 // AgentRunner runs the LLM agent loop.

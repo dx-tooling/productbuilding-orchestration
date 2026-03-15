@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/database"
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/domain"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/database"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/domain"
 	_ "modernc.org/sqlite"
 )
 
@@ -34,7 +34,7 @@ func TestRepository_SaveThread(t *testing.T) {
 
 	thread := &domain.SlackThread{
 		ID:            "test-id-1",
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		GithubIssueID: 42,
 		SlackChannel:  "#productbuilding-test",
@@ -61,7 +61,7 @@ func TestRepository_FindThread_ByIssue(t *testing.T) {
 	// Save a thread first
 	thread := &domain.SlackThread{
 		ID:            "test-id-2",
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		GithubIssueID: 42,
 		SlackChannel:  "#productbuilding-test",
@@ -76,7 +76,7 @@ func TestRepository_FindThread_ByIssue(t *testing.T) {
 	}
 
 	// Test finding by issue
-	found, err := repo.FindThread(ctx, "luminor-project", "test-repo", 42)
+	found, err := repo.FindThread(ctx, "example-org", "test-repo", 42)
 	if err != nil {
 		t.Errorf("FindThread() error = %v", err)
 		return
@@ -106,7 +106,7 @@ func TestRepository_FindThread_NotFound(t *testing.T) {
 	ctx := context.Background()
 
 	// Try to find non-existent thread
-	found, err := repo.FindThread(ctx, "luminor-project", "test-repo", 999)
+	found, err := repo.FindThread(ctx, "example-org", "test-repo", 999)
 	if err == nil {
 		t.Error("FindThread() expected error for non-existent thread, got nil")
 	}
@@ -125,7 +125,7 @@ func TestRepository_FindThread_ByPR(t *testing.T) {
 	// Save a PR thread
 	thread := &domain.SlackThread{
 		ID:            "test-id-3",
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		GithubPRID:    123,
 		SlackChannel:  "#productbuilding-test",
@@ -140,7 +140,7 @@ func TestRepository_FindThread_ByPR(t *testing.T) {
 	}
 
 	// Find by PR
-	found, err := repo.FindThreadByPR(ctx, "luminor-project", "test-repo", 123)
+	found, err := repo.FindThreadByPR(ctx, "example-org", "test-repo", 123)
 	if err != nil {
 		t.Errorf("FindThreadByPR() error = %v", err)
 		return
@@ -169,7 +169,7 @@ func TestRepository_DuplicatePrevention(t *testing.T) {
 	// Save first thread
 	thread1 := &domain.SlackThread{
 		ID:            "test-id-4",
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		GithubIssueID: 42,
 		SlackChannel:  "#productbuilding-test",
@@ -186,7 +186,7 @@ func TestRepository_DuplicatePrevention(t *testing.T) {
 	// Try to save duplicate (same repo + issue number)
 	thread2 := &domain.SlackThread{
 		ID:            "test-id-5",
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		GithubIssueID: 42, // Same issue number!
 		SlackChannel:  "#productbuilding-test-2",
@@ -211,7 +211,7 @@ func TestRepository_FindThreadBySlackTs(t *testing.T) {
 
 	thread := &domain.SlackThread{
 		ID:            "test-id-ts-1",
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		GithubIssueID: 42,
 		SlackChannel:  "#productbuilding-test",
@@ -237,8 +237,8 @@ func TestRepository_FindThreadBySlackTs(t *testing.T) {
 	if found.GithubIssueID != 42 {
 		t.Errorf("GithubIssueID = %v, want 42", found.GithubIssueID)
 	}
-	if found.RepoOwner != "luminor-project" {
-		t.Errorf("RepoOwner = %v, want luminor-project", found.RepoOwner)
+	if found.RepoOwner != "example-org" {
+		t.Errorf("RepoOwner = %v, want example-org", found.RepoOwner)
 	}
 }
 
@@ -268,7 +268,7 @@ func TestRepository_FindThreadBySlackTs_ReturnsNewestMapping(t *testing.T) {
 	// Save first mapping: issue #41, created earlier
 	thread1 := &domain.SlackThread{
 		ID:            "test-id-old",
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		GithubIssueID: 41,
 		SlackChannel:  "#productbuilding-test",
@@ -284,7 +284,7 @@ func TestRepository_FindThreadBySlackTs_ReturnsNewestMapping(t *testing.T) {
 	// Save second mapping: issue #49, created later, same slack_thread_ts
 	thread2 := &domain.SlackThread{
 		ID:            "test-id-new",
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		GithubIssueID: 49,
 		SlackChannel:  "#productbuilding-test",
@@ -320,7 +320,7 @@ func TestRepository_UpdateThread(t *testing.T) {
 	// Save initial thread
 	thread := &domain.SlackThread{
 		ID:            "test-id-6",
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		GithubIssueID: 42,
 		SlackChannel:  "#productbuilding-test",
@@ -340,7 +340,7 @@ func TestRepository_UpdateThread(t *testing.T) {
 
 	// Note: We might need an Update method, or we could use ON CONFLICT UPDATE
 	// For now, let's test that we can find the original
-	found, err := repo.FindThread(ctx, "luminor-project", "test-repo", 42)
+	found, err := repo.FindThread(ctx, "example-org", "test-repo", 42)
 	if err != nil {
 		t.Fatalf("FindThread() error = %v", err)
 	}

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	agent "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/agent/domain"
 	"github.com/google/uuid"
-	agent "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/agent/domain"
 )
 
 // ConversationRepository persists and queries agent conversations.

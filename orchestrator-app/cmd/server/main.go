@@ -7,31 +7,31 @@ import (
 	"time"
 
 	// Agent vertical
-	agentdomain "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/agent/domain"
+	agentdomain "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/agent/domain"
 
 	// Dashboard vertical
-	dashboardweb "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/dashboard/web"
+	dashboardweb "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/dashboard/web"
 
 	// GitHub vertical
-	githubdomain "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/github/domain"
-	githubweb "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/github/web"
+	githubdomain "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/github/domain"
+	githubweb "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/github/web"
 
 	// Preview vertical
-	previewdomain "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/preview/domain"
-	previewinfra "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/preview/infra"
-	previewweb "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/preview/web"
+	previewdomain "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/preview/domain"
+	previewinfra "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/preview/infra"
+	previewweb "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/preview/web"
 
 	// Slack vertical
-	slackdomain "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/domain"
-	slackinfra "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/infra"
-	slackweb "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/web"
+	slackdomain "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/domain"
+	slackinfra "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/infra"
+	slackweb "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/web"
 
 	// Platform
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/config"
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/database"
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/logging"
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/server"
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/config"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/database"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/logging"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/server"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
 )
 
 func main() {
@@ -61,7 +61,7 @@ func main() {
 	}
 
 	// ── Load Target Registry ───────────────────────────────────────────
-	registry := targets.NewRegistry()
+	registry := targets.NewRegistry(cfg.SlackChannelPrefix)
 	if err := registry.LoadFromFile(cfg.TargetsConfigPath); err != nil {
 		slog.Warn("failed to load targets config", "path", cfg.TargetsConfigPath, "error", err)
 	} else {

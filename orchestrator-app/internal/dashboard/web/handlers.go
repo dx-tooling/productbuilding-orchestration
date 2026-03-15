@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/preview/domain"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/preview/domain"
 )
 
 var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!DOCTYPE html>

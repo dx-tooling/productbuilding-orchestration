@@ -1,19 +1,9 @@
-secrets.yaml
-secrets/.key
 .env
+secrets.yaml
 
 # macOS
 .DS_Store
 **/.DS_Store
-
-# OpenTofu
-infrastructure-mgmt/bootstrap/terraform.tfstate
-infrastructure-mgmt/bootstrap/terraform.tfstate.backup
-infrastructure-mgmt/bootstrap/.terraform/
-infrastructure-mgmt/main/.terraform/
-infrastructure-mgmt/main/targets.auto.tfvars
-infrastructure-mgmt/main/terraform.tfvars
-**/.terraform.lock.hcl
 
 # Go / orchestrator app
 orchestrator-app/bin/

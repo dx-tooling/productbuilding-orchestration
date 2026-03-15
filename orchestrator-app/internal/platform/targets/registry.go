@@ -22,11 +22,12 @@ type TargetConfig struct {
 
 // Registry provides lookup of target repo configurations.
 type Registry struct {
-	targets map[string]TargetConfig // key: "owner/repo"
+	targets       map[string]TargetConfig // key: "owner/repo"
+	channelPrefix string
 }
 
-func NewRegistry() *Registry {
-	return &Registry{targets: make(map[string]TargetConfig)}
+func NewRegistry(channelPrefix string) *Registry {
+	return &Registry{targets: make(map[string]TargetConfig), channelPrefix: channelPrefix}
 }
 
 // Get returns the config for a target repo, if registered.
@@ -37,12 +38,12 @@ func (r *Registry) Get(repoOwner, repoName string) (TargetConfig, bool) {
 }
 
 // GetByChannelName returns the config for a target whose repo name matches
-// the Slack channel naming convention "productbuilding-<reponame>".
+// the Slack channel naming convention "<prefix><reponame>".
 func (r *Registry) GetByChannelName(channelName string) (TargetConfig, bool) {
-	if !strings.HasPrefix(channelName, "productbuilding-") {
+	if !strings.HasPrefix(channelName, r.channelPrefix) {
 		return TargetConfig{}, false
 	}
-	repoName := strings.TrimPrefix(channelName, "productbuilding-")
+	repoName := strings.TrimPrefix(channelName, r.channelPrefix)
 	for _, t := range r.targets {
 		if t.RepoName == repoName {
 			return t, true

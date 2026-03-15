@@ -1,11 +1,11 @@
 package testharness
 
 import (
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/preview/domain"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/preview/domain"
 )
 
 func NewPreview(opts ...func(*domain.Preview)) domain.Preview {
-	p := domain.NewPreview("luminor-project", "etfg-app-starter-kit", 42, "feature/test", "abc123def", "productbuilder.luminor-tech.net")
+	p := domain.NewPreview("example-org", "my-app", 42, "feature/test", "abc123def", "preview.example.com")
 	for _, opt := range opts {
 		opt(&p)
 	}

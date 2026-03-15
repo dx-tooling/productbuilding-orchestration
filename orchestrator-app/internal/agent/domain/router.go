@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
 )
 
 // Router classifies user intent via a single LLM call and returns a RoutingDecision.

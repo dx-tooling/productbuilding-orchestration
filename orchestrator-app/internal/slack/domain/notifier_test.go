@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
-	slackfacade "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/facade"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
+	slackfacade "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/facade"
 )
 
 // Mock implementations for testing
@@ -190,7 +190,7 @@ func TestNotifier_Notify_NewThread(t *testing.T) {
 	notifier := NewNotifier(client, repo, debouncer)
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-test",
@@ -198,11 +198,11 @@ func TestNotifier_Notify_NewThread(t *testing.T) {
 
 	event := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventIssueOpened,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
 		Title:       "Add dark mode",
-		URL:         "https://github.com/luminor-project/test-repo/issues/42",
+		URL:         "https://github.com/example-org/test-repo/issues/42",
 		Author:      "alice",
 	}
 
@@ -235,7 +235,7 @@ func TestNotifier_Notify_ExistingThread(t *testing.T) {
 	notifier := NewNotifier(client, repo, debouncer)
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-test",
@@ -244,7 +244,7 @@ func TestNotifier_Notify_ExistingThread(t *testing.T) {
 	// Pre-populate existing thread
 	existingThread := &SlackThread{
 		ID:            "existing-id",
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		GithubIssueID: 42,
 		SlackChannel:  "#productbuilding-test",
@@ -256,7 +256,7 @@ func TestNotifier_Notify_ExistingThread(t *testing.T) {
 	// First message creates parent
 	event1 := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventIssueOpened,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
 		Title:       "Add dark mode",
@@ -267,7 +267,7 @@ func TestNotifier_Notify_ExistingThread(t *testing.T) {
 	// Second message should post to existing thread
 	event2 := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventCommentAdded,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
 		Author:      "bob",
@@ -295,14 +295,14 @@ func TestNotifier_Notify_NoSlackConfig(t *testing.T) {
 
 	// Target without Slack config
 	target := targets.TargetConfig{
-		RepoOwner: "luminor-project",
+		RepoOwner: "example-org",
 		RepoName:  "test-repo",
 		// No SlackChannel or SlackBotToken
 	}
 
 	event := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventIssueOpened,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
 	}
@@ -325,7 +325,7 @@ func TestNotifier_Notify_EmojiReaction(t *testing.T) {
 	notifier := NewNotifier(client, repo, debouncer)
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-test",
@@ -334,7 +334,7 @@ func TestNotifier_Notify_EmojiReaction(t *testing.T) {
 	// Pre-populate existing thread so we can add reactions to it
 	existingThread := &SlackThread{
 		ID:            "existing-id",
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		GithubPRID:    42,
 		SlackChannel:  "#productbuilding-test",
@@ -346,7 +346,7 @@ func TestNotifier_Notify_EmojiReaction(t *testing.T) {
 	// First create the thread with PR opened
 	event1 := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventPROpened,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
 		Title:       "Add feature",
@@ -359,7 +359,7 @@ func TestNotifier_Notify_EmojiReaction(t *testing.T) {
 		Type:        slackfacade.EventPRReady,
 		Emoji:       "white_check_mark",
 		ThreadTs:    "parent-ts-123",
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
 		Title:       "Add feature",
@@ -389,7 +389,7 @@ func TestNotifier_Notify_Debouncing(t *testing.T) {
 	notifier := NewNotifier(client, repo, debouncer)
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-test",
@@ -399,7 +399,7 @@ func TestNotifier_Notify_Debouncing(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		event := slackfacade.NotificationEvent{
 			Type:        slackfacade.EventPROpened,
-			RepoOwner:   "luminor-project",
+			RepoOwner:   "example-org",
 			RepoName:    "test-repo",
 			IssueNumber: 42,
 			Title:       "Add feature",
@@ -428,7 +428,7 @@ func TestNotifier_PRLinksToIssueThread_CreatesNewMapping(t *testing.T) {
 	notifier := NewNotifier(client, repo, debouncer)
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-test",
@@ -437,7 +437,7 @@ func TestNotifier_PRLinksToIssueThread_CreatesNewMapping(t *testing.T) {
 	// Pre-existing issue thread
 	repo.SaveThread(context.Background(), &SlackThread{
 		ID:            "issue-thread-id",
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		GithubIssueID: 51,
 		SlackChannel:  "#productbuilding-test",
@@ -448,7 +448,7 @@ func TestNotifier_PRLinksToIssueThread_CreatesNewMapping(t *testing.T) {
 	// PR #52 opened, linked to issue #51
 	event := slackfacade.NotificationEvent{
 		Type:              slackfacade.EventPROpened,
-		RepoOwner:         "luminor-project",
+		RepoOwner:         "example-org",
 		RepoName:          "test-repo",
 		IssueNumber:       52,
 		Title:             "Forgot password implemented",
@@ -472,7 +472,7 @@ func TestNotifier_PRLinksToIssueThread_CreatesNewMapping(t *testing.T) {
 	}
 
 	// Should have created a separate PR mapping (FindThreadByNumber for #52 should work)
-	prThread, _ := repo.FindThreadByNumber(context.Background(), "luminor-project", "test-repo", 52)
+	prThread, _ := repo.FindThreadByNumber(context.Background(), "example-org", "test-repo", 52)
 	if prThread == nil {
 		t.Fatal("Expected PR thread mapping to be created for #52")
 	}
@@ -484,7 +484,7 @@ func TestNotifier_PRLinksToIssueThread_CreatesNewMapping(t *testing.T) {
 	}
 
 	// Original issue thread should be untouched
-	issueThread, _ := repo.FindThreadByNumber(context.Background(), "luminor-project", "test-repo", 51)
+	issueThread, _ := repo.FindThreadByNumber(context.Background(), "example-org", "test-repo", 51)
 	if issueThread == nil || issueThread.GithubIssueID != 51 {
 		t.Errorf("Original issue thread should be preserved, got %+v", issueThread)
 	}
@@ -497,7 +497,7 @@ func TestNotifier_MultiplePRsPerIssue_AllLinkToSameThread(t *testing.T) {
 	notifier := NewNotifier(client, repo, debouncer)
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-test",
@@ -506,7 +506,7 @@ func TestNotifier_MultiplePRsPerIssue_AllLinkToSameThread(t *testing.T) {
 	// Pre-existing issue thread
 	repo.SaveThread(context.Background(), &SlackThread{
 		ID:            "issue-thread-id",
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		GithubIssueID: 51,
 		SlackChannel:  "#productbuilding-test",
@@ -517,7 +517,7 @@ func TestNotifier_MultiplePRsPerIssue_AllLinkToSameThread(t *testing.T) {
 	// First PR
 	event1 := slackfacade.NotificationEvent{
 		Type:              slackfacade.EventPROpened,
-		RepoOwner:         "luminor-project",
+		RepoOwner:         "example-org",
 		RepoName:          "test-repo",
 		IssueNumber:       52,
 		Title:             "Forgot password - backend",
@@ -529,7 +529,7 @@ func TestNotifier_MultiplePRsPerIssue_AllLinkToSameThread(t *testing.T) {
 	// Second PR
 	event2 := slackfacade.NotificationEvent{
 		Type:              slackfacade.EventPROpened,
-		RepoOwner:         "luminor-project",
+		RepoOwner:         "example-org",
 		RepoName:          "test-repo",
 		IssueNumber:       53,
 		Title:             "Forgot password - frontend",
@@ -539,8 +539,8 @@ func TestNotifier_MultiplePRsPerIssue_AllLinkToSameThread(t *testing.T) {
 	debouncer.executeAll()
 
 	// Both PRs should resolve to the issue thread
-	pr52, _ := repo.FindThreadByNumber(context.Background(), "luminor-project", "test-repo", 52)
-	pr53, _ := repo.FindThreadByNumber(context.Background(), "luminor-project", "test-repo", 53)
+	pr52, _ := repo.FindThreadByNumber(context.Background(), "example-org", "test-repo", 52)
+	pr53, _ := repo.FindThreadByNumber(context.Background(), "example-org", "test-repo", 53)
 
 	if pr52 == nil || pr52.SlackThreadTs != "issue-thread-ts" {
 		t.Errorf("PR #52 should map to issue thread, got %+v", pr52)
@@ -559,7 +559,7 @@ func TestNotifier_Flush_RetriesForNewIssue_FindsThreadMapping(t *testing.T) {
 	notifier := NewNotifier(client, repo, debouncer)
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-test",
@@ -567,7 +567,7 @@ func TestNotifier_Flush_RetriesForNewIssue_FindsThreadMapping(t *testing.T) {
 
 	event := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventIssueOpened,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 50,
 		Title:       "Forgot Password",
@@ -582,7 +582,7 @@ func TestNotifier_Flush_RetriesForNewIssue_FindsThreadMapping(t *testing.T) {
 		time.Sleep(2 * time.Second)
 		repo.SaveThread(context.Background(), &SlackThread{
 			ID:            "agent-thread-id",
-			RepoOwner:     "luminor-project",
+			RepoOwner:     "example-org",
 			RepoName:      "test-repo",
 			GithubIssueID: 50,
 			SlackChannel:  "#productbuilding-test",
@@ -624,7 +624,7 @@ func TestNotifier_CommentOnUnknownIssue_NoNewThread(t *testing.T) {
 	notifier.retryWait = 10 * time.Millisecond
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-test",
@@ -632,7 +632,7 @@ func TestNotifier_CommentOnUnknownIssue_NoNewThread(t *testing.T) {
 
 	event := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventCommentAdded,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 99,
 		Author:      "PrdctBldr",
@@ -655,7 +655,7 @@ func TestNotifier_CommentOnKnownIssue_PostsToThread(t *testing.T) {
 	notifier := NewNotifier(client, repo, debouncer)
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-test",
@@ -663,7 +663,7 @@ func TestNotifier_CommentOnKnownIssue_PostsToThread(t *testing.T) {
 
 	repo.SaveThread(context.Background(), &SlackThread{
 		ID:            "existing-id",
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		GithubIssueID: 42,
 		SlackChannel:  "#productbuilding-test",
@@ -673,7 +673,7 @@ func TestNotifier_CommentOnKnownIssue_PostsToThread(t *testing.T) {
 
 	event := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventCommentAdded,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
 		Author:      "alice",
@@ -700,7 +700,7 @@ func TestNotifier_PRWithLinkedIssue_FindsThreadWithoutRetrySleep(t *testing.T) {
 	notifier := NewNotifier(client, repo, debouncer)
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-test",
@@ -708,7 +708,7 @@ func TestNotifier_PRWithLinkedIssue_FindsThreadWithoutRetrySleep(t *testing.T) {
 
 	repo.SaveThread(context.Background(), &SlackThread{
 		ID:            "issue-thread-id",
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		GithubIssueID: 53,
 		SlackChannel:  "#productbuilding-test",
@@ -718,7 +718,7 @@ func TestNotifier_PRWithLinkedIssue_FindsThreadWithoutRetrySleep(t *testing.T) {
 
 	event := slackfacade.NotificationEvent{
 		Type:              slackfacade.EventPROpened,
-		RepoOwner:         "luminor-project",
+		RepoOwner:         "example-org",
 		RepoName:          "test-repo",
 		IssueNumber:       54,
 		Title:             "Implement feature",
@@ -816,13 +816,13 @@ func TestSanitizeForCodeBlock(t *testing.T) {
 func TestFormatParentMessage_BodyInCodeBlock(t *testing.T) {
 	event := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventIssueOpened,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 10,
 		Title:       "Test issue",
 		Author:      "alice",
 		Body:        "This is the **body** with [a link](https://example.com)",
-		URL:         "https://github.com/luminor-project/test-repo/issues/10",
+		URL:         "https://github.com/example-org/test-repo/issues/10",
 	}
 
 	msg := formatParentMessage(event)
@@ -845,7 +845,7 @@ func TestNotifier_TwoComments_PreservedInOrder(t *testing.T) {
 	notifier := NewNotifier(client, repo, debouncer)
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-test",
@@ -853,7 +853,7 @@ func TestNotifier_TwoComments_PreservedInOrder(t *testing.T) {
 
 	repo.SaveThread(context.Background(), &SlackThread{
 		ID:            "existing-id",
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		GithubIssueID: 42,
 		SlackChannel:  "#productbuilding-test",
@@ -863,7 +863,7 @@ func TestNotifier_TwoComments_PreservedInOrder(t *testing.T) {
 
 	comment1 := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventCommentAdded,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
 		Author:      "alice",
@@ -871,7 +871,7 @@ func TestNotifier_TwoComments_PreservedInOrder(t *testing.T) {
 	}
 	comment2 := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventCommentAdded,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
 		Author:      "bob",
@@ -906,7 +906,7 @@ func TestNotifier_PROpenedPlusComment_SameBatch(t *testing.T) {
 	notifier.retryWait = 10 * time.Millisecond
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-test",
@@ -914,7 +914,7 @@ func TestNotifier_PROpenedPlusComment_SameBatch(t *testing.T) {
 
 	prEvent := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventPROpened,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
 		Title:       "Add feature",
@@ -922,7 +922,7 @@ func TestNotifier_PROpenedPlusComment_SameBatch(t *testing.T) {
 	}
 	commentEvent := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventCommentAdded,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
 		Author:      "bot",
@@ -960,7 +960,7 @@ func TestNotifier_CommentBeforeLifecycle_SameBatch(t *testing.T) {
 	notifier.retryWait = 10 * time.Millisecond
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-test",
@@ -969,7 +969,7 @@ func TestNotifier_CommentBeforeLifecycle_SameBatch(t *testing.T) {
 	// Comment arrives FIRST
 	commentEvent := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventCommentAdded,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
 		Author:      "bot",
@@ -978,7 +978,7 @@ func TestNotifier_CommentBeforeLifecycle_SameBatch(t *testing.T) {
 	// PR opened arrives SECOND
 	prEvent := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventPROpened,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
 		Title:       "Add feature",
@@ -1010,7 +1010,7 @@ func TestNotifier_StatusDedup_StillWorks(t *testing.T) {
 	notifier.retryWait = 10 * time.Millisecond
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-test",
@@ -1018,7 +1018,7 @@ func TestNotifier_StatusDedup_StillWorks(t *testing.T) {
 
 	event1 := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventPROpened,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
 		Title:       "Add feature",
@@ -1026,7 +1026,7 @@ func TestNotifier_StatusDedup_StillWorks(t *testing.T) {
 	}
 	event2 := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventPRReady,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
 		Title:       "Add feature",
@@ -1055,7 +1055,7 @@ func TestNotifier_OrphanComment_RetriesGivesUp(t *testing.T) {
 	notifier.retryWait = 10 * time.Millisecond
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-test",
@@ -1063,7 +1063,7 @@ func TestNotifier_OrphanComment_RetriesGivesUp(t *testing.T) {
 
 	event := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventCommentAdded,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 99,
 		Author:      "bot",
@@ -1087,7 +1087,7 @@ func TestNotifier_OrphanComment_RetriesFindsThread(t *testing.T) {
 	notifier.retryWait = 200 * time.Millisecond
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-test",
@@ -1095,7 +1095,7 @@ func TestNotifier_OrphanComment_RetriesFindsThread(t *testing.T) {
 
 	event := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventCommentAdded,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 50,
 		Author:      "bot",
@@ -1109,7 +1109,7 @@ func TestNotifier_OrphanComment_RetriesFindsThread(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		repo.SaveThread(context.Background(), &SlackThread{
 			ID:            "late-thread-id",
-			RepoOwner:     "luminor-project",
+			RepoOwner:     "example-org",
 			RepoName:      "test-repo",
 			GithubIssueID: 50,
 			SlackChannel:  "#productbuilding-test",
@@ -1136,7 +1136,7 @@ func TestNotifier_FlushIdempotent(t *testing.T) {
 	notifier := NewNotifier(client, repo, debouncer)
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-test",
@@ -1144,7 +1144,7 @@ func TestNotifier_FlushIdempotent(t *testing.T) {
 
 	repo.SaveThread(context.Background(), &SlackThread{
 		ID:            "existing-id",
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		GithubIssueID: 42,
 		SlackChannel:  "#productbuilding-test",
@@ -1154,7 +1154,7 @@ func TestNotifier_FlushIdempotent(t *testing.T) {
 
 	event := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventCommentAdded,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
 		Author:      "alice",
@@ -1180,7 +1180,7 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 	notifier := NewNotifier(client, repo, debouncer)
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-test",
@@ -1195,7 +1195,7 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 			name: "PR ready creates parent (new thread)",
 			event: slackfacade.NotificationEvent{
 				Type:        slackfacade.EventPRReady,
-				RepoOwner:   "luminor-project",
+				RepoOwner:   "example-org",
 				RepoName:    "test-repo",
 				IssueNumber: 42,
 				Title:       "Add feature",
@@ -1208,7 +1208,7 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 			name: "Preview failed",
 			event: slackfacade.NotificationEvent{
 				Type:        slackfacade.EventPRFailed,
-				RepoOwner:   "luminor-project",
+				RepoOwner:   "example-org",
 				RepoName:    "test-repo",
 				IssueNumber: 42,
 				Status:      "compose_up",
@@ -1219,7 +1219,7 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 			name: "Comment with link",
 			event: slackfacade.NotificationEvent{
 				Type:        slackfacade.EventCommentAdded,
-				RepoOwner:   "luminor-project",
+				RepoOwner:   "example-org",
 				RepoName:    "test-repo",
 				IssueNumber: 42,
 				Author:      "alice",

@@ -3,7 +3,7 @@ package targets
 import "testing"
 
 func TestRegistry_GetByChannelName(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry("productbuilding-")
 	r.targets["acme/my-cool-app"] = TargetConfig{
 		RepoOwner: "acme",
 		RepoName:  "my-cool-app",
@@ -20,7 +20,7 @@ func TestRegistry_GetByChannelName(t *testing.T) {
 }
 
 func TestRegistry_GetByChannelName_NotFound(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry("productbuilding-")
 	r.targets["acme/app"] = TargetConfig{
 		RepoOwner: "acme",
 		RepoName:  "app",
@@ -33,7 +33,7 @@ func TestRegistry_GetByChannelName_NotFound(t *testing.T) {
 }
 
 func TestRegistry_GetByChannelName_WrongPrefix(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry("productbuilding-")
 	r.targets["acme/app"] = TargetConfig{
 		RepoOwner: "acme",
 		RepoName:  "app",

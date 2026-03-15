@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/database"
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/domain"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/database"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/domain"
 )
 
 // Repository defines the interface for Slack thread persistence

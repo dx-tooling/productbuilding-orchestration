@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
-	slackfacade "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/facade"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
+	slackfacade "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/facade"
 )
 
 // TestNotifier_UsesCorrectBotTokenFromTarget verifies that the notifier
@@ -218,7 +218,7 @@ func TestIntegration_FullSlackNotificationFlow(t *testing.T) {
 	notifier := NewNotifier(mockClient, repo, debouncer)
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "test-repo",
 		SlackChannel:  "#productbuilding-test",
 		SlackBotToken: "xoxb-real-token-from-config-123",
@@ -226,7 +226,7 @@ func TestIntegration_FullSlackNotificationFlow(t *testing.T) {
 
 	event := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventIssueOpened,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 99,
 		Title:       "Integration Test Issue",
@@ -584,7 +584,7 @@ func TestNotifier_PRWithDifferentNumber_ThreadsToLinkedIssue(t *testing.T) {
 	notifier := NewNotifier(client, repo, debouncer)
 
 	target := targets.TargetConfig{
-		RepoOwner:     "luminor-project",
+		RepoOwner:     "example-org",
 		RepoName:      "playground",
 		SlackChannel:  "#productbuilding",
 		SlackBotToken: "xoxb-test",
@@ -595,7 +595,7 @@ func TestNotifier_PRWithDifferentNumber_ThreadsToLinkedIssue(t *testing.T) {
 	// Step 1: Issue #16 is created
 	issueEvent := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventIssueOpened,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "playground",
 		IssueNumber: 16,
 		Title:       "Explain technical details on homepage",
@@ -619,7 +619,7 @@ func TestNotifier_PRWithDifferentNumber_ThreadsToLinkedIssue(t *testing.T) {
 	// Step 2: PR #17 is opened, linked to issue #16 via "Fixes #16" in body
 	prEvent := slackfacade.NotificationEvent{
 		Type:              slackfacade.EventPROpened,
-		RepoOwner:         "luminor-project",
+		RepoOwner:         "example-org",
 		RepoName:          "playground",
 		IssueNumber:       17, // Different number than the issue!
 		Title:             "Added tech/arch section to homepage",
@@ -653,7 +653,7 @@ func TestNotifier_PRWithDifferentNumber_ThreadsToLinkedIssue(t *testing.T) {
 	// the PR #17 → thread mapping (GithubPRID=17).
 	commentEvent := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventCommentAdded,
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "playground",
 		IssueNumber: 17,
 		Body:        "LGTM!",

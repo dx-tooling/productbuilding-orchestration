@@ -1,4 +1,4 @@
-module github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app
+module github.com/dx-tooling/productbuilding-orchestration/orchestrator-app
 
 go 1.26
 

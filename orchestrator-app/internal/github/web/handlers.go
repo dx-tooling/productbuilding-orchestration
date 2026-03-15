@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/github/domain"
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
-	previewdomain "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/preview/domain"
-	slackfacade "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/facade"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/github/domain"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
+	previewdomain "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/preview/domain"
+	slackfacade "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/facade"
 )
 
 // Notifier defines the interface for Slack notifications

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
 )
 
 // mockGitHubClient is a test double for GitHubClient.

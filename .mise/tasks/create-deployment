@@ -1,0 +1,1431 @@
+#!/usr/bin/env bash
+#MISE description="Scaffold a new deployment repo"
+set -euo pipefail
+
+NAME="${1:-}"
+if [[ -z "$NAME" ]]; then
+    echo "Usage: mise run create-deployment <name>"
+    echo ""
+    echo "Creates ../productbuilding-deployment-<name>/ with all infrastructure,"
+    echo "secrets, and operational tasks needed to run your own deployment."
+    exit 1
+fi
+
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+ORCH_DIRNAME="$(basename "$PROJECT_DIR")"
+DEPLOY_DIR="$(dirname "$PROJECT_DIR")/productbuilding-deployment-${NAME}"
+
+if [[ -d "$DEPLOY_DIR" ]]; then
+    echo "Error: $DEPLOY_DIR already exists" >&2
+    exit 1
+fi
+
+echo "Creating deployment repo at $DEPLOY_DIR"
+echo "Orchestration repo: $ORCH_DIRNAME"
+echo ""
+
+# ── Create directory structure ──────────────────────────────────────
+mkdir -p "$DEPLOY_DIR"/{infrastructure-mgmt/{main,bootstrap},secrets,.mise/{tasks,lib},docs}
+
+# ── Root files ──────────────────────────────────────────────────────
+
+cat > "$DEPLOY_DIR/mise.toml" <<EOF
+# Deployment: ${NAME}
+# Orchestration repo expected at: ../${ORCH_DIRNAME}/
+
+[task_config]
+includes = [".mise/tasks"]
+EOF
+
+cat > "$DEPLOY_DIR/.gitignore" <<'EOF'
+secrets.yaml
+secrets/.key
+.env
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# OpenTofu
+infrastructure-mgmt/bootstrap/terraform.tfstate
+infrastructure-mgmt/bootstrap/terraform.tfstate.backup
+infrastructure-mgmt/bootstrap/.terraform/
+infrastructure-mgmt/main/.terraform/
+infrastructure-mgmt/main/targets.auto.tfvars
+infrastructure-mgmt/main/terraform.tfvars
+**/.terraform.lock.hcl
+
+.claude/
+EOF
+
+cat > "$DEPLOY_DIR/README.md" <<EOF
+# ProductBuilding Deployment: ${NAME}
+
+Private deployment configuration for the [productbuilding-orchestration](../${ORCH_DIRNAME}/) platform.
+
+This repo contains infrastructure definitions, secrets, and operational tasks for this specific deployment. The generic orchestration code lives in the core repo at \`../${ORCH_DIRNAME}/\`.
+
+## Prerequisites
+
+- [mise](https://mise.jdx.dev/)
+- [OpenTofu](https://opentofu.org/) (\`brew install opentofu\`)
+- [AWS CLI](https://aws.amazon.com/cli/)
+- [age](https://github.com/FiloSottile/age) (\`brew install age\`)
+- The orchestration repo cloned alongside this repo at \`../${ORCH_DIRNAME}/\`
+
+## Setup from scratch
+
+### 1. Generate age keypair
+
+\`\`\`bash
+age-keygen -o secrets/.key
+# Copy the printed public key (age1...) into secrets/public-key.txt
+# Store the secret key (contents of secrets/.key) somewhere safe (e.g. 1Password)
+\`\`\`
+
+### 2. Create secrets
+
+Create \`secrets.yaml\` at the repo root:
+\`\`\`yaml
+access_key_id: <AWS_ACCESS_KEY_ID>
+secret_access_key: <AWS_SECRET_ACCESS_KEY>
+github_pat_mgmt: <GITHUB_MANAGEMENT_PAT>
+\`\`\`
+
+Create \`infrastructure-mgmt/main/terraform.tfvars\`:
+\`\`\`hcl
+github_mgmt_pat = "<same GitHub PAT>"
+ssh_public_key  = "<your SSH public key>"
+# Optional:
+# slack_signing_secret = "..."
+# fireworks_api_key    = "..."
+\`\`\`
+
+### 3. Bootstrap state backend (one-time)
+
+\`\`\`bash
+eval "\$(.mise/lib/load-secrets)"
+cd infrastructure-mgmt/bootstrap
+tofu init && tofu apply
+\`\`\`
+
+Note the outputs and fill in \`infrastructure-mgmt/main/backend.tf\` with the S3 bucket name and DynamoDB table name.
+
+### 4. Deploy infrastructure
+
+\`\`\`bash
+mise run infra-apply
+\`\`\`
+
+### 5. DNS delegation
+
+Delegate your preview subdomain to the Route53 nameservers shown in \`mise run infra-output\`.
+
+### 6. Encrypt and commit secrets
+
+\`\`\`bash
+mise run secrets-encrypt
+git add secrets/*.enc
+git commit -m "Add encrypted secrets"
+\`\`\`
+
+### 7. Deploy orchestrator
+
+\`\`\`bash
+mise run deploy
+\`\`\`
+
+## Ongoing operations
+
+| Task | What it does |
+|------|--------------|
+| \`mise run deploy\` | SSH deploy: git pull, refresh secrets, rebuild, health check |
+| \`mise run ssh\` | SSH into orchestrator instance |
+| \`mise run infra-plan\` | OpenTofu plan |
+| \`mise run infra-apply\` | OpenTofu apply |
+| \`mise run instance-start\` | Start EC2 instance |
+| \`mise run instance-stop\` | Stop EC2 instance (cost savings) |
+| \`mise run instance-status\` | Check EC2 instance state |
+| \`mise run onboard-target\` | Interactive: register new target repo |
+| \`mise run secrets-decrypt\` | Decrypt secrets (requires secrets/.key) |
+| \`mise run secrets-encrypt\` | Encrypt secrets (public key only) |
+| \`mise run preview-logs <owner> <repo> <pr>\` | View preview application logs |
+
+For app development tasks (\`app-build\`, \`app-tests\`, \`app-dev\`, etc.), work from the orchestration repo at \`../${ORCH_DIRNAME}/\`.
+EOF
+
+# ── decrypt-secrets.sh ──────────────────────────────────────────────
+
+cat > "$DEPLOY_DIR/decrypt-secrets.sh" <<'SCRIPTEOF'
+#!/usr/bin/env bash
+# Decrypt secrets/*.enc into their plaintext locations using the secret key in secrets/.key.
+set -e
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SECRETS_DIR="${REPO_ROOT}/secrets"
+KEY_FILE="${SECRETS_DIR}/.key"
+
+if [ ! -f "$KEY_FILE" ]; then
+    echo "Error: Secret key not found at ${KEY_FILE}" >&2
+    echo "Paste your age secret key into that file (see secrets/README.md)." >&2
+    exit 1
+fi
+
+if ! command -v age >/dev/null 2>&1; then
+    echo "Error: 'age' is not installed (brew install age)." >&2
+    exit 1
+fi
+
+decrypt_one() {
+    local enc_file="$1"
+    local out_file="$2"
+    if [ ! -f "$enc_file" ]; then
+        echo "  (skip: $enc_file not found)"
+        return 0
+    fi
+    local out_dir
+    out_dir=$(dirname "$out_file")
+    mkdir -p "$out_dir"
+    if age -d -i "$KEY_FILE" -o "$out_file" "$enc_file" 2>/dev/null; then
+        chmod 600 "$out_file"
+        echo "  decrypted: $(basename "$enc_file") -> ${out_file#"$REPO_ROOT"/}"
+    else
+        echo "  (failed: $enc_file)" >&2
+        rm -f "$out_file"
+        return 1
+    fi
+}
+
+echo "Decrypting secrets..."
+decrypt_one "${SECRETS_DIR}/secrets.yaml.enc" "${REPO_ROOT}/secrets.yaml"
+decrypt_one "${SECRETS_DIR}/terraform.tfvars.enc" "${REPO_ROOT}/infrastructure-mgmt/main/terraform.tfvars"
+decrypt_one "${SECRETS_DIR}/targets.auto.tfvars.enc" "${REPO_ROOT}/infrastructure-mgmt/main/targets.auto.tfvars"
+echo "Done."
+SCRIPTEOF
+chmod +x "$DEPLOY_DIR/decrypt-secrets.sh"
+
+# ── encrypt-secrets.sh ──────────────────────────────────────────────
+
+cat > "$DEPLOY_DIR/encrypt-secrets.sh" <<'SCRIPTEOF'
+#!/usr/bin/env bash
+# Encrypt plaintext secret files into secrets/*.enc using the public key.
+# No secret key needed — only the public key (committed) is used.
+set -e
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SECRETS_DIR="${REPO_ROOT}/secrets"
+PUBLIC_KEY_FILE="${SECRETS_DIR}/public-key.txt"
+
+if [ ! -f "$PUBLIC_KEY_FILE" ]; then
+    echo "Error: Public key not found at ${PUBLIC_KEY_FILE}" >&2
+    exit 1
+fi
+
+PUBLIC_KEY=$(grep -E '^age1' "$PUBLIC_KEY_FILE" | head -1)
+if [ -z "$PUBLIC_KEY" ]; then
+    echo "Error: No age public key (age1...) found in ${PUBLIC_KEY_FILE}" >&2
+    exit 1
+fi
+
+if ! command -v age >/dev/null 2>&1; then
+    echo "Error: 'age' is not installed (brew install age)." >&2
+    exit 1
+fi
+
+encrypt_one() {
+    local src_file="$1"
+    local enc_name="$2"
+    local enc_file="${SECRETS_DIR}/${enc_name}"
+    if [ ! -f "$src_file" ]; then
+        echo "  (skip: $src_file not found)"
+        return 0
+    fi
+    if age -e -r "$PUBLIC_KEY" -o "$enc_file" "$src_file" 2>/dev/null; then
+        echo "  encrypted: $(basename "$src_file") -> secrets/$enc_name"
+    else
+        echo "  (failed: $src_file)" >&2
+        return 1
+    fi
+}
+
+echo "Encrypting secrets (using public key only)..."
+encrypt_one "${REPO_ROOT}/secrets.yaml" "secrets.yaml.enc"
+encrypt_one "${REPO_ROOT}/infrastructure-mgmt/main/terraform.tfvars" "terraform.tfvars.enc"
+encrypt_one "${REPO_ROOT}/infrastructure-mgmt/main/targets.auto.tfvars" "targets.auto.tfvars.enc"
+echo "Done. Commit secrets/*.enc; never commit secrets/.key or decrypted plaintext files."
+SCRIPTEOF
+chmod +x "$DEPLOY_DIR/encrypt-secrets.sh"
+
+# ── secrets/ ────────────────────────────────────────────────────────
+
+cat > "$DEPLOY_DIR/secrets/README.md" <<'EOF'
+# Encrypted secrets (asymmetric)
+
+Secret files are stored here **encrypted** so they can be committed to the repo safely. We use [age](https://github.com/FiloSottile/age) with **asymmetric** encryption:
+
+- **Encryption** uses the **public key** in `public-key.txt` (committed). Anyone with the repo can encrypt.
+- **Decryption** requires the **secret key**, pasted into `.key` (gitignored).
+
+## Setup (first time or new machine)
+
+1. Install age: `brew install age` (macOS) or see [age releases](https://github.com/FiloSottile/age/releases).
+2. Get the age secret key and paste it into `secrets/.key`:
+   ```bash
+   # The key starts with AGE-SECRET-KEY-...
+   pbpaste > secrets/.key   # macOS
+   ```
+3. From the **repo root**, decrypt all secrets:
+   ```bash
+   ./decrypt-secrets.sh
+   ```
+
+This produces the gitignored plaintext files used by mise tasks and OpenTofu.
+
+## Encrypted files (committed)
+
+| Encrypted file | Decrypts to | Purpose |
+|----------------|-------------|---------|
+| `secrets.yaml.enc` | `secrets.yaml` | AWS credentials, GitHub management PAT |
+| `terraform.tfvars.enc` | `infrastructure-mgmt/main/terraform.tfvars` | OpenTofu variables (mgmt PAT, SSH key) |
+| `targets.auto.tfvars.enc` | `infrastructure-mgmt/main/targets.auto.tfvars` | Per-target-repo credentials |
+
+## Encrypting (after changing secrets)
+
+```bash
+./encrypt-secrets.sh
+# Then commit the updated secrets/*.enc files
+```
+
+## Bootstrap: generating a new keypair
+
+```bash
+age-keygen -o secrets/.key
+# Copy the printed public key into secrets/public-key.txt
+# Store the secret key (contents of secrets/.key) somewhere safe
+```
+EOF
+
+cat > "$DEPLOY_DIR/secrets/public-key.txt" <<'EOF'
+# Generate with: age-keygen -o secrets/.key && copy public key here
+EOF
+
+# ── infrastructure-mgmt/bootstrap/ ──────────────────────────────────
+
+cat > "$DEPLOY_DIR/infrastructure-mgmt/bootstrap/main.tf" <<'EOF'
+# S3 bucket for OpenTofu state
+resource "aws_s3_bucket" "tfstate" {
+  bucket = "${var.project_prefix}-tfstate-${data.aws_caller_identity.current.account_id}"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_s3_bucket_versioning" "tfstate" {
+  bucket = aws_s3_bucket.tfstate.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "tfstate" {
+  bucket = aws_s3_bucket.tfstate.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "tfstate" {
+  bucket = aws_s3_bucket.tfstate.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# DynamoDB table for state locking
+resource "aws_dynamodb_table" "tfstate_lock" {
+  name         = "${var.project_prefix}-tfstate-lock"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "LockID"
+
+  attribute {
+    name = "LockID"
+    type = "S"
+  }
+}
+
+data "aws_caller_identity" "current" {}
+EOF
+
+cat > "$DEPLOY_DIR/infrastructure-mgmt/bootstrap/variables.tf" <<'EOF'
+variable "aws_region" {
+  description = "AWS region for all resources"
+  type        = string
+  default     = "eu-central-1"
+}
+
+variable "project_prefix" {
+  description = "Prefix for resource naming"
+  type        = string
+  default     = "productbuilder"
+}
+EOF
+
+cat > "$DEPLOY_DIR/infrastructure-mgmt/bootstrap/providers.tf" <<'EOF'
+terraform {
+  required_version = ">= 1.6.0"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+}
+EOF
+
+cat > "$DEPLOY_DIR/infrastructure-mgmt/bootstrap/outputs.tf" <<'EOF'
+output "tfstate_bucket_name" {
+  description = "S3 bucket name for OpenTofu state"
+  value       = aws_s3_bucket.tfstate.id
+}
+
+output "tfstate_lock_table_name" {
+  description = "DynamoDB table name for state locking"
+  value       = aws_dynamodb_table.tfstate_lock.name
+}
+
+output "aws_region" {
+  description = "AWS region used"
+  value       = var.aws_region
+}
+EOF
+
+# ── infrastructure-mgmt/main/ ──────────────────────────────────────
+
+cat > "$DEPLOY_DIR/infrastructure-mgmt/main/main.tf" <<EOF
+module "orchestrator" {
+  source = "../../../${ORCH_DIRNAME}/infrastructure-mgmt/modules/orchestrator"
+
+  aws_region           = var.aws_region
+  project_prefix       = var.project_prefix
+  github_org           = var.github_org
+  github_mgmt_pat      = var.github_mgmt_pat
+  preview_domain       = var.preview_domain
+  instance_type        = var.instance_type
+  ssh_public_key       = var.ssh_public_key
+  slack_workspace      = var.slack_workspace
+  slack_signing_secret = var.slack_signing_secret
+  fireworks_api_key    = var.fireworks_api_key
+  targets              = var.targets
+  orchestration_repo   = "${ORCH_DIRNAME}"
+}
+EOF
+
+cat > "$DEPLOY_DIR/infrastructure-mgmt/main/variables.tf" <<'EOF'
+variable "aws_region" {
+  description = "AWS region for all resources"
+  type        = string
+  default     = "eu-central-1"
+}
+
+variable "project_prefix" {
+  description = "Prefix for resource naming"
+  type        = string
+}
+
+variable "github_org" {
+  description = "GitHub organization name"
+  type        = string
+}
+
+variable "github_mgmt_pat" {
+  description = "GitHub PAT for managing org resources (webhooks, secrets)"
+  type        = string
+  sensitive   = true
+}
+
+variable "preview_domain" {
+  description = "Domain for preview environments"
+  type        = string
+}
+
+variable "instance_type" {
+  description = "EC2 instance type for the orchestrator host"
+  type        = string
+  default     = "t3.xlarge"
+}
+
+variable "ssh_public_key" {
+  description = "SSH public key for EC2 instance access"
+  type        = string
+}
+
+variable "slack_workspace" {
+  description = "Slack workspace subdomain"
+  type        = string
+  default     = ""
+}
+
+variable "slack_signing_secret" {
+  description = "Slack app signing secret"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "fireworks_api_key" {
+  description = "Fireworks AI API key"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "targets" {
+  description = "Map of target repositories to manage"
+  type = map(object({
+    repo_owner        = string
+    repo_name         = string
+    github_pat        = string
+    webhook_secret    = string
+    fireworks_api_key = string
+    slack_channel     = optional(string)
+    slack_bot_token   = optional(string)
+  }))
+  default = {}
+}
+EOF
+
+cat > "$DEPLOY_DIR/infrastructure-mgmt/main/providers.tf" <<'EOF'
+terraform {
+  required_version = ">= 1.6.0"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+    github = {
+      source  = "integrations/github"
+      version = "~> 6.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+}
+
+provider "github" {
+  owner = var.github_org
+  token = var.github_mgmt_pat
+}
+EOF
+
+cat > "$DEPLOY_DIR/infrastructure-mgmt/main/backend.tf" <<'EOF'
+# TODO: Run 'tofu init' in infrastructure-mgmt/bootstrap/ first to create the S3 bucket,
+# then fill in these values from its outputs.
+terraform {
+  backend "s3" {
+    bucket         = "REPLACE_ME"  # From bootstrap output: tfstate_bucket_name
+    key            = "main/terraform.tfstate"
+    region         = "eu-central-1"
+    dynamodb_table = "REPLACE_ME"  # From bootstrap output: tfstate_lock_table_name
+    encrypt        = true
+  }
+}
+EOF
+
+cat > "$DEPLOY_DIR/infrastructure-mgmt/main/outputs.tf" <<'EOF'
+output "instance_public_ip" {
+  description = "Elastic IP of the orchestrator instance"
+  value       = module.orchestrator.instance_public_ip
+}
+
+output "route53_zone_id" {
+  description = "Route53 hosted zone ID for the preview domain"
+  value       = module.orchestrator.route53_zone_id
+}
+
+output "route53_nameservers" {
+  description = "Nameservers to delegate from the apex domain hoster"
+  value       = module.orchestrator.route53_nameservers
+}
+
+output "preview_domain" {
+  description = "Preview domain"
+  value       = module.orchestrator.preview_domain
+}
+
+output "instance_id" {
+  description = "EC2 instance ID"
+  value       = module.orchestrator.instance_id
+}
+EOF
+
+# ── .mise/lib/load-secrets ──────────────────────────────────────────
+
+cat > "$DEPLOY_DIR/.mise/lib/load-secrets" <<'EOF'
+#!/usr/bin/env bash
+# Helper: sources AWS credentials from secrets.yaml into the environment.
+# Usage: eval "$(.mise/lib/load-secrets)"
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+SECRETS_FILE="$PROJECT_DIR/secrets.yaml"
+
+if [[ ! -f "$SECRETS_FILE" ]]; then
+    echo "Error: $SECRETS_FILE not found" >&2
+    exit 1
+fi
+
+# Parse YAML with simple grep/sed — no yq dependency needed for flat keys
+AWS_ACCESS_KEY_ID=$(grep 'access_key_id:' "$SECRETS_FILE" | sed 's/.*: *//')
+AWS_SECRET_ACCESS_KEY=$(grep 'secret_access_key:' "$SECRETS_FILE" | sed 's/.*: *//')
+GITHUB_PAT_MGMT=$(grep 'github_pat_mgmt:' "$SECRETS_FILE" | sed 's/.*: *//')
+
+echo "export AWS_ACCESS_KEY_ID='$AWS_ACCESS_KEY_ID'"
+echo "export AWS_SECRET_ACCESS_KEY='$AWS_SECRET_ACCESS_KEY'"
+echo "export AWS_DEFAULT_REGION='${AWS_DEFAULT_REGION:-eu-central-1}'"
+echo "export GITHUB_PAT_MGMT='$GITHUB_PAT_MGMT'"
+EOF
+chmod +x "$DEPLOY_DIR/.mise/lib/load-secrets"
+
+# ── .mise/tasks/ ────────────────────────────────────────────────────
+
+# --- infra-plan ---
+cat > "$DEPLOY_DIR/.mise/tasks/infra-plan" <<'EOF'
+#!/usr/bin/env bash
+#MISE description="Run tofu plan on the main infrastructure project"
+set -euo pipefail
+
+eval "$($(dirname "$0")/../lib/load-secrets)"
+
+cd "$(dirname "$0")/../../infrastructure-mgmt/main"
+tofu plan "$@"
+EOF
+chmod +x "$DEPLOY_DIR/.mise/tasks/infra-plan"
+
+# --- infra-apply ---
+cat > "$DEPLOY_DIR/.mise/tasks/infra-apply" <<'EOF'
+#!/usr/bin/env bash
+#MISE description="Run tofu apply on the main infrastructure project"
+set -euo pipefail
+
+eval "$($(dirname "$0")/../lib/load-secrets)"
+
+cd "$(dirname "$0")/../../infrastructure-mgmt/main"
+tofu apply "$@"
+EOF
+chmod +x "$DEPLOY_DIR/.mise/tasks/infra-apply"
+
+# --- infra-output ---
+cat > "$DEPLOY_DIR/.mise/tasks/infra-output" <<'EOF'
+#!/usr/bin/env bash
+#MISE description="Show tofu outputs for the main infrastructure"
+set -euo pipefail
+
+eval "$($(dirname "$0")/../lib/load-secrets)"
+
+cd "$(dirname "$0")/../../infrastructure-mgmt/main"
+tofu output "$@"
+EOF
+chmod +x "$DEPLOY_DIR/.mise/tasks/infra-output"
+
+# --- ssh ---
+cat > "$DEPLOY_DIR/.mise/tasks/ssh" <<'EOF'
+#!/usr/bin/env bash
+#MISE description="SSH into the orchestrator instance"
+set -euo pipefail
+
+eval "$($(dirname "$0")/../lib/load-secrets)"
+
+IP=$(cd "$(dirname "$0")/../../infrastructure-mgmt/main" && tofu output -raw instance_public_ip 2>/dev/null)
+
+if [[ -z "$IP" ]]; then
+    echo "Error: Could not determine instance IP from tofu output" >&2
+    exit 1
+fi
+
+exec ssh -o StrictHostKeyChecking=accept-new "ubuntu@$IP" "$@"
+EOF
+chmod +x "$DEPLOY_DIR/.mise/tasks/ssh"
+
+# --- deploy ---
+cat > "$DEPLOY_DIR/.mise/tasks/deploy" <<'EOF'
+#!/usr/bin/env bash
+#MISE description="Deploy latest code to the EC2 instance"
+set -euo pipefail
+
+echo "==> Pulling latest code on server..."
+mise run ssh -- "cd /opt/orchestrator/repo && git pull"
+
+echo "==> Refreshing target configs from Secrets Manager..."
+mise run ssh -- 'sudo bash -c "
+  REGION=\$(grep AWS_REGION /opt/orchestrator/repo/.env | cut -d= -f2)
+  PREFIX=\$(grep PROJECT_PREFIX /opt/orchestrator/repo/.env | cut -d= -f2)
+  TARGETS=\"[]\"
+  for name in \$(aws secretsmanager list-secrets --region \"\$REGION\" \
+    --filters \"Key=name,Values=\$PREFIX/targets/\" --query \"SecretList[].Name\" --output text); do
+    VAL=\$(aws secretsmanager get-secret-value --region \"\$REGION\" \
+      --secret-id \"\$name\" --query SecretString --output text)
+    TARGETS=\$(echo \"\$TARGETS\" | jq --argjson item \"\$VAL\" \". + [\\\$item]\")
+  done
+  echo \"\$TARGETS\" > /opt/orchestrator/targets.json
+  chmod 644 /opt/orchestrator/targets.json
+  echo \"Loaded \$(echo \"\$TARGETS\" | jq length) target(s)\"
+"'
+
+echo "==> Refreshing Slack signing secret..."
+mise run ssh -- 'sudo bash -c "
+  REGION=\$(grep AWS_REGION /opt/orchestrator/repo/.env | cut -d= -f2)
+  PREFIX=\$(grep PROJECT_PREFIX /opt/orchestrator/repo/.env | cut -d= -f2)
+  SECRET=\$(aws secretsmanager get-secret-value --region \"\$REGION\" \
+    --secret-id \"\$PREFIX/slack-signing-secret\" \
+    --query SecretString --output text 2>/dev/null || echo \"\")
+  # Remove old value (if any) and append current
+  sed -i /^SLACK_SIGNING_SECRET=/d /opt/orchestrator/repo/.env
+  if [ -n \"\$SECRET\" ]; then
+    echo \"SLACK_SIGNING_SECRET=\$SECRET\" >> /opt/orchestrator/repo/.env
+    echo \"Slack signing secret loaded\"
+  else
+    echo \"No Slack signing secret configured (skipped)\"
+  fi
+"'
+
+echo "==> Refreshing Fireworks API key..."
+mise run ssh -- 'sudo bash -c "
+  REGION=\$(grep AWS_REGION /opt/orchestrator/repo/.env | cut -d= -f2)
+  PREFIX=\$(grep PROJECT_PREFIX /opt/orchestrator/repo/.env | cut -d= -f2)
+  SECRET=\$(aws secretsmanager get-secret-value --region \"\$REGION\" \
+    --secret-id \"\$PREFIX/fireworks-api-key\" \
+    --query SecretString --output text 2>/dev/null || echo \"\")
+  sed -i /^FIREWORKS_API_KEY=/d /opt/orchestrator/repo/.env
+  if [ -n \"\$SECRET\" ]; then
+    echo \"FIREWORKS_API_KEY=\$SECRET\" >> /opt/orchestrator/repo/.env
+    echo \"Fireworks API key loaded\"
+  else
+    echo \"No Fireworks API key configured (skipped)\"
+  fi
+"'
+
+echo "==> Rebuilding and restarting orchestrator (no cache)..."
+mise run ssh -- "cd /opt/orchestrator/repo && docker compose build --no-cache orchestrator && docker compose up -d orchestrator"
+
+echo "==> Waiting for health check..."
+DOMAIN=$(mise run ssh -- "grep PREVIEW_DOMAIN /opt/orchestrator/repo/.env | cut -d= -f2" 2>/dev/null)
+if [[ -z "$DOMAIN" ]]; then
+    echo "Error: Could not determine PREVIEW_DOMAIN from server .env" >&2
+    exit 1
+fi
+for i in $(seq 1 30); do
+    if curl -sf "https://api.${DOMAIN}/healthz" >/dev/null 2>&1; then
+        echo "Deploy complete — orchestrator is healthy at https://api.${DOMAIN}/"
+        exit 0
+    fi
+    sleep 2
+done
+
+echo "Warning: orchestrator did not become healthy within 60 seconds."
+echo "Check logs: mise run ssh -- docker compose logs orchestrator"
+exit 1
+EOF
+chmod +x "$DEPLOY_DIR/.mise/tasks/deploy"
+
+# --- instance-start ---
+cat > "$DEPLOY_DIR/.mise/tasks/instance-start" <<'EOF'
+#!/usr/bin/env bash
+#MISE description="Start the EC2 orchestrator instance"
+set -euo pipefail
+
+eval "$($(dirname "$0")/../lib/load-secrets)"
+
+INSTANCE_ID=$(cd "$(dirname "$0")/../../infrastructure-mgmt/main" && tofu output -raw instance_id 2>/dev/null)
+
+if [[ -z "$INSTANCE_ID" ]]; then
+    echo "Error: Could not determine instance ID from tofu output" >&2
+    exit 1
+fi
+
+echo "Starting instance $INSTANCE_ID..."
+aws ec2 start-instances --instance-ids "$INSTANCE_ID" --output text
+echo "Start request sent. Use 'mise run instance-status' to check."
+EOF
+chmod +x "$DEPLOY_DIR/.mise/tasks/instance-start"
+
+# --- instance-stop ---
+cat > "$DEPLOY_DIR/.mise/tasks/instance-stop" <<'EOF'
+#!/usr/bin/env bash
+#MISE description="Stop the EC2 orchestrator instance"
+set -euo pipefail
+
+eval "$($(dirname "$0")/../lib/load-secrets)"
+
+INSTANCE_ID=$(cd "$(dirname "$0")/../../infrastructure-mgmt/main" && tofu output -raw instance_id 2>/dev/null)
+
+if [[ -z "$INSTANCE_ID" ]]; then
+    echo "Error: Could not determine instance ID from tofu output" >&2
+    exit 1
+fi
+
+echo "Stopping instance $INSTANCE_ID..."
+aws ec2 stop-instances --instance-ids "$INSTANCE_ID" --output text
+echo "Stop request sent. Use 'mise run instance-status' to check."
+EOF
+chmod +x "$DEPLOY_DIR/.mise/tasks/instance-stop"
+
+# --- instance-status ---
+cat > "$DEPLOY_DIR/.mise/tasks/instance-status" <<'EOF'
+#!/usr/bin/env bash
+#MISE description="Show EC2 instance status and public IP"
+set -euo pipefail
+
+eval "$($(dirname "$0")/../lib/load-secrets)"
+
+INSTANCE_ID=$(cd "$(dirname "$0")/../../infrastructure-mgmt/main" && tofu output -raw instance_id 2>/dev/null)
+
+if [[ -z "$INSTANCE_ID" ]]; then
+    echo "Error: Could not determine instance ID from tofu output" >&2
+    exit 1
+fi
+
+aws ec2 describe-instances \
+    --instance-ids "$INSTANCE_ID" \
+    --query 'Reservations[0].Instances[0].{State:State.Name,PublicIP:PublicIpAddress,InstanceType:InstanceType,LaunchTime:LaunchTime}' \
+    --output table
+EOF
+chmod +x "$DEPLOY_DIR/.mise/tasks/instance-status"
+
+# --- secrets-decrypt ---
+cat > "$DEPLOY_DIR/.mise/tasks/secrets-decrypt" <<'TASKEOF'
+#!/usr/bin/env bash
+#MISE description="Decrypt secrets/*.enc → plaintext files (requires secrets/.key)"
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+KEY_FILE="$PROJECT_DIR/secrets/.key"
+
+if [ ! -f "$KEY_FILE" ]; then
+    echo ""
+    echo "  The age secret key is missing at secrets/.key"
+    echo ""
+    echo "  To set it up:"
+    echo "    1. Get the age secret key (starts with AGE-SECRET-KEY-...)"
+    echo "    2. Paste it into secrets/.key:"
+    echo ""
+    echo "       pbpaste > secrets/.key    # macOS"
+    echo ""
+    echo "  See secrets/README.md for details."
+    echo ""
+    exit 1
+fi
+
+exec "$PROJECT_DIR/decrypt-secrets.sh"
+TASKEOF
+chmod +x "$DEPLOY_DIR/.mise/tasks/secrets-decrypt"
+
+# --- secrets-encrypt ---
+cat > "$DEPLOY_DIR/.mise/tasks/secrets-encrypt" <<'EOF'
+#!/usr/bin/env bash
+#MISE description="Encrypt plaintext secrets → secrets/*.enc (public key only)"
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+
+exec "$PROJECT_DIR/encrypt-secrets.sh"
+EOF
+chmod +x "$DEPLOY_DIR/.mise/tasks/secrets-encrypt"
+
+# --- preview-logs ---
+cat > "$DEPLOY_DIR/.mise/tasks/preview-logs" <<'EOF'
+#!/usr/bin/env bash
+#MISE description="Fetch logs from a preview deployment"
+set -euo pipefail
+
+# Parse arguments
+REPO_OWNER="${1:-}"
+REPO_NAME="${2:-}"
+PR_NUMBER="${3:-}"
+TAIL="${4:-100}"
+FOLLOW="${5:-false}"
+
+if [[ -z "$REPO_OWNER" || -z "$REPO_NAME" || -z "$PR_NUMBER" ]]; then
+    echo "Usage: mise run preview-logs <owner> <repo> <pr-number> [tail-lines] [follow]"
+    echo ""
+    echo "Examples:"
+    echo "  mise run preview-logs my-org my-app 2"
+    echo "  mise run preview-logs my-org my-app 2 500"
+    echo "  mise run preview-logs my-org my-app 2 100 true"
+    exit 1
+fi
+
+# Get domain from Terraform output
+eval "$($(dirname "$0")/../lib/load-secrets)"
+DOMAIN=$(cd "$(dirname "$0")/../../infrastructure-mgmt/main" && tofu output -raw preview_domain 2>/dev/null)
+
+if [[ -z "$DOMAIN" ]]; then
+    echo "Error: Could not determine preview domain from tofu output" >&2
+    exit 1
+fi
+
+# Construct URL
+URL="https://api.${DOMAIN}/api/v1/previews/${REPO_OWNER}/${REPO_NAME}/${PR_NUMBER}/logs?tail=${TAIL}"
+
+if [[ "$FOLLOW" == "true" ]]; then
+    URL="${URL}&follow=true"
+fi
+
+echo "Fetching logs for ${REPO_OWNER}/${REPO_NAME}#${PR_NUMBER}..."
+echo "URL: ${URL}"
+echo ""
+
+# Fetch logs (using curl with -N for no buffering when following)
+if [[ "$FOLLOW" == "true" ]]; then
+    curl -N -s "${URL}"
+else
+    curl -s "${URL}"
+fi
+EOF
+chmod +x "$DEPLOY_DIR/.mise/tasks/preview-logs"
+
+# --- onboard-target ---
+cat > "$DEPLOY_DIR/.mise/tasks/onboard-target" <<'TASKEOF'
+#!/usr/bin/env bash
+#MISE description="Onboard a new target repo (interactive)"
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+TFVARS_FILE="$PROJECT_DIR/infrastructure-mgmt/main/targets.auto.tfvars"
+
+echo "Target repo onboarding"
+echo "======================"
+echo ""
+
+# --- Repo identity ---
+
+read -rp "Repo owner: " REPO_OWNER
+if [[ -z "$REPO_OWNER" ]]; then
+    echo "Error: Repo owner is required" >&2
+    exit 1
+fi
+
+read -rp "Repo name: " REPO_NAME
+if [[ -z "$REPO_NAME" ]]; then
+    echo "Error: Repo name is required" >&2
+    exit 1
+fi
+
+# --- GitHub PAT (per-target, for orchestrator runtime) ---
+
+echo ""
+echo "  GitHub PAT — fine-grained, for the orchestrator to interact with this repo."
+echo ""
+echo "  The orchestrator uses this PAT to clone the repo, post PR comments,"
+echo "  and create issues from Slack."
+echo "  Create one at: https://github.com/settings/personal-access-tokens/new"
+echo ""
+echo "  Settings:"
+echo "    - Token name:       productbuilder-${REPO_NAME}"
+echo "    - Expiration:       90 days (or longer; you'll rotate later)"
+echo "    - Resource owner:   ${REPO_OWNER}"
+echo "    - Repository access: Only select repositories → ${REPO_NAME}"
+echo "    - Permissions (Repository):"
+echo "        Contents:       Read        (clone the repo)"
+echo "        Issues:         Read+Write  (create issues, post comments)"
+echo "        Pull requests:  Read+Write  (post preview URL comments)"
+echo "        Metadata:       Read        (required by default)"
+echo ""
+read -rp "GitHub PAT (github_pat_...): " GITHUB_PAT
+if [[ -z "$GITHUB_PAT" ]]; then
+    echo "Error: GitHub PAT is required" >&2
+    exit 1
+fi
+
+# --- Fireworks API key (for OpenCode GitHub Actions) ---
+
+echo ""
+echo "  Fireworks API key — for the OpenCode GitHub Actions workflow."
+echo ""
+echo "  This key is set as the FIREWORKS_API_KEY secret on the target repo"
+echo "  so that the .github/workflows/opencode.yml action can call the Fireworks API."
+echo "  Get one at: https://fireworks.ai/account/api-keys"
+echo ""
+echo "  You can reuse the same key across multiple target repos."
+echo ""
+read -rp "Fireworks API key (fw-...): " FIREWORKS_API_KEY
+if [[ -z "$FIREWORKS_API_KEY" ]]; then
+    echo "Error: Fireworks API key is required" >&2
+    exit 1
+fi
+
+# --- Slack Integration (optional) ---
+
+echo ""
+echo "  Slack Integration — mirror GitHub activity to Slack channels."
+echo ""
+echo "  This creates Slack threads for Issues and PRs with real-time updates."
+echo ""
+
+read -rp "Enable Slack integration? [y/N]: " ENABLE_SLACK
+ENABLE_SLACK="${ENABLE_SLACK:-n}"
+
+if [[ "$ENABLE_SLACK" =~ ^[Yy]$ ]]; then
+    echo ""
+    echo "  Slack Bot Token — required to post messages to channels."
+    echo ""
+    echo "  Create a Slack app at: https://api.slack.com/apps"
+    echo "  Required scopes: chat:write, chat:write.public, reactions:write,"
+    echo "                    channels:read, app_mentions:read, users:read"
+    echo "  Install the app to your workspace, then copy the Bot User OAuth Token."
+    echo ""
+    read -rp "Slack Bot Token (xoxb-...): " SLACK_BOT_TOKEN
+    if [[ -z "$SLACK_BOT_TOKEN" ]]; then
+        echo "Warning: Slack Bot Token not provided. Skipping Slack integration." >&2
+        ENABLE_SLACK="n"
+    fi
+
+    if [[ "$ENABLE_SLACK" =~ ^[Yy]$ ]]; then
+        echo ""
+        echo "  Slack Channel — where notifications will be posted."
+        echo ""
+        echo "  IMPORTANT: You must manually create this channel in Slack first!"
+        echo "  Recommended naming: #productbuilding-{repo-name}"
+        echo "  (The system uses a configurable prefix to match channels to repos.)"
+        echo ""
+        read -rp "Slack channel name (e.g., #productbuilding-${REPO_NAME}): " SLACK_CHANNEL
+        if [[ -z "$SLACK_CHANNEL" ]]; then
+            SLACK_CHANNEL="#productbuilding-${REPO_NAME}"
+            echo "Using default: $SLACK_CHANNEL"
+        fi
+
+        # Validate channel name format
+        if [[ ! "$SLACK_CHANNEL" =~ ^# ]]; then
+            SLACK_CHANNEL="#${SLACK_CHANNEL}"
+            echo "Added # prefix: $SLACK_CHANNEL"
+        fi
+    fi
+else
+    echo "Skipping Slack integration (can be enabled later)"
+fi
+
+# --- Local clone path (optional, for scaffolding) ---
+
+echo ""
+echo "  Local clone path — the local checkout of ${REPO_OWNER}/${REPO_NAME}."
+echo "  If provided, the script will scaffold .productbuilding/, AGENTS.md,"
+echo "  and .github/workflows/opencode.yml in that directory."
+echo "  Leave empty to skip scaffolding."
+echo ""
+read -rp "Local repo clone path: " TARGET_REPO_PATH
+if [[ -n "$TARGET_REPO_PATH" && ! -d "$TARGET_REPO_PATH" ]]; then
+    echo "Error: Directory does not exist: $TARGET_REPO_PATH" >&2
+    exit 1
+fi
+
+WEBHOOK_SECRET=$(openssl rand -hex 32)
+echo ""
+echo "Generated webhook secret: $WEBHOOK_SECRET"
+
+# --- Orchestrator-side: register target in tfvars ---
+
+if [[ ! -f "$TFVARS_FILE" ]]; then
+    echo 'targets = {' > "$TFVARS_FILE"
+    echo '}' >> "$TFVARS_FILE"
+fi
+
+if [[ "$ENABLE_SLACK" =~ ^[Yy]$ ]]; then
+  ENTRY="  \"$REPO_NAME\" = {
+    repo_owner        = \"$REPO_OWNER\"
+    repo_name         = \"$REPO_NAME\"
+    github_pat        = \"$GITHUB_PAT\"
+    webhook_secret    = \"$WEBHOOK_SECRET\"
+    fireworks_api_key = \"$FIREWORKS_API_KEY\"
+    slack_channel     = \"$SLACK_CHANNEL\"
+    slack_bot_token   = \"$SLACK_BOT_TOKEN\"
+  }"
+else
+  ENTRY="  \"$REPO_NAME\" = {
+    repo_owner        = \"$REPO_OWNER\"
+    repo_name         = \"$REPO_NAME\"
+    github_pat        = \"$GITHUB_PAT\"
+    webhook_secret    = \"$WEBHOOK_SECRET\"
+    fireworks_api_key = \"$FIREWORKS_API_KEY\"
+  }"
+fi
+
+# Remove trailing } , add the entry, re-add }
+sed -i.bak '$ d' "$TFVARS_FILE"
+echo "$ENTRY" >> "$TFVARS_FILE"
+echo "}" >> "$TFVARS_FILE"
+rm -f "$TFVARS_FILE.bak"
+
+echo ""
+echo "Appended to $TFVARS_FILE"
+
+# --- Target repo side: scaffold productbuilding files ---
+
+if [[ -n "$TARGET_REPO_PATH" ]]; then
+    echo ""
+    echo "Scaffolding target repo at $TARGET_REPO_PATH..."
+
+    # .productbuilding/preview/config.yml
+    mkdir -p "$TARGET_REPO_PATH/.productbuilding/preview"
+    if [[ ! -f "$TARGET_REPO_PATH/.productbuilding/preview/config.yml" ]]; then
+        cat > "$TARGET_REPO_PATH/.productbuilding/preview/config.yml" <<'CONFIGEOF'
+version: 1
+
+compose:
+  file: .productbuilding/preview/docker-compose.yml
+  service: app
+
+runtime:
+  internal_port: 8080
+  healthcheck_path: /healthz
+  startup_timeout_seconds: 300
+
+# database:
+#   migrate_command: <your migration command here>
+
+# Optional: configure log access (defaults to docker compose logs from the main service)
+# logging:
+#   service: app           # Which compose service has the logs
+#   type: docker           # "docker" for stdout/stderr (default), "file" for file-based logs
+#   path: /var/log/*.log   # Required when type="file" - path inside container
+
+# Optional: add a note that will be shown in PR comments (e.g., test credentials, important info)
+# user_facing_note: "Test login: admin / secret"
+
+# Optional: run commands after preview is deployed and healthy (e.g., seed data)
+# post_deploy_commands:
+#   - service: app           # Which compose service to run in (default: compose.service)
+#     command: echo "Hello" # Command to execute
+#     description: Say hi   # Description for logs (optional)
+CONFIGEOF
+        echo "  Created .productbuilding/preview/config.yml"
+    else
+        echo "  Skipped .productbuilding/preview/config.yml (already exists)"
+    fi
+
+    # .productbuilding/preview/docker-compose.yml
+    if [[ ! -f "$TARGET_REPO_PATH/.productbuilding/preview/docker-compose.yml" ]]; then
+        cat > "$TARGET_REPO_PATH/.productbuilding/preview/docker-compose.yml" <<'COMPOSEEOF'
+# Preview Compose file — production-oriented (no hot reload, no host mounts).
+# The orchestrator will generate an override with Traefik labels and network config.
+
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    # environment:
+    #   - DATABASE_URL=postgres://...
+    # depends_on:
+    #   db:
+    #     condition: service_healthy
+
+  # db:
+  #   image: postgres:17
+  #   environment:
+  #     POSTGRES_DB: app
+  #     POSTGRES_USER: app
+  #     POSTGRES_PASSWORD: preview
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U app"]
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 5
+COMPOSEEOF
+        echo "  Created .productbuilding/preview/docker-compose.yml"
+    else
+        echo "  Skipped .productbuilding/preview/docker-compose.yml (already exists)"
+    fi
+
+    # .github/workflows/opencode.yml
+    mkdir -p "$TARGET_REPO_PATH/.github/workflows"
+    if [[ ! -f "$TARGET_REPO_PATH/.github/workflows/opencode.yml" ]]; then
+        cat > "$TARGET_REPO_PATH/.github/workflows/opencode.yml" <<'WORKFLOWEOF'
+name: OpenCode
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  opencode:
+    if: |
+      contains(github.event.comment.body, '/opencode') &&
+      !endsWith(github.event.comment.user.login, '[bot]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: anomalyco/opencode/github@latest
+        env:
+          FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          model: fireworks-ai/accounts/fireworks/models/kimi-k2p5
+WORKFLOWEOF
+        echo "  Created .github/workflows/opencode.yml"
+    else
+        echo "  Skipped .github/workflows/opencode.yml (already exists)"
+    fi
+
+    # AGENTS.md
+    if [[ ! -f "$TARGET_REPO_PATH/AGENTS.md" ]]; then
+        cat > "$TARGET_REPO_PATH/AGENTS.md" <<'AGENTSEOF'
+# AGENTS.md — Project Guide for AI Coding Agents
+
+## Project Overview
+
+<!-- Describe what this project does, its purpose, and key features. -->
+
+## Architecture
+
+<!-- Describe the project structure, key directories, and architectural patterns. -->
+
+## Development
+
+<!-- How to build, run, and test the project locally. -->
+
+## Coding Standards
+
+<!-- Language-specific conventions, formatting, naming, etc. -->
+
+## Important Rules
+
+<!-- Non-negotiable constraints AI agents should always follow. -->
+
+## AI Integration
+
+This project uses OpenCode with FireworksAI (Kimi K2.5).
+Trigger with "/opencode" in GitHub issues and pull requests.
+AGENTSEOF
+        echo "  Created AGENTS.md"
+    else
+        echo "  Skipped AGENTS.md (already exists)"
+    fi
+fi
+
+echo ""
+echo "Next steps:"
+echo "  1. mise run secrets-encrypt && mise run infra-apply"
+echo "  2. Install the OpenCode GitHub App on the repo:"
+echo "     https://github.com/apps/opencode-agent"
+if [[ "$ENABLE_SLACK" =~ ^[Yy]$ ]]; then
+    echo ""
+    echo "  Slack Integration Setup:"
+    echo "     a. Create Slack channel: $SLACK_CHANNEL"
+    echo "     b. Invite bot to channel: /invite @ProductBuilder Bot"
+    echo "     c. Enable Event Subscriptions with app_mention event"
+    echo "        Request URL: https://api.<your-domain>/slack/events"
+fi
+if [[ -n "$TARGET_REPO_PATH" ]]; then
+    echo "  3. Review and customize the scaffolded files, then commit and push"
+else
+    echo "  3. Add .productbuilding/preview/ to the repo (see docs)"
+    echo "  4. Add .github/workflows/opencode.yml to the repo"
+    echo "  5. Add AGENTS.md to the repo"
+fi
+TASKEOF
+chmod +x "$DEPLOY_DIR/.mise/tasks/onboard-target"
+
+# ── docs/runbook.md ─────────────────────────────────────────────────
+
+cat > "$DEPLOY_DIR/docs/runbook.md" <<'EOF'
+# Runbook — Setup from Scratch
+
+This documents the full procedure to provision the orchestration infrastructure from zero.
+
+## Prerequisites
+
+On your local machine:
+
+- [mise](https://mise.jdx.dev/) installed
+- [OpenTofu](https://opentofu.org/) installed (`brew install opentofu`)
+- [AWS CLI](https://aws.amazon.com/cli/) installed
+- [age](https://github.com/FiloSottile/age) installed (`brew install age`)
+- SSH key pair (default: `~/.ssh/id_rsa.pub`)
+- The orchestration repo cloned alongside this repo
+
+You also need:
+
+- The age secret key (see `secrets/README.md`)
+- Access to the DNS management panel for your domain
+
+## Step 1: Decrypt secrets
+
+Paste the age secret key into `secrets/.key`, then decrypt:
+
+```bash
+mise run secrets-decrypt
+```
+
+## Step 2: Bootstrap (one-time per AWS account)
+
+This creates the S3 bucket and DynamoDB table for OpenTofu state management.
+
+```bash
+eval "$(.mise/lib/load-secrets)"
+cd infrastructure-mgmt/bootstrap
+tofu init
+tofu apply
+```
+
+Note the outputs — fill in `infrastructure-mgmt/main/backend.tf` with the S3 bucket name and DynamoDB table name.
+
+## Step 3: Apply main infrastructure
+
+```bash
+mise run infra-apply
+```
+
+This creates: Route53 hosted zone, wildcard DNS record, Elastic IP, EC2 instance, security groups, IAM role, and SSH key pair.
+
+Note the outputs, especially `route53_nameservers`.
+
+## Step 4: DNS delegation (manual)
+
+At your DNS hoster, create NS records to delegate the preview subdomain to Route53:
+
+Use the exact nameserver values from `mise run infra-output`.
+
+### Verify DNS delegation
+
+```bash
+# Should return the 4 Route53 nameservers
+dig NS <your-preview-domain> +short
+
+# Should return the Elastic IP
+dig A api.<your-preview-domain> +short
+```
+
+## Step 5: Verify instance is healthy
+
+```bash
+mise run instance-status
+mise run ssh -- "docker --version && docker network ls | grep preview-net"
+```
+
+## Step 6: Deploy orchestrator
+
+```bash
+mise run deploy
+```
+
+## Step 7: Onboard target repos
+
+For each target repository:
+
+```bash
+mise run onboard-target
+mise run secrets-encrypt
+mise run infra-apply
+mise run deploy              # REQUIRED: restarts orchestrator to load new target
+```
+
+---
+
+## Ongoing Operations
+
+### Stop/start instance (cost savings)
+
+```bash
+mise run instance-stop
+mise run instance-start
+```
+
+### SSH into instance
+
+```bash
+mise run ssh
+mise run ssh -- "docker ps"
+```
+
+### Re-provision instance
+
+If the instance is corrupt or you want a fresh start:
+
+```bash
+cd infrastructure-mgmt/main
+eval "$(.mise/lib/load-secrets)"
+tofu taint module.orchestrator.aws_instance.orchestrator
+tofu apply
+# New instance boots with cloud-init, then:
+mise run deploy
+```
+
+The Elastic IP remains stable, so DNS continues to work.
+
+### View preview logs
+
+```bash
+mise run preview-logs <owner> <repo> <pr-number> [tail-lines] [follow]
+```
+
+---
+
+## Troubleshooting
+
+### Webhook rejected as "unknown repository"
+
+The orchestrator loads `targets.json` at startup. If you added a new target but didn't redeploy, the orchestrator doesn't know about it.
+
+**Fix:** `mise run deploy` to restart the orchestrator with updated config.
+
+### Health check failing
+
+The orchestrator polls `https://pr-{number}-preview.{domain}{healthcheck_path}` until it gets a 200 response or the timeout expires.
+
+### Slack notifications not arriving
+
+1. **Channel naming** — channels must match the configured prefix convention
+2. **Bot token scopes** — the Slack app needs: `chat:write`, `chat:write.public`, `reactions:write`, `reactions:read`, `channels:read`, `channels:history`, `app_mentions:read`, `users:read`
+3. **Event subscription** — verify the Request URL is `https://api.{domain}/slack/events` and `app_mention` is subscribed
+4. **App reinstalled** — after changing scopes or events, reinstall the app to the workspace
+EOF
+
+# ── Initialize git repo ─────────────────────────────────────────────
+
+cd "$DEPLOY_DIR"
+git init -q
+git add -A
+git commit -q -m "Initial deployment scaffold (generated by create-deployment)"
+
+echo ""
+echo "Deployment repo created at: $DEPLOY_DIR"
+echo ""
+echo "Next steps:"
+echo "  1. cd $DEPLOY_DIR"
+echo "  2. Generate age keypair: age-keygen -o secrets/.key"
+echo "     Copy the public key (age1...) into secrets/public-key.txt"
+echo "  3. Create secrets.yaml with your AWS credentials"
+echo "  4. Create infrastructure-mgmt/main/terraform.tfvars with deployment values"
+echo "  5. Bootstrap: eval \"\$(.mise/lib/load-secrets)\" && cd infrastructure-mgmt/bootstrap && tofu init && tofu apply"
+echo "  6. Fill in infrastructure-mgmt/main/backend.tf with bootstrap outputs"
+echo "  7. mise run infra-apply"
+echo "  8. Set up DNS delegation"
+echo "  9. mise run deploy"
+echo ""
+echo "See README.md and docs/runbook.md for detailed instructions."

@@ -1,4 +1,4 @@
-# Luminor ProductBuilding Orchestration
+# ProductBuilding Orchestration
 
 A PR preview platform and AI agent orchestration system. It receives GitHub webhooks, deploys PR previews via Docker Compose behind Traefik, integrates bidirectionally with Slack, and runs an LLM-powered agent that executes GitHub and Slack actions from natural language.
 
@@ -7,29 +7,42 @@ Two main capabilities:
 1. **PR previews** — Open a PR on a target repo and a live preview appears at a stable URL (`https://pr-{number}-preview.{domain}`). Updates on new commits, tears down on PR close.
 2. **Slack agent** — `@ProductBuilder` in Slack to create issues, request implementations, check status. The agent uses specialist routing to pick the right action (create issue, delegate to coding agent, comment, research, close).
 
+## Core + Deployment separation
+
+This repository is the **generic core** — it contains the Go application, Docker Compose files, and a reusable Terraform module. It does NOT contain secrets, infrastructure state, or deployment-specific configuration.
+
+Each deployment (a specific AWS account + domain + GitHub org) lives in its own **deployment repo** created with:
+
+```bash
+mise run create-deployment <name>
+# Creates ../productbuilding-deployment-<name>/ with infrastructure, secrets, and operational tasks
+```
+
+The deployment repo sits alongside this one and references the Terraform module via relative path. For app development, work in this repo. For infrastructure and operations, work from the deployment repo.
+
 ## How it works
 
 ```
 GitHub (PR/issue events)                         Slack (@mentions)
-        │                                                │
-        ▼                                                ▼
-   ┌─────────────────── Orchestrator (Go) ───────────────────┐
-   │                                                         │
-   │  github/web ──► preview/domain ──► Docker Compose       │
-   │       │              │                   │              │
-   │       │              ▼                   ▼              │
-   │       │         SQLite state        Traefik routing     │
-   │       │              │                                  │
-   │       └──► slack/domain ◄── agent/domain ◄── Fireworks  │
-   │              │                    │                     │
-   └──────────────┼────────────────────┼─────────────────────┘
-                  ▼                    ▼
+        |                                                |
+        v                                                v
+   +------------------- Orchestrator (Go) -------------------+
+   |                                                         |
+   |  github/web --> preview/domain --> Docker Compose       |
+   |       |              |                   |              |
+   |       |              v                   v              |
+   |       |         SQLite state        Traefik routing     |
+   |       |              |                                  |
+   |       +---> slack/domain <-- agent/domain <-- Fireworks |
+   |              |                    |                     |
+   +--------------------------------------------+-----------+
+                  v                    v
             Slack threads      GitHub issues/PRs
 ```
 
 The system follows a **bilateral contract**: the orchestrator owns the deployment lifecycle (clone, build, route, health-check, tear down) while each target repo defines its own build and runtime details via `.productbuilding/preview/config.yml`.
 
-Infrastructure: single EC2 instance running Traefik (wildcard TLS via Route53 DNS-01 ACME) + the orchestrator, managed with OpenTofu. Secrets are age-encrypted in the repo and loaded to AWS Secrets Manager at deploy time.
+Infrastructure: single EC2 instance running Traefik (wildcard TLS via Route53 DNS-01 ACME) + the orchestrator, managed with OpenTofu. The Terraform module is at `infrastructure-mgmt/modules/orchestrator/`.
 
 ## Quick start
 
@@ -45,7 +58,7 @@ For subsequent sessions:
 mise run app-dev      # Start hot-reload dev server (air) inside the dev container
 ```
 
-The dev server runs on `localhost:8091`. For production setup and infrastructure provisioning, see [docs/runbook.md](docs/runbook.md).
+The dev server runs on `localhost:8091`.
 
 ## Project structure
 
@@ -53,7 +66,7 @@ The dev server runs on `localhost:8091`. For production setup and infrastructure
 orchestrator-app/
   cmd/server/main.go            Entry point — builds the full dependency graph (no DI framework)
   internal/
-    agent/                      LLM agent: prompt assembly → Fireworks API → tool execution
+    agent/                      LLM agent: prompt assembly -> Fireworks API -> tool execution
     preview/                    Preview lifecycle: clone, compose, health-check, status tracking
     github/                     Webhook receiver: PR/issue event parsing and validation
     slack/                      Slack Events API: @mentions, notifications, thread tracking
@@ -62,12 +75,9 @@ orchestrator-app/
   migrations/                   SQLite schema (embedded via embed.FS)
 
 infrastructure-mgmt/
-  main/                         OpenTofu: EC2, Traefik, Route53, IAM, per-target resources
-  bootstrap/                    One-time S3 + DynamoDB setup for Tofu state
+  modules/orchestrator/         Reusable Terraform module: EC2, Traefik, Route53, IAM, per-target resources
 
-secrets/                        Age-encrypted credentials (see secrets/README.md)
-docs/                           Operational documentation
-.mise/tasks/                    Mise task implementations
+.mise/tasks/                    Development tasks (app-build, app-tests, etc.)
 ```
 
 ### Vertical slices
@@ -112,26 +122,13 @@ To run a single test:
 mise run app-exec go test -race -run TestName ./internal/agent/domain/
 ```
 
-### Infrastructure
+### Deployment scaffolding
 
 | Task | What it does |
 |------|--------------|
-| `mise run infra-plan` | OpenTofu plan (requires decrypted secrets) |
-| `mise run infra-apply` | OpenTofu apply |
-| `mise run secrets-decrypt` | Decrypt age-encrypted secrets to plaintext |
-| `mise run secrets-encrypt` | Re-encrypt plaintext secrets with age |
+| `mise run create-deployment <name>` | Scaffold a new deployment repo at `../productbuilding-deployment-<name>/` |
 
-### Operations
-
-| Task | What it does |
-|------|--------------|
-| `mise run deploy` | SSH deploy: git pull, refresh secrets, rebuild, health check |
-| `mise run ssh` | SSH into orchestrator instance |
-| `mise run instance-start` | Start EC2 instance |
-| `mise run instance-stop` | Stop EC2 instance (cost savings) |
-| `mise run instance-status` | Check EC2 instance state |
-| `mise run onboard-target` | Interactive: register new target repo + scaffold files |
-| `mise run preview-logs <owner> <repo> <pr> [tail] [follow]` | View preview application logs |
+Infrastructure, secrets, and operational tasks (deploy, ssh, infra-plan, etc.) live in the deployment repo.
 
 ## Preview contract
 
@@ -173,11 +170,11 @@ post_deploy_commands:                    # Run after preview is healthy
 
 ```
 PR opened/reopened/synchronize
-    → pending → building → deploying → ready
-                                         ↓
+    -> pending -> building -> deploying -> ready
+                                         |
                               (new push restarts from pending)
 
-PR closed → deleted (containers removed, resources cleaned up)
+PR closed -> deleted (containers removed, resources cleaned up)
 ```
 
 On failure at any stage, the preview moves to `failed` with the error stage and message recorded. The PR comment is updated at each state transition.
@@ -203,13 +200,15 @@ All configuration is via environment variables, loaded with [caarlos0/env](https
 | `APP_ENV` | `development` | `development` or `production` (controls log format) |
 | `PORT` | `8080` | HTTP server listen port |
 | `DATABASE_PATH` | `data/orchestrator.db` | SQLite database file path |
-| `PREVIEW_DOMAIN` | `productbuilder.luminor-tech.net` | Base domain for preview URLs |
+| `PREVIEW_DOMAIN` | — | Base domain for preview URLs |
 | `WORKSPACE_DIR` | `/opt/orchestrator/workspaces` | Directory for cloned repos and compose workspaces |
 | `TARGETS_CONFIG_PATH` | `/opt/orchestrator/targets.json` | JSON file with per-target repo configuration |
 | `AWS_REGION` | `eu-central-1` | AWS region for Secrets Manager and Route53 |
 | `SLACK_SIGNING_SECRET` | — | Slack app signing secret for request verification |
-| `SLACK_WORKSPACE` | — | Slack workspace subdomain (e.g. `luminor-tech`) |
+| `SLACK_WORKSPACE` | — | Slack workspace subdomain |
 | `FIREWORKS_API_KEY` | — | Fireworks API key for LLM calls |
+| `SLACK_CHANNEL_PREFIX` | `productbuilding-` | Prefix for Slack channel-to-repo matching |
+| `ACME_EMAIL` | `admin@example.com` | Email for Let's Encrypt ACME certificates |
 | `FIREWORKS_MODEL` | `accounts/fireworks/models/kimi-k2p5` | Fireworks model identifier |
 | `LLM_REQUEST_TIMEOUT_SECS` | `60` | Timeout per LLM API request |
 | `LLM_MAX_RETRIES` | `3` | Max retries for failed LLM requests |
@@ -223,7 +222,7 @@ All configuration is via environment variables, loaded with [caarlos0/env](https
 | **SQLite** | Single instance, no external database dependency. Embedded migrations via `embed.FS`. |
 | **Tarball API** | Download source via GitHub API instead of git clone — avoids needing git on the server, simpler and faster. |
 | **Docker socket mount** | Orchestrator controls Docker Compose directly through the socket — no intermediary. |
-| **Age encryption** | Secrets committed to git (encrypted). Asymmetric: public key in repo, secret key in 1Password. No secrets service needed for local dev. |
+| **Core/deployment split** | Generic capabilities in this repo, deployment-specific config in separate private repos. Enables multiple independent deployments from one codebase. |
 | **Vertical slices** | Each feature (agent, preview, github, slack) owns its full stack. New features don't touch other verticals. |
 | **Adapter pattern** | GitHub and Slack clients wrapped in adapters for agent tool consumption — agent domain doesn't depend on external API details. |
 | **Explicit DI** | `main.go` constructs the full dependency graph. No framework, no magic, easy to trace. |
@@ -231,24 +230,7 @@ All configuration is via environment variables, loaded with [caarlos0/env](https
 | **Reconciliation on startup** | After re-provisioning, the orchestrator rebuilds previews from current GitHub state — self-healing. |
 | **Two-lane notification buffer** | Status events overwrite (latest wins), comment events append (all preserved). Eliminates races between rapid state transitions. See `internal/slack/domain/NOTIFIER.md`. |
 
-## Adding a target repo
-
-Quick version:
-
-```bash
-mise run onboard-target     # Interactive — registers target + scaffolds files in target repo
-mise run secrets-encrypt    # Re-encrypt updated credentials
-mise run infra-apply        # Creates webhook, Secrets Manager entry, GitHub Actions secret
-mise run deploy             # CRITICAL: restarts orchestrator to load new target config
-```
-
-Then in the target repo: install the [OpenCode GitHub App](https://github.com/apps/opencode-agent), customize the scaffolded `.productbuilding/` files, commit and push.
-
-For the full procedure including Slack setup, DNS verification, and all manual steps, see [docs/runbook.md](docs/runbook.md).
-
 ## Further reading
 
-- [docs/runbook.md](docs/runbook.md) — Production setup from scratch, ongoing operations
 - [CLAUDE.md](CLAUDE.md) — AI assistant context for working with this codebase
-- [secrets/README.md](secrets/README.md) — Age encryption scheme and key management
 - [orchestrator-app/internal/slack/domain/NOTIFIER.md](orchestrator-app/internal/slack/domain/NOTIFIER.md) — Two-lane notification buffer design

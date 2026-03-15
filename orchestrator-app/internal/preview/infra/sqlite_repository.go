@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/preview/domain"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/preview/domain"
 )
 
 type SQLiteRepository struct {

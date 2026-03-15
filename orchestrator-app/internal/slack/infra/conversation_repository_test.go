@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	agent "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/agent/domain"
+	agent "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/agent/domain"
 )
 
 func TestConversationRepository_UpsertAndList(t *testing.T) {

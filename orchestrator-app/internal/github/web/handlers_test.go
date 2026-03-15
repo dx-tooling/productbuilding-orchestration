@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/github/domain"
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
-	previewdomain "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/preview/domain"
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/facade"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/github/domain"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
+	previewdomain "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/preview/domain"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/facade"
 )
 
 // generateSignature creates a valid GitHub webhook signature for testing
@@ -74,7 +74,7 @@ func TestHandleWebhook_IssueOpened(t *testing.T) {
 	slackNotifier := &mockSlackNotifier{}
 	registry := &mockTargetRegistry{
 		config: targets.TargetConfig{
-			RepoOwner:     "luminor-project",
+			RepoOwner:     "example-org",
 			RepoName:      "test-repo",
 			GitHubPAT:     "github_pat_test",
 			WebhookSecret: "secret123",
@@ -96,7 +96,7 @@ func TestHandleWebhook_IssueOpened(t *testing.T) {
 			User:   domain.User{Login: "alice"},
 		},
 		Repository: domain.Repository{
-			Owner: domain.User{Login: "luminor-project"},
+			Owner: domain.User{Login: "example-org"},
 			Name:  "test-repo",
 		},
 	}
@@ -143,7 +143,7 @@ func TestHandleWebhook_IssueCommentCreated(t *testing.T) {
 	slackNotifier := &mockSlackNotifier{}
 	registry := &mockTargetRegistry{
 		config: targets.TargetConfig{
-			RepoOwner:     "luminor-project",
+			RepoOwner:     "example-org",
 			RepoName:      "test-repo",
 			GitHubPAT:     "github_pat_test",
 			WebhookSecret: "secret123",
@@ -167,7 +167,7 @@ func TestHandleWebhook_IssueCommentCreated(t *testing.T) {
 			Title:  "Add dark mode support",
 		},
 		Repository: domain.Repository{
-			Owner: domain.User{Login: "luminor-project"},
+			Owner: domain.User{Login: "example-org"},
 			Name:  "test-repo",
 		},
 	}
@@ -211,7 +211,7 @@ func TestHandleWebhook_PROpened_PassesLinkedIssueNumber(t *testing.T) {
 	slackNotifier := &mockSlackNotifier{}
 	registry := &mockTargetRegistry{
 		config: targets.TargetConfig{
-			RepoOwner:     "luminor-project",
+			RepoOwner:     "example-org",
 			RepoName:      "playground",
 			GitHubPAT:     "github_pat_test",
 			WebhookSecret: "secret123",
@@ -237,7 +237,7 @@ func TestHandleWebhook_PROpened_PassesLinkedIssueNumber(t *testing.T) {
 			},
 		},
 		"repository": map[string]interface{}{
-			"owner": map[string]string{"login": "luminor-project"},
+			"owner": map[string]string{"login": "example-org"},
 			"name":  "playground",
 		},
 	}
@@ -287,7 +287,7 @@ func TestHandleWebhook_IssueCommentFromSlack_SkipsNotification(t *testing.T) {
 	slackNotifier := &mockSlackNotifier{}
 	registry := &mockTargetRegistry{
 		config: targets.TargetConfig{
-			RepoOwner:     "luminor-project",
+			RepoOwner:     "example-org",
 			RepoName:      "test-repo",
 			GitHubPAT:     "github_pat_test",
 			WebhookSecret: "secret123",
@@ -305,14 +305,14 @@ func TestHandleWebhook_IssueCommentFromSlack_SkipsNotification(t *testing.T) {
 		Comment: domain.Comment{
 			ID:   789,
 			Body: "**@Alice** via Slack:\n\nplease fix the alignment\n\n<!-- via-slack -->",
-			User: domain.User{Login: "luminor-bot"},
+			User: domain.User{Login: "orchestrator-bot"},
 		},
 		Issue: domain.Issue{
 			Number: 42,
 			Title:  "Add dark mode support",
 		},
 		Repository: domain.Repository{
-			Owner: domain.User{Login: "luminor-project"},
+			Owner: domain.User{Login: "example-org"},
 			Name:  "test-repo",
 		},
 	}
@@ -382,7 +382,7 @@ func TestHandleWebhook_NoSlackConfig(t *testing.T) {
 	slackNotifier := &mockSlackNotifier{}
 	registry := &mockTargetRegistry{
 		config: targets.TargetConfig{
-			RepoOwner:     "luminor-project",
+			RepoOwner:     "example-org",
 			RepoName:      "test-repo",
 			GitHubPAT:     "github_pat_test",
 			WebhookSecret: "secret123",
@@ -397,7 +397,7 @@ func TestHandleWebhook_NoSlackConfig(t *testing.T) {
 		Action: "opened",
 		Issue:  domain.Issue{Number: 42, Title: "Test issue"},
 		Repository: domain.Repository{
-			Owner: domain.User{Login: "luminor-project"},
+			Owner: domain.User{Login: "example-org"},
 			Name:  "test-repo",
 		},
 	}
@@ -426,7 +426,7 @@ func TestHandleWebhook_InvalidSignature(t *testing.T) {
 	slackNotifier := &mockSlackNotifier{}
 	registry := &mockTargetRegistry{
 		config: targets.TargetConfig{
-			RepoOwner:     "luminor-project",
+			RepoOwner:     "example-org",
 			RepoName:      "test-repo",
 			GitHubPAT:     "github_pat_test",
 			WebhookSecret: "secret123",
@@ -442,7 +442,7 @@ func TestHandleWebhook_InvalidSignature(t *testing.T) {
 		Action: "opened",
 		Issue:  domain.Issue{Number: 42},
 		Repository: domain.Repository{
-			Owner: domain.User{Login: "luminor-project"},
+			Owner: domain.User{Login: "example-org"},
 			Name:  "test-repo",
 		},
 	}
@@ -466,7 +466,7 @@ func TestHandleWebhook_UnsupportedEvent(t *testing.T) {
 	slackNotifier := &mockSlackNotifier{}
 	registry := &mockTargetRegistry{
 		config: targets.TargetConfig{
-			RepoOwner:     "luminor-project",
+			RepoOwner:     "example-org",
 			RepoName:      "test-repo",
 			GitHubPAT:     "github_pat_test",
 			WebhookSecret: "secret123",

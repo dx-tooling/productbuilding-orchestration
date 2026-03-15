@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
 )
 
 // mockLLMClient allows scripting a sequence of LLM responses.

@@ -3,7 +3,7 @@ package domain
 import (
 	"context"
 
-	slackdomain "github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/slack/domain"
+	slackdomain "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/domain"
 )
 
 // SlackClientAdapter wraps a slack domain Client to satisfy the agent's SlackThreadFetcher interface.

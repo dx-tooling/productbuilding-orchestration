@@ -18,7 +18,7 @@ func TestSlackThread_New(t *testing.T) {
 	}{
 		{
 			name:        "valid issue thread",
-			repoOwner:   "luminor-project",
+			repoOwner:   "example-org",
 			repoName:    "my-app",
 			issueNumber: 42,
 			prNumber:    0,
@@ -29,7 +29,7 @@ func TestSlackThread_New(t *testing.T) {
 		},
 		{
 			name:        "valid PR thread",
-			repoOwner:   "luminor-project",
+			repoOwner:   "example-org",
 			repoName:    "my-app",
 			issueNumber: 0,
 			prNumber:    42,
@@ -40,7 +40,7 @@ func TestSlackThread_New(t *testing.T) {
 		},
 		{
 			name:        "both issue and PR set should error",
-			repoOwner:   "luminor-project",
+			repoOwner:   "example-org",
 			repoName:    "my-app",
 			issueNumber: 42,
 			prNumber:    42,
@@ -50,7 +50,7 @@ func TestSlackThread_New(t *testing.T) {
 		},
 		{
 			name:        "neither issue nor PR should error",
-			repoOwner:   "luminor-project",
+			repoOwner:   "example-org",
 			repoName:    "my-app",
 			issueNumber: 0,
 			prNumber:    0,
@@ -70,7 +70,7 @@ func TestSlackThread_New(t *testing.T) {
 		},
 		{
 			name:        "empty repo name should error",
-			repoOwner:   "luminor-project",
+			repoOwner:   "example-org",
 			repoName:    "",
 			issueNumber: 42,
 			prNumber:    0,
@@ -80,7 +80,7 @@ func TestSlackThread_New(t *testing.T) {
 		},
 		{
 			name:        "empty channel should error",
-			repoOwner:   "luminor-project",
+			repoOwner:   "example-org",
 			repoName:    "my-app",
 			issueNumber: 42,
 			prNumber:    0,
@@ -90,7 +90,7 @@ func TestSlackThread_New(t *testing.T) {
 		},
 		{
 			name:        "empty thread timestamp should error",
-			repoOwner:   "luminor-project",
+			repoOwner:   "example-org",
 			repoName:    "my-app",
 			issueNumber: 42,
 			prNumber:    0,
@@ -183,20 +183,20 @@ func TestNotificationEvent_IsPR(t *testing.T) {
 
 func TestNotificationEvent_GitHubURL(t *testing.T) {
 	event := NotificationEvent{
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
 		Type:        EventIssueOpened,
 	}
 
-	want := "https://github.com/luminor-project/test-repo/issues/42"
+	want := "https://github.com/example-org/test-repo/issues/42"
 	if got := event.GitHubURL(); got != want {
 		t.Errorf("GitHubURL() = %v, want %v", got, want)
 	}
 
 	// Test PR URL
 	event.Type = EventPROpened
-	want = "https://github.com/luminor-project/test-repo/pull/42"
+	want = "https://github.com/example-org/test-repo/pull/42"
 	if got := event.GitHubURL(); got != want {
 		t.Errorf("GitHubURL() for PR = %v, want %v", got, want)
 	}
@@ -204,14 +204,14 @@ func TestNotificationEvent_GitHubURL(t *testing.T) {
 
 func TestNotificationEvent_CommentURL(t *testing.T) {
 	event := NotificationEvent{
-		RepoOwner:   "luminor-project",
+		RepoOwner:   "example-org",
 		RepoName:    "test-repo",
 		IssueNumber: 42,
 		Type:        EventCommentAdded,
 		CommentID:   123456,
 	}
 
-	want := "https://github.com/luminor-project/test-repo/issues/42#issuecomment-123456"
+	want := "https://github.com/example-org/test-repo/issues/42#issuecomment-123456"
 	if got := event.CommentURL(); got != want {
 		t.Errorf("CommentURL() = %v, want %v", got, want)
 	}

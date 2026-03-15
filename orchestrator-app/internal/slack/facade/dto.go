@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
 )
 
 // EventType represents the type of GitHub event

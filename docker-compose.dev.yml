@@ -16,7 +16,7 @@ services:
       APP_ENV: development
       PORT: "8080"
       DATABASE_PATH: /app/data/orchestrator.db
-      PREVIEW_DOMAIN: productbuilder.luminor-tech.net
+      PREVIEW_DOMAIN: ${PREVIEW_DOMAIN:-localhost}
       WORKSPACE_DIR: /app/data/workspaces
       TARGETS_CONFIG_PATH: /app/data/targets.json
     restart: unless-stopped

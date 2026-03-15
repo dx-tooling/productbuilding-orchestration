@@ -13,7 +13,6 @@ variable "project_prefix" {
 variable "github_org" {
   description = "GitHub organization name"
   type        = string
-  default     = "luminor-project"
 }
 
 variable "github_mgmt_pat" {
@@ -25,7 +24,6 @@ variable "github_mgmt_pat" {
 variable "preview_domain" {
   description = "Domain for preview environments"
   type        = string
-  default     = "productbuilder.luminor-tech.net"
 }
 
 variable "instance_type" {
@@ -40,7 +38,7 @@ variable "ssh_public_key" {
 }
 
 variable "slack_workspace" {
-  description = "Slack workspace subdomain (e.g. 'luminor-tech' for luminor-tech.slack.com) for deep links"
+  description = "Slack workspace subdomain (e.g. 'myteam' for myteam.slack.com) for deep links"
   type        = string
   default     = ""
 }
@@ -57,6 +55,11 @@ variable "fireworks_api_key" {
   type        = string
   sensitive   = true
   default     = ""
+}
+
+variable "orchestration_repo" {
+  description = "Name of the orchestration repository (without org prefix)"
+  type        = string
 }
 
 variable "targets" {

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/luminor-project/luminor-productbuilding-orchestration/orchestrator-app/internal/platform/targets"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
 )
 
 // GitHubClient defines the GitHub operations available to the agent tools.
