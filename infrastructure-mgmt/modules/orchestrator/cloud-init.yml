@@ -59,13 +59,14 @@ write_files:
       su - ubuntu -c "git config --global --add safe.directory /opt/orchestrator/repo"
 
       echo "=== Writing .env for Compose stack ==="
-      cat > /opt/orchestrator/repo/.env <<ENVEOF
-AWS_REGION=$AWS_REGION
-AWS_HOSTED_ZONE_ID=$HOSTED_ZONE_ID
-PREVIEW_DOMAIN=$PREVIEW_DOMAIN
-PROJECT_PREFIX=$PROJECT_PREFIX
-SLACK_WORKSPACE=$SLACK_WORKSPACE
-ENVEOF
+      {
+        echo "AWS_REGION=$AWS_REGION"
+        echo "AWS_HOSTED_ZONE_ID=$HOSTED_ZONE_ID"
+        echo "PREVIEW_DOMAIN=$PREVIEW_DOMAIN"
+        echo "PROJECT_PREFIX=$PROJECT_PREFIX"
+        echo "SLACK_WORKSPACE=$SLACK_WORKSPACE"
+        echo "ACME_EMAIL=${acme_email}"
+      } > /opt/orchestrator/repo/.env
 
       echo "=== Fetching Slack signing secret (if configured) ==="
       SLACK_SIGNING_SECRET=$(aws secretsmanager get-secret-value \

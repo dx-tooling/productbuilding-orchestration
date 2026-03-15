@@ -57,6 +57,12 @@ variable "fireworks_api_key" {
   default     = ""
 }
 
+variable "acme_email" {
+  description = "Email for Let's Encrypt ACME certificate registration"
+  type        = string
+  default     = "admin@example.com"
+}
+
 variable "orchestration_repo" {
   description = "Name of the orchestration repository (without org prefix)"
   type        = string
