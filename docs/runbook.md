@@ -230,3 +230,73 @@ logging:
 ```
 
 **Important:** The orchestrator caches target configuration at startup. After adding a new target, you **must** run `mise run deploy` to restart the orchestrator with the updated configuration. Without this step, webhooks from the new repo will be rejected as "unknown repository".
+
+---
+
+## Troubleshooting
+
+### Webhook rejected as "unknown repository"
+
+The orchestrator loads `targets.json` at startup. If you added a new target but didn't redeploy, the orchestrator doesn't know about it.
+
+**Fix:** `mise run deploy` to restart the orchestrator with updated config.
+
+### Preview stuck or not deploying
+
+```bash
+# Check running containers on the instance
+mise run ssh -- "docker ps"
+
+# Check preview logs
+mise run preview-logs <owner> <repo> <pr>
+
+# Inspect the compose workspace
+mise run ssh -- "ls /opt/orchestrator/workspaces/<owner>/<repo>/pr-<number>/"
+```
+
+Common causes: Dockerfile build failure, port conflict, missing environment variables in the target repo's compose file.
+
+### Health check failing
+
+The orchestrator polls `https://pr-{number}-preview.{domain}{healthcheck_path}` until it gets a 200 response or the `startup_timeout_seconds` expires.
+
+**Check:**
+- `healthcheck_path` in the target's `config.yml` actually returns 200 when healthy
+- `internal_port` matches the port the app listens on inside the container
+- The app starts within the configured timeout (default 300s)
+
+### Slack notifications not arriving
+
+1. **Channel naming** — channels must be named `#productbuilding-{repo-name}` (the system matches channels to repos by this convention)
+2. **Bot token scopes** — the Slack app needs: `chat:write`, `chat:write.public`, `reactions:write`, `reactions:read`, `channels:read`, `channels:history`, `app_mentions:read`, `users:read`
+3. **Event subscription** — verify the Request URL is `https://api.{domain}/slack/events` and `app_mention` is subscribed
+4. **App reinstalled** — after changing scopes or events, reinstall the app to the workspace
+
+### Preview URL not resolving
+
+DNS delegation may not be propagated yet, or the Elastic IP changed.
+
+```bash
+# Verify DNS delegation
+dig NS productbuilder.luminor-tech.net +short
+
+# Verify wildcard resolution points to Elastic IP
+dig A anything.productbuilder.luminor-tech.net +short
+
+# Compare with the actual Elastic IP
+mise run infra-output | grep elastic_ip
+```
+
+### Re-provisioning after instance corruption
+
+```bash
+cd infrastructure-mgmt/main
+eval "$(.mise/lib/load-secrets)"
+tofu taint aws_instance.orchestrator
+tofu apply
+# New instance boots with cloud-init, then:
+mise run deploy
+# Reconciliation rebuilds active previews from GitHub state
+```
+
+The Elastic IP stays stable, so DNS continues to work.
