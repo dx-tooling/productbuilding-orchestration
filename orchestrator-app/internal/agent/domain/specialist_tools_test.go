@@ -62,8 +62,8 @@ func TestCommenterTools_ReturnsOnlyGetAndComment(t *testing.T) {
 
 func TestResearcherTools_ReturnsAllReadOnlyTools(t *testing.T) {
 	defs := ResearcherTools()
-	if len(defs) != 7 {
-		t.Fatalf("expected 7 tools, got %d: %v", len(defs), toolNames(defs))
+	if len(defs) != 9 {
+		t.Fatalf("expected 9 tools, got %d: %v", len(defs), toolNames(defs))
 	}
 	expected := []string{
 		"search_github_issues",
@@ -73,6 +73,8 @@ func TestResearcherTools_ReturnsAllReadOnlyTools(t *testing.T) {
 		"search_repo_code",
 		"get_file_contents",
 		"list_conversations",
+		"list_workflow_runs",
+		"get_workflow_run_jobs",
 	}
 	for _, name := range expected {
 		if !containsTool(defs, name) {

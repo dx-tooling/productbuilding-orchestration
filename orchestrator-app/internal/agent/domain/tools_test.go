@@ -11,24 +11,28 @@ import (
 
 // mockGitHubClient is a test double for GitHubClient.
 type mockGitHubClient struct {
-	createIssueResult     int
-	createIssueErr        error
-	createCommentResult   int64
-	createCommentErr      error
-	searchResults         []IssueSearchResult
-	searchErr             error
-	getIssueResult        *IssueDetail
-	getIssueErr           error
-	listIssuesResult      []IssueDetail
-	listIssuesErr         error
-	getPRDiffResult       string
-	getPRDiffErr          error
-	closeIssueErr         error
-	closePRErr            error
-	searchCodeResult      []CodeSearchResult
-	searchCodeErr         error
-	getFileContentsResult *FileContents
-	getFileContentsErr    error
+	createIssueResult         int
+	createIssueErr            error
+	createCommentResult       int64
+	createCommentErr          error
+	searchResults             []IssueSearchResult
+	searchErr                 error
+	getIssueResult            *IssueDetail
+	getIssueErr               error
+	listIssuesResult          []IssueDetail
+	listIssuesErr             error
+	getPRDiffResult           string
+	getPRDiffErr              error
+	closeIssueErr             error
+	closePRErr                error
+	searchCodeResult          []CodeSearchResult
+	searchCodeErr             error
+	getFileContentsResult     *FileContents
+	getFileContentsErr        error
+	listWorkflowRunsResult    []WorkflowRun
+	listWorkflowRunsErr       error
+	listWorkflowRunJobsResult []WorkflowRunJob
+	listWorkflowRunJobsErr    error
 
 	// Captured args
 	lastCommentBody    string
@@ -77,6 +81,14 @@ func (m *mockGitHubClient) SearchCode(_ context.Context, _, _, _, _ string) ([]C
 
 func (m *mockGitHubClient) GetFileContents(_ context.Context, _, _, _, _, _ string) (*FileContents, error) {
 	return m.getFileContentsResult, m.getFileContentsErr
+}
+
+func (m *mockGitHubClient) ListWorkflowRuns(_ context.Context, _, _, _, _ string, _ int) ([]WorkflowRun, error) {
+	return m.listWorkflowRunsResult, m.listWorkflowRunsErr
+}
+
+func (m *mockGitHubClient) ListWorkflowRunJobs(_ context.Context, _, _ string, _ int64, _ string) ([]WorkflowRunJob, error) {
+	return m.listWorkflowRunJobsResult, m.listWorkflowRunJobsErr
 }
 
 var testTarget = targets.TargetConfig{
@@ -502,9 +514,91 @@ func TestToolExecutor_GetFileContents_Dir(t *testing.T) {
 	}
 }
 
+func TestToolExecutor_ListWorkflowRuns(t *testing.T) {
+	gh := &mockGitHubClient{
+		listWorkflowRunsResult: []WorkflowRun{
+			{ID: 100, Name: "CI", Status: "completed", Conclusion: "success", HeadBranch: "main", Event: "push", UpdatedAt: "2026-03-15T10:00:00Z", HTMLURL: "https://github.com/acme/widgets/actions/runs/100"},
+			{ID: 101, Name: "CI", Status: "completed", Conclusion: "failure", HeadBranch: "feature", Event: "pull_request", UpdatedAt: "2026-03-15T11:00:00Z", HTMLURL: "https://github.com/acme/widgets/actions/runs/101"},
+		},
+	}
+	exec := NewToolExecutor(gh)
+
+	result, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "list_workflow_runs",
+			Arguments: `{"branch":"main","limit":5}`,
+		},
+	}, testTarget)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "Run #100") {
+		t.Errorf("expected run ID in result, got: %s", result)
+	}
+	if !strings.Contains(result, "success") {
+		t.Errorf("expected conclusion in result, got: %s", result)
+	}
+}
+
+func TestToolExecutor_ListWorkflowRuns_NoRuns(t *testing.T) {
+	gh := &mockGitHubClient{listWorkflowRunsResult: []WorkflowRun{}}
+	exec := NewToolExecutor(gh)
+
+	result, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "list_workflow_runs",
+			Arguments: `{"branch":"nonexistent"}`,
+		},
+	}, testTarget)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "No workflow runs found") {
+		t.Errorf("expected no-runs message, got: %s", result)
+	}
+}
+
+func TestToolExecutor_GetWorkflowRunJobs(t *testing.T) {
+	gh := &mockGitHubClient{
+		listWorkflowRunJobsResult: []WorkflowRunJob{
+			{
+				ID: 200, Name: "build", Status: "completed", Conclusion: "failure",
+				HTMLURL: "https://github.com/acme/widgets/actions/runs/101/jobs/200",
+				Steps: []WorkflowRunStep{
+					{Number: 1, Name: "Checkout", Status: "completed", Conclusion: "success"},
+					{Number: 2, Name: "Run tests", Status: "completed", Conclusion: "failure"},
+				},
+			},
+		},
+	}
+	exec := NewToolExecutor(gh)
+
+	result, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "get_workflow_run_jobs",
+			Arguments: `{"run_id":101}`,
+		},
+	}, testTarget)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "build") {
+		t.Errorf("expected job name in result, got: %s", result)
+	}
+	if !strings.Contains(result, "Run tests") {
+		t.Errorf("expected step name in result, got: %s", result)
+	}
+	if !strings.Contains(result, "failure") {
+		t.Errorf("expected failure status in result, got: %s", result)
+	}
+}
+
 func TestToolDefinitions_Count(t *testing.T) {
 	defs := ToolDefinitions()
-	if len(defs) != 11 {
-		t.Errorf("expected 11 tool definitions, got %d", len(defs))
+	if len(defs) != 13 {
+		t.Errorf("expected 13 tool definitions, got %d", len(defs))
 	}
 }

@@ -650,6 +650,108 @@ func (c *Client) GetFileContents(ctx context.Context, owner, repo, path, ref, pa
 	return nil, fmt.Errorf("unexpected response format for %s", path)
 }
 
+// WorkflowRun represents a GitHub Actions workflow run.
+type WorkflowRun struct {
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+	HTMLURL    string `json:"html_url"`
+	HeadBranch string `json:"head_branch"`
+	Event      string `json:"event"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
+type listWorkflowRunsResponse struct {
+	WorkflowRuns []WorkflowRun `json:"workflow_runs"`
+}
+
+// ListWorkflowRuns lists recent workflow runs, optionally filtered by branch.
+func (c *Client) ListWorkflowRuns(ctx context.Context, owner, repo, branch, pat string, limit int) ([]WorkflowRun, error) {
+	u := fmt.Sprintf("%s/repos/%s/%s/actions/runs?per_page=%d", c.apiURL(), owner, repo, limit)
+	if branch != "" {
+		u += "&branch=" + url.QueryEscape(branch)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list workflow runs: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("list workflow runs: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	var result listWorkflowRunsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("parse workflow runs response: %w", err)
+	}
+
+	return result.WorkflowRuns, nil
+}
+
+// WorkflowRunJob represents a job within a workflow run.
+type WorkflowRunJob struct {
+	ID         int64             `json:"id"`
+	Name       string            `json:"name"`
+	Status     string            `json:"status"`
+	Conclusion string            `json:"conclusion"`
+	HTMLURL    string            `json:"html_url"`
+	Steps      []WorkflowRunStep `json:"steps"`
+}
+
+// WorkflowRunStep represents a step within a job.
+type WorkflowRunStep struct {
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+	Number     int    `json:"number"`
+}
+
+type listWorkflowRunJobsResponse struct {
+	Jobs []WorkflowRunJob `json:"jobs"`
+}
+
+// ListWorkflowRunJobs lists jobs for a specific workflow run.
+func (c *Client) ListWorkflowRunJobs(ctx context.Context, owner, repo string, runID int64, pat string) ([]WorkflowRunJob, error) {
+	u := fmt.Sprintf("%s/repos/%s/%s/actions/runs/%d/jobs", c.apiURL(), owner, repo, runID)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list workflow run jobs: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("list workflow run jobs: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	var result listWorkflowRunJobsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("parse workflow run jobs response: %w", err)
+	}
+
+	return result.Jobs, nil
+}
+
 // DeleteComment removes a PR comment.
 func (c *Client) DeleteComment(ctx context.Context, owner, repo string, commentID int64, pat string) error {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/comments/%d", owner, repo, commentID)

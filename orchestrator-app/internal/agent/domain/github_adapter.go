@@ -105,6 +105,56 @@ func (a *GitHubClientAdapter) SearchCode(ctx context.Context, owner, repo, query
 	return out, nil
 }
 
+func (a *GitHubClientAdapter) ListWorkflowRuns(ctx context.Context, owner, repo, branch, pat string, limit int) ([]WorkflowRun, error) {
+	results, err := a.client.ListWorkflowRuns(ctx, owner, repo, branch, pat, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]WorkflowRun, len(results))
+	for i, r := range results {
+		out[i] = WorkflowRun{
+			ID:         r.ID,
+			Name:       r.Name,
+			Status:     r.Status,
+			Conclusion: r.Conclusion,
+			HTMLURL:    r.HTMLURL,
+			HeadBranch: r.HeadBranch,
+			Event:      r.Event,
+			CreatedAt:  r.CreatedAt,
+			UpdatedAt:  r.UpdatedAt,
+		}
+	}
+	return out, nil
+}
+
+func (a *GitHubClientAdapter) ListWorkflowRunJobs(ctx context.Context, owner, repo string, runID int64, pat string) ([]WorkflowRunJob, error) {
+	results, err := a.client.ListWorkflowRunJobs(ctx, owner, repo, runID, pat)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]WorkflowRunJob, len(results))
+	for i, j := range results {
+		steps := make([]WorkflowRunStep, len(j.Steps))
+		for k, s := range j.Steps {
+			steps[k] = WorkflowRunStep{
+				Name:       s.Name,
+				Status:     s.Status,
+				Conclusion: s.Conclusion,
+				Number:     s.Number,
+			}
+		}
+		out[i] = WorkflowRunJob{
+			ID:         j.ID,
+			Name:       j.Name,
+			Status:     j.Status,
+			Conclusion: j.Conclusion,
+			HTMLURL:    j.HTMLURL,
+			Steps:      steps,
+		}
+	}
+	return out, nil
+}
+
 func (a *GitHubClientAdapter) GetFileContents(ctx context.Context, owner, repo, path, ref, pat string) (*FileContents, error) {
 	result, err := a.client.GetFileContents(ctx, owner, repo, path, ref, pat)
 	if err != nil {

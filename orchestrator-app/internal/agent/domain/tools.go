@@ -21,6 +21,39 @@ type GitHubClient interface {
 	ClosePR(ctx context.Context, owner, repo string, prNumber int, pat string) error
 	SearchCode(ctx context.Context, owner, repo, query, pat string) ([]CodeSearchResult, error)
 	GetFileContents(ctx context.Context, owner, repo, path, ref, pat string) (*FileContents, error)
+	ListWorkflowRuns(ctx context.Context, owner, repo, branch, pat string, limit int) ([]WorkflowRun, error)
+	ListWorkflowRunJobs(ctx context.Context, owner, repo string, runID int64, pat string) ([]WorkflowRunJob, error)
+}
+
+// WorkflowRun represents a GitHub Actions workflow run.
+type WorkflowRun struct {
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+	HTMLURL    string `json:"html_url"`
+	HeadBranch string `json:"head_branch"`
+	Event      string `json:"event"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
+// WorkflowRunJob represents a job within a workflow run.
+type WorkflowRunJob struct {
+	ID         int64             `json:"id"`
+	Name       string            `json:"name"`
+	Status     string            `json:"status"`
+	Conclusion string            `json:"conclusion"`
+	HTMLURL    string            `json:"html_url"`
+	Steps      []WorkflowRunStep `json:"steps"`
+}
+
+// WorkflowRunStep represents a step within a job.
+type WorkflowRunStep struct {
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+	Number     int    `json:"number"`
 }
 
 // CodeSearchResult is returned by SearchCode.
@@ -117,6 +150,10 @@ func (e *GitHubToolExecutor) Execute(ctx context.Context, call ToolCall, target 
 		return e.searchCode(ctx, call.Function.Arguments, target)
 	case "get_file_contents":
 		return e.getFileContents(ctx, call.Function.Arguments, target)
+	case "list_workflow_runs":
+		return e.listWorkflowRuns(ctx, call.Function.Arguments, target)
+	case "get_workflow_run_jobs":
+		return e.getWorkflowRunJobs(ctx, call.Function.Arguments, target)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", call.Function.Name)
 	}
@@ -401,6 +438,84 @@ func (e *GitHubToolExecutor) getFileContents(ctx context.Context, argsJSON strin
 	return sb.String(), nil
 }
 
+func (e *GitHubToolExecutor) listWorkflowRuns(ctx context.Context, argsJSON string, target targets.TargetConfig) (string, error) {
+	var args struct {
+		Branch string `json:"branch"`
+		Limit  int    `json:"limit"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "", fmt.Errorf("parse arguments: %w", err)
+	}
+	if args.Limit <= 0 {
+		args.Limit = 5
+	}
+	if args.Limit > 10 {
+		args.Limit = 10
+	}
+
+	runs, err := e.github.ListWorkflowRuns(ctx, target.RepoOwner, target.RepoName, args.Branch, target.GitHubPAT, args.Limit)
+	if err != nil {
+		return "", err
+	}
+
+	if len(runs) == 0 {
+		if args.Branch != "" {
+			return fmt.Sprintf("No workflow runs found for branch %q.", args.Branch), nil
+		}
+		return "No workflow runs found.", nil
+	}
+
+	var sb strings.Builder
+	for _, r := range runs {
+		status := r.Status
+		if r.Conclusion != "" {
+			status = r.Conclusion
+		}
+		sb.WriteString(fmt.Sprintf("Run #%d: %s [%s] branch:%s event:%s (%s)\n  %s\n",
+			r.ID, r.Name, status, r.HeadBranch, r.Event, r.UpdatedAt, r.HTMLURL))
+	}
+	return sb.String(), nil
+}
+
+func (e *GitHubToolExecutor) getWorkflowRunJobs(ctx context.Context, argsJSON string, target targets.TargetConfig) (string, error) {
+	var args struct {
+		RunID int64 `json:"run_id"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "", fmt.Errorf("parse arguments: %w", err)
+	}
+
+	jobs, err := e.github.ListWorkflowRunJobs(ctx, target.RepoOwner, target.RepoName, args.RunID, target.GitHubPAT)
+	if err != nil {
+		return "", err
+	}
+
+	if len(jobs) == 0 {
+		return fmt.Sprintf("No jobs found for run %d.", args.RunID), nil
+	}
+
+	var sb strings.Builder
+	for _, j := range jobs {
+		status := j.Status
+		if j.Conclusion != "" {
+			status = j.Conclusion
+		}
+		sb.WriteString(fmt.Sprintf("Job: %s [%s]\n  %s\n", j.Name, status, j.HTMLURL))
+		for _, s := range j.Steps {
+			stepStatus := s.Status
+			if s.Conclusion != "" {
+				stepStatus = s.Conclusion
+			}
+			marker := " "
+			if s.Conclusion == "failure" {
+				marker = ">"
+			}
+			sb.WriteString(fmt.Sprintf(" %s Step %d: %s [%s]\n", marker, s.Number, s.Name, stepStatus))
+		}
+	}
+	return sb.String(), nil
+}
+
 // ToolDefinitions returns the tool schemas to pass to the LLM.
 func ToolDefinitions() []ToolDef {
 	return []ToolDef{
@@ -545,6 +660,34 @@ func ToolDefinitions() []ToolDef {
 						"ref": {"type": "string", "description": "Branch name, tag, or commit SHA (default: repository default branch)"}
 					},
 					"required": ["path"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolSchema{
+				Name:        "list_workflow_runs",
+				Description: "List recent GitHub Actions workflow runs (CI/CD) for the repository. Optionally filter by branch name.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"branch": {"type": "string", "description": "Filter by branch name (optional)"},
+						"limit": {"type": "integer", "description": "Number of runs to return (1-10, default 5)"}
+					}
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolSchema{
+				Name:        "get_workflow_run_jobs",
+				Description: "Get jobs and steps for a specific GitHub Actions workflow run. Use to investigate CI failures — shows which step failed.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"run_id": {"type": "integer", "description": "Workflow run ID (from list_workflow_runs)"}
+					},
+					"required": ["run_id"]
 				}`),
 			},
 		},
