@@ -247,7 +247,7 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 			replyTs = event.ThreadTs
 		}
 		if err := h.slackClient.PostToThread(ctx, target.SlackBotToken, event.Channel, replyTs,
-			domain.MessageBlock{Text: "Sorry, I encountered an error processing your request. Please try again."}); err != nil {
+			domain.MessageBlock{Text: userFacingErrorMessage(err)}); err != nil {
 			slog.Error("failed to post error reply", "error", err, "channel", event.Channel, "thread_ts", replyTs)
 		}
 		return
@@ -393,4 +393,18 @@ func (h *Handler) verifySignature(r *http.Request, body []byte) error {
 	}
 
 	return nil
+}
+
+func userFacingErrorMessage(err error) string {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "status 503") ||
+		strings.Contains(msg, "status 502") ||
+		strings.Contains(msg, "status 504"):
+		return "The AI service is temporarily unavailable. Please try again in a few minutes."
+	case strings.Contains(msg, "status 429"):
+		return "The AI service is rate-limited right now. Please try again shortly."
+	default:
+		return "Sorry, I encountered an error processing your request. Please try again."
+	}
 }

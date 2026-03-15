@@ -563,8 +563,8 @@ func TestHandleEvent_InThreadMention_AgentRunsWithContext(t *testing.T) {
 	}
 }
 
-func TestHandleEvent_AgentError_PostsErrorMessage(t *testing.T) {
-	agentRunner := &mockAgentRunner{err: fmt.Errorf("LLM unreachable")}
+func TestHandleEvent_AgentError_PostsGenericErrorMessage(t *testing.T) {
+	agentRunner := &mockAgentRunner{err: fmt.Errorf("something unexpected")}
 	slackClient := &mockSlackClient{
 		userName:    "Alice",
 		channelName: "productbuilding-playground",
@@ -595,23 +595,109 @@ func TestHandleEvent_AgentError_PostsErrorMessage(t *testing.T) {
 	h.HandleEvent(rec, req)
 	time.Sleep(200 * time.Millisecond)
 
-	// Should add :x: reaction
 	reactions := slackClient.getReactions()
 	hasX := false
 	for _, r := range reactions {
 		if r == "x" {
 			hasX = true
-			break
 		}
 	}
 	if !hasX {
 		t.Errorf("Expected :x: reaction on error, got %v", reactions)
 	}
 
-	// Should post error message
 	msgs := slackClient.getPostedMessages()
 	if len(msgs) == 0 {
 		t.Fatal("Expected error message posted")
+	}
+	if !strings.Contains(msgs[0], "encountered an error") {
+		t.Errorf("Expected generic error message, got %q", msgs[0])
+	}
+}
+
+func TestHandleEvent_AgentError503_PostsServiceUnavailableMessage(t *testing.T) {
+	agentRunner := &mockAgentRunner{
+		err: fmt.Errorf("orchestrator routing: router llm call: api error (status 503): upstream connect error"),
+	}
+	slackClient := &mockSlackClient{
+		userName:    "Alice",
+		channelName: "productbuilding-playground",
+	}
+	registry := &mockTargetRegistry{
+		channelConfig: defaultTarget(),
+		channelFound:  true,
+		botToken:      "xoxb-test",
+	}
+
+	h := NewHandler(agentRunner, &mockThreadFinder{}, &mockThreadSaver{}, nil, slackClient, registry, testSigningSecret, "")
+
+	payload := map[string]interface{}{
+		"type": "event_callback",
+		"event": map[string]interface{}{
+			"type":    "app_mention",
+			"user":    "U123",
+			"text":    "<@UBOT> hello",
+			"channel": "C0PRODUCT",
+			"ts":      "1234567890.123456",
+		},
+		"authorizations": []map[string]string{{"user_id": "UBOT"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := makeSignedRequest(t, body)
+	rec := httptest.NewRecorder()
+
+	h.HandleEvent(rec, req)
+	time.Sleep(200 * time.Millisecond)
+
+	msgs := slackClient.getPostedMessages()
+	if len(msgs) == 0 {
+		t.Fatal("Expected error message posted")
+	}
+	if !strings.Contains(msgs[0], "temporarily unavailable") {
+		t.Errorf("Expected service unavailable message, got %q", msgs[0])
+	}
+}
+
+func TestHandleEvent_AgentError429_PostsRateLimitMessage(t *testing.T) {
+	agentRunner := &mockAgentRunner{
+		err: fmt.Errorf("specialist researcher: specialist researcher llm completion: api error (status 429): rate limit exceeded"),
+	}
+	slackClient := &mockSlackClient{
+		userName:    "Alice",
+		channelName: "productbuilding-playground",
+	}
+	registry := &mockTargetRegistry{
+		channelConfig: defaultTarget(),
+		channelFound:  true,
+		botToken:      "xoxb-test",
+	}
+
+	h := NewHandler(agentRunner, &mockThreadFinder{}, &mockThreadSaver{}, nil, slackClient, registry, testSigningSecret, "")
+
+	payload := map[string]interface{}{
+		"type": "event_callback",
+		"event": map[string]interface{}{
+			"type":    "app_mention",
+			"user":    "U123",
+			"text":    "<@UBOT> hello",
+			"channel": "C0PRODUCT",
+			"ts":      "1234567890.123456",
+		},
+		"authorizations": []map[string]string{{"user_id": "UBOT"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := makeSignedRequest(t, body)
+	rec := httptest.NewRecorder()
+
+	h.HandleEvent(rec, req)
+	time.Sleep(200 * time.Millisecond)
+
+	msgs := slackClient.getPostedMessages()
+	if len(msgs) == 0 {
+		t.Fatal("Expected error message posted")
+	}
+	if !strings.Contains(msgs[0], "rate-limited") {
+		t.Errorf("Expected rate limit message, got %q", msgs[0])
 	}
 }
 
