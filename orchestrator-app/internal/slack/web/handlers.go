@@ -266,10 +266,24 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 
 	// Persist trace
 	if h.traceSaver != nil {
+		// Determine the issue ID: prefer linked issue, fall back to first created issue
 		issueID := 0
 		if linkedIssue != nil {
 			issueID = linkedIssue.Number
 		}
+		if issueID == 0 && err == nil && len(resp.SideEffects.CreatedIssues) > 0 {
+			issueID = resp.SideEffects.CreatedIssues[0].Number
+		}
+		if issueID == 0 && err == nil && len(resp.SideEffects.DelegatedIssues) > 0 {
+			issueID = resp.SideEffects.DelegatedIssues[0]
+		}
+
+		// Use event.Ts as thread_ts for top-level mentions (it becomes the thread parent)
+		threadTs := event.ThreadTs
+		if threadTs == "" {
+			threadTs = event.Ts
+		}
+
 		traceJSON, _ := json.Marshal(trace)
 		traceErr := ""
 		if err != nil {
@@ -280,7 +294,7 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 			RepoName:      target.RepoName,
 			GithubIssueID: issueID,
 			SlackChannel:  event.Channel,
-			SlackThreadTs: event.ThreadTs,
+			SlackThreadTs: threadTs,
 			UserName:      displayName,
 			UserText:      text,
 			TraceData:     string(traceJSON),

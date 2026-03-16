@@ -62,7 +62,17 @@ func (r *TraceRepository) SaveTrace(ctx context.Context, record TraceRecord) err
 }
 
 // FindByIssue returns traces matching a repo + issue number, newest first.
+// If owner and repo are empty, matches across all repos.
 func (r *TraceRepository) FindByIssue(ctx context.Context, owner, repo string, issueID int) ([]TraceRecord, error) {
+	if owner == "" && repo == "" {
+		return r.query(ctx, `
+			SELECT id, repo_owner, repo_name, github_issue_id, github_pr_id,
+			       slack_channel, slack_thread_ts, user_name, user_text,
+			       trace_data, error, created_at
+			FROM agent_traces
+			WHERE github_issue_id = ?
+			ORDER BY created_at DESC`, issueID)
+	}
 	return r.query(ctx, `
 		SELECT id, repo_owner, repo_name, github_issue_id, github_pr_id,
 		       slack_channel, slack_thread_ts, user_name, user_text,
