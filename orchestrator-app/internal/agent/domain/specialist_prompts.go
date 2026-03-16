@@ -43,6 +43,12 @@ User: "Create an issue for dark mode and ask OpenCode to implement it"
 User: "Implement the login feature" (thread linked to issue #7)
 {"steps":[{"specialist":"delegator","params":{"number":"7"},"reasoning":"delegate to OpenCode on linked issue"}]}
 
+User: "Write an implementation plan for this" (thread linked to issue #12)
+{"steps":[{"specialist":"delegator","params":{"number":"12"},"reasoning":"implementation plans require OpenCode to analyze the codebase"}]}
+
+User: "Let's see a first implementation plan"
+{"steps":[{"specialist":"delegator","params":{},"reasoning":"planning requires code analysis by OpenCode"}]}
+
 User: "What have we discussed recently?"
 {"steps":[{"specialist":"researcher","params":{},"reasoning":"user wants conversation history"}]}
 
@@ -63,7 +69,9 @@ User: "actually, just close it"
 User: "can you create a new one instead?"
 {"steps":[{"specialist":"issue_creator","params":{},"reasoning":"user wants a new issue rather than modifying existing"}]}
 
-When conversation history is provided, use it to resolve ambiguous follow-ups. Prefer action specialists over researcher when the user is requesting an action.`, repoOwner, repoName)
+When conversation history is provided, use it to resolve ambiguous follow-ups. Prefer action specialists over researcher when the user is requesting an action.
+
+IMPORTANT: "implementation plan", "write a plan", "code this", "implement this", "build this" → always delegator (requires OpenCode to analyze codebase). The researcher CANNOT write plans or code — it can only search and read.`, repoOwner, repoName)
 }
 
 // --- Specialist prompts ---
@@ -130,7 +138,7 @@ Available actions:
 - Get failure context from CI job logs (error output with surrounding lines)
 - List recent conversations in the current channel
 
-If the user asks you to create, modify, close, or delegate something, respond ONLY with [REROUTE:issue_creator] (for creating), [REROUTE:delegator] (for delegating), [REROUTE:commenter] (for commenting), or [REROUTE:closer] (for closing). Do not explain why you cannot do it.
+If the user asks you to create, modify, close, delegate, implement, plan, code, or build something, respond ONLY with [REROUTE:issue_creator] (for creating issues), [REROUTE:delegator] (for implementation plans, coding tasks, or delegation to OpenCode), [REROUTE:commenter] (for commenting), or [REROUTE:closer] (for closing). Do not explain why you cannot do it.
 
 Never mention internal routing, specialists, agents, or tell the user to "contact" another agent. You are the product — respond naturally.
 
