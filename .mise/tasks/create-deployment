@@ -205,7 +205,9 @@ fi
 # ── 6. AI Integration (optional) ──
 
 section_header "AI Integration (optional)"
-echo "  Fireworks API key for the AI agent. Can also be configured per-target later."
+echo "  Fireworks API key for target repo GitHub Actions workflows (e.g., opencode.yml)."
+echo "  This is NOT the orchestrator's own LLM key — use 'mise run switch-llm-provider'"
+echo "  in the deployment repo to configure the orchestrator's LLM backend after deploy."
 echo "  Get one at: https://fireworks.ai/account/api-keys"
 echo ""
 
@@ -377,6 +379,7 @@ mise run deploy
 | \`mise run instance-stop\` | Stop EC2 instance (cost savings) |
 | \`mise run instance-status\` | Check EC2 instance state |
 | \`mise run onboard-target\` | Interactive: register new target repo |
+| \`mise run switch-llm-provider\` | Interactive: change LLM provider, model, API key |
 | \`mise run secrets-decrypt\` | Decrypt secrets (requires secrets/.key) |
 | \`mise run secrets-encrypt\` | Encrypt secrets (public key only) |
 | \`mise run preview-logs <owner> <repo> <pr>\` | View preview application logs |

@@ -28,7 +28,7 @@ To run a single test or package:
 mise run app-exec go test -race -run TestName ./internal/agent/domain/
 ```
 
-Infrastructure and operational tasks (infra-plan, deploy, ssh, etc.) live in deployment repos, not here.
+Infrastructure and operational tasks (infra-plan, deploy, ssh, switch-llm-provider, etc.) live in deployment repos, not here.
 
 ## Architecture
 
