@@ -139,9 +139,9 @@ func (s *Specialist) Run(ctx context.Context, req RunRequest, prior *PriorStepCo
 			traceIter = &traceStep.Iterations[len(traceStep.Iterations)-1]
 		}
 
-		// Text response (no tool calls) — check for hallucination
+		// Text response (no tool calls) — check for hallucination (action specialists only)
 		if resp.FinishReason == "stop" || len(resp.ToolCalls) == 0 {
-			if correction := DetectHallucination(resp.Content, s.tools.Effects()); correction != "" {
+			if correction := DetectHallucinationForSpecialist(s.config.Name, resp.Content, s.tools.Effects()); correction != "" {
 				slog.Warn("specialist hallucination detected",
 					"specialist", s.config.Name,
 					"iteration", i+1,

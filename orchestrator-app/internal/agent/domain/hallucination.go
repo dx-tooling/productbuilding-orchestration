@@ -46,6 +46,23 @@ var hallucinationRules = []hallucinationRule{
 	},
 }
 
+// readOnlySpecialists are specialists that only read data and never perform actions.
+// Hallucination detection is skipped for these because they describe past actions
+// from issue history, not claim to have performed them.
+var readOnlySpecialists = map[string]bool{
+	"researcher": true,
+}
+
+// DetectHallucinationForSpecialist checks hallucination only for action specialists.
+// Read-only specialists (researcher) are skipped to avoid false positives when
+// describing past actions from issue history.
+func DetectHallucinationForSpecialist(specialistName, responseText string, effects SideEffects) string {
+	if readOnlySpecialists[specialistName] {
+		return ""
+	}
+	return DetectHallucination(responseText, effects)
+}
+
 // DetectHallucination checks if the LLM's response text claims an action that
 // is not backed by actual side effects. Returns a correction message if a
 // hallucination is detected, or "" if the response is clean.

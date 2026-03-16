@@ -119,6 +119,38 @@ func TestDetectHallucination(t *testing.T) {
 	}
 }
 
+func TestDetectHallucination_SkipsReadOnlySpecialists(t *testing.T) {
+	// The researcher describes past actions from issue history — these are NOT
+	// hallucinations. Hallucination detection should be skipped for read-only specialists.
+	texts := []string{
+		"Implementation plan drafted by OpenCode covering template updates.",
+		"I delegated to OpenCode in a previous message and the PR is in progress.",
+		"The issue was created by PrdctBldr and asked OpenCode to implement it.",
+	}
+	for _, text := range texts {
+		correction := DetectHallucination(text, SideEffects{})
+		if correction != "" {
+			// This is the current (broken) behavior — it false-positives on descriptions
+			// of past actions. We need to fix this.
+		}
+
+		// After the fix: researcher should never trigger hallucination detection
+		correctionForResearcher := DetectHallucinationForSpecialist("researcher", text, SideEffects{})
+		if correctionForResearcher != "" {
+			t.Errorf("researcher should not trigger hallucination detection for: %q", text)
+		}
+	}
+}
+
+func TestDetectHallucinationForSpecialist_ActionSpecialistStillDetects(t *testing.T) {
+	correction := DetectHallucinationForSpecialist("delegator",
+		"I've asked OpenCode to implement this feature.",
+		SideEffects{})
+	if correction == "" {
+		t.Error("delegator should still trigger hallucination detection")
+	}
+}
+
 func TestTruncateForLog(t *testing.T) {
 	if got := truncateForLog("short", 10); got != "short" {
 		t.Errorf("expected 'short', got %q", got)
