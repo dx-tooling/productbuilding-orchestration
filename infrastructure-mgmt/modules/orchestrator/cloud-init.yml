@@ -79,15 +79,15 @@ write_files:
         echo "=== Slack signing secret loaded ==="
       fi
 
-      echo "=== Fetching Fireworks API key (if configured) ==="
-      FIREWORKS_API_KEY=$(aws secretsmanager get-secret-value \
+      echo "=== Fetching Anthropic API key (if configured) ==="
+      ANTHROPIC_API_KEY=$(aws secretsmanager get-secret-value \
         --region "$AWS_REGION" \
-        --secret-id "$PROJECT_PREFIX/fireworks-api-key" \
+        --secret-id "$PROJECT_PREFIX/anthropic-api-key" \
         --query "SecretString" \
         --output text 2>/dev/null || echo "")
-      if [[ -n "$FIREWORKS_API_KEY" ]]; then
-        echo "FIREWORKS_API_KEY=$FIREWORKS_API_KEY" >> /opt/orchestrator/repo/.env
-        echo "=== Fireworks API key loaded ==="
+      if [[ -n "$ANTHROPIC_API_KEY" ]]; then
+        echo "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" >> /opt/orchestrator/repo/.env
+        echo "=== Anthropic API key loaded ==="
       fi
 
       echo "=== Fetching target secrets from Secrets Manager ==="

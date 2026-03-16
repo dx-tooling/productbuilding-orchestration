@@ -11,17 +11,27 @@ resource "aws_secretsmanager_secret_version" "slack_signing_secret" {
   secret_string = var.slack_signing_secret
 }
 
-# ── Workspace-level Fireworks API key ────────────────────────────
+# ── Workspace-level Anthropic API key ────────────────────────────
 
-resource "aws_secretsmanager_secret" "fireworks_api_key" {
-  count = var.fireworks_api_key != "" ? 1 : 0
-  name  = "${var.project_prefix}/fireworks-api-key"
+resource "aws_secretsmanager_secret" "anthropic_api_key" {
+  count = var.anthropic_api_key != "" ? 1 : 0
+  name  = "${var.project_prefix}/anthropic-api-key"
 }
 
-resource "aws_secretsmanager_secret_version" "fireworks_api_key" {
-  count         = var.fireworks_api_key != "" ? 1 : 0
-  secret_id     = aws_secretsmanager_secret.fireworks_api_key[0].id
-  secret_string = var.fireworks_api_key
+resource "aws_secretsmanager_secret_version" "anthropic_api_key" {
+  count         = var.anthropic_api_key != "" ? 1 : 0
+  secret_id     = aws_secretsmanager_secret.anthropic_api_key[0].id
+  secret_string = var.anthropic_api_key
+}
+
+moved {
+  from = aws_secretsmanager_secret.fireworks_api_key
+  to   = aws_secretsmanager_secret.anthropic_api_key
+}
+
+moved {
+  from = aws_secretsmanager_secret_version.fireworks_api_key
+  to   = aws_secretsmanager_secret_version.anthropic_api_key
 }
 
 # ── Per-target-repo resources: Secrets Manager secrets, GitHub webhooks, GitHub Actions secrets ──
