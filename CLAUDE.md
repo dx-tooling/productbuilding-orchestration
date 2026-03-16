@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-The generic core of a PR preview platform and AI agent orchestration system. It receives GitHub webhooks, deploys PR previews via Docker Compose behind Traefik, integrates bidirectionally with Slack, and runs an LLM-powered agent (Fireworks) that executes GitHub/Slack actions from natural language.
+The generic core of a PR preview platform and AI agent orchestration system. It receives GitHub webhooks, deploys PR previews via Docker Compose behind Traefik, integrates bidirectionally with Slack, and runs an LLM-powered agent that executes GitHub/Slack actions from natural language.
 
 This repo contains the Go application, Docker Compose files, and a reusable Terraform module. Deployment-specific configuration (secrets, infrastructure state, operational tasks) lives in separate deployment repos created with `mise run create-deployment <name>`.
 
@@ -43,7 +43,7 @@ This repo is the generic core. Each deployment has its own repo (created via `cr
 
 The Go app (`orchestrator-app/`) is organized into independent verticals, each with `domain/`, `web/`, `infra/`, and `facade/` sub-packages:
 
-- **agent** — LLM agent loop: prompt assembly -> Fireworks API call -> tool execution -> response. Tools wrap GitHub and Slack actions via adapter pattern.
+- **agent** — LLM agent loop: prompt assembly -> LLM API call -> tool execution -> response. Multi-provider backend (Anthropic, OpenAI-compatible) with optional fallback. Tools wrap GitHub and Slack actions via adapter pattern.
 - **preview** — Preview lifecycle: clone repo, run Docker Compose, track status in SQLite, health-check, report back on PR.
 - **github** — Webhook receiver: parses/validates incoming PR/issue events, triggers preview or agent flows.
 - **slack** — Slack Events API handler, @mention routing to agent, notification debouncing, thread tracking.

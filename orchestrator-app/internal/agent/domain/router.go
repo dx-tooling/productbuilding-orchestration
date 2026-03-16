@@ -13,13 +13,12 @@ import (
 
 // Router classifies user intent via a single LLM call and returns a RoutingDecision.
 type Router struct {
-	llm   LLMClient
-	model string
+	llm LLMClient
 }
 
 // NewRouter creates a new Router.
-func NewRouter(llm LLMClient, model string) *Router {
-	return &Router{llm: llm, model: model}
+func NewRouter(llm LLMClient) *Router {
+	return &Router{llm: llm}
 }
 
 // researcherFallback is the default when routing fails.
@@ -46,7 +45,6 @@ func (r *Router) Route(ctx context.Context, userText string, target targets.Targ
 	}
 
 	resp, err := r.llm.ChatCompletion(ctx, ChatRequest{
-		Model:    r.model,
 		Messages: messages,
 	})
 	if err != nil {

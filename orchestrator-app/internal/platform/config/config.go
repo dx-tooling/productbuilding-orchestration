@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	agentdomain "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/agent/domain"
+
 	"github.com/caarlos0/env/v11"
 )
 
@@ -19,12 +21,21 @@ type Config struct {
 	SlackChannelPrefix string `env:"SLACK_CHANNEL_PREFIX" envDefault:"productbuilding-"`
 	AcmeEmail          string `env:"ACME_EMAIL" envDefault:"admin@example.com"`
 	SlackWorkspace     string `env:"SLACK_WORKSPACE"` // Slack workspace subdomain (e.g. "myteam")
-	AnthropicAPIKey    string `env:"ANTHROPIC_API_KEY"`
-	AnthropicModel     string `env:"ANTHROPIC_MODEL" envDefault:"claude-opus-4-6"`
-	LLMRequestTimeout  int    `env:"LLM_REQUEST_TIMEOUT_SECS" envDefault:"60"`
-	LLMMaxRetries      int    `env:"LLM_MAX_RETRIES" envDefault:"3"`
-	AgentRunTimeout    int    `env:"AGENT_RUN_TIMEOUT_SECS" envDefault:"120"`
-	AgentTokenBudget   int    `env:"AGENT_TOKEN_BUDGET" envDefault:"8000"`
+
+	// LLM configuration
+	LLMProvider         string `env:"LLM_PROVIDER" envDefault:"anthropic"`
+	LLMModel            string `env:"LLM_MODEL" envDefault:"claude-opus-4-6"`
+	LLMApiKey           string `env:"LLM_API_KEY"`
+	LLMBaseURL          string `env:"LLM_BASE_URL"`          // required for openaicompat
+	LLMFallbackProvider string `env:"LLM_FALLBACK_PROVIDER"` // optional
+	LLMFallbackModel    string `env:"LLM_FALLBACK_MODEL"`    // optional
+	LLMFallbackApiKey   string `env:"LLM_FALLBACK_API_KEY"`  // optional
+	LLMFallbackBaseURL  string `env:"LLM_FALLBACK_BASE_URL"` // optional
+
+	LLMRequestTimeout int `env:"LLM_REQUEST_TIMEOUT_SECS" envDefault:"60"`
+	LLMMaxRetries     int `env:"LLM_MAX_RETRIES" envDefault:"3"`
+	AgentRunTimeout   int `env:"AGENT_RUN_TIMEOUT_SECS" envDefault:"120"`
+	AgentTokenBudget  int `env:"AGENT_TOKEN_BUDGET" envDefault:"8000"`
 }
 
 func (c Config) IsProduction() bool {
@@ -33,6 +44,29 @@ func (c Config) IsProduction() bool {
 
 func (c Config) IsDevelopment() bool {
 	return c.AppEnv == "development"
+}
+
+// LLMConfig builds the agent domain LLMConfig from environment config.
+func (c Config) LLMConfig() agentdomain.LLMConfig {
+	cfg := agentdomain.LLMConfig{
+		Primary: agentdomain.ProviderConfig{
+			Type:    agentdomain.ProviderType(c.LLMProvider),
+			APIKey:  c.LLMApiKey,
+			Model:   c.LLMModel,
+			BaseURL: c.LLMBaseURL,
+		},
+	}
+
+	if c.LLMFallbackProvider != "" {
+		cfg.Fallback = &agentdomain.ProviderConfig{
+			Type:    agentdomain.ProviderType(c.LLMFallbackProvider),
+			APIKey:  c.LLMFallbackApiKey,
+			Model:   c.LLMFallbackModel,
+			BaseURL: c.LLMFallbackBaseURL,
+		}
+	}
+
+	return cfg
 }
 
 func Load() (Config, error) {

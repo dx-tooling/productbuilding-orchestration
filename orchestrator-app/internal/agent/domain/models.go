@@ -75,7 +75,6 @@ type ToolSchema struct {
 
 // ChatRequest is sent to the LLM API.
 type ChatRequest struct {
-	Model    string    `json:"model"`
 	Messages []Message `json:"messages"`
 	Tools    []ToolDef `json:"tools,omitempty"`
 }

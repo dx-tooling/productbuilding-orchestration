@@ -18,7 +18,6 @@ func newTestSpecialist(llm LLMClient, tools ToolExecutor, opts ...func(*Speciali
 		},
 		llm:         llm,
 		tools:       tools,
-		model:       "test-model",
 		tokenBudget: DefaultTokenBudget(),
 	}
 	for _, opt := range opts {

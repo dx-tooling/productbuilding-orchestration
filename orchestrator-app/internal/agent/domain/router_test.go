@@ -15,7 +15,7 @@ func TestRouter_SingleStepResearch(t *testing.T) {
 			{Content: `{"steps":[{"specialist":"researcher","params":{},"reasoning":"info request"}]}`, FinishReason: "stop"},
 		},
 	}
-	r := NewRouter(llm, "test-model")
+	r := NewRouter(llm)
 
 	decision, err := r.Route(context.Background(), "what issues are open?", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
@@ -38,7 +38,7 @@ func TestRouter_SingleStepIssueCreation(t *testing.T) {
 			{Content: `{"steps":[{"specialist":"issue_creator","params":{},"reasoning":"user wants new issue"}]}`, FinishReason: "stop"},
 		},
 	}
-	r := NewRouter(llm, "test-model")
+	r := NewRouter(llm)
 
 	decision, err := r.Route(context.Background(), "create an issue for dark mode", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
@@ -61,7 +61,7 @@ func TestRouter_MultiStep_CreateAndDelegate(t *testing.T) {
 			{Content: `{"steps":[{"specialist":"issue_creator","params":{},"reasoning":"create issue"},{"specialist":"delegator","params":{},"reasoning":"delegate to opencode"}]}`, FinishReason: "stop"},
 		},
 	}
-	r := NewRouter(llm, "test-model")
+	r := NewRouter(llm)
 
 	decision, err := r.Route(context.Background(), "create an issue and delegate to OpenCode", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
@@ -87,7 +87,7 @@ func TestRouter_MalformedJSON_FallsBackToResearcher(t *testing.T) {
 			{Content: "I'm not sure what JSON is, here's some garbled text!", FinishReason: "stop"},
 		},
 	}
-	r := NewRouter(llm, "test-model")
+	r := NewRouter(llm)
 
 	decision, err := r.Route(context.Background(), "hello", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
@@ -110,7 +110,7 @@ func TestRouter_EmptySteps_FallsBackToResearcher(t *testing.T) {
 			{Content: `{"steps":[]}`, FinishReason: "stop"},
 		},
 	}
-	r := NewRouter(llm, "test-model")
+	r := NewRouter(llm)
 
 	decision, err := r.Route(context.Background(), "hello", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
@@ -131,7 +131,7 @@ func TestRouter_LLMError_PropagatesError(t *testing.T) {
 	llm := &mockLLMClient{
 		errors: []error{fmt.Errorf("connection refused")},
 	}
-	r := NewRouter(llm, "test-model")
+	r := NewRouter(llm)
 
 	_, err := r.Route(context.Background(), "hello", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
@@ -151,7 +151,7 @@ func TestRouter_IncludesLinkedIssueInPrompt(t *testing.T) {
 			{Content: `{"steps":[{"specialist":"researcher","params":{},"reasoning":"ok"}]}`, FinishReason: "stop"},
 		},
 	}
-	r := NewRouter(llm, "test-model")
+	r := NewRouter(llm)
 
 	_, err := r.Route(context.Background(), "what's the status?", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
@@ -183,7 +183,7 @@ func TestRouter_PromptContainsRepoInfo(t *testing.T) {
 			{Content: `{"steps":[{"specialist":"researcher","params":{},"reasoning":"ok"}]}`, FinishReason: "stop"},
 		},
 	}
-	r := NewRouter(llm, "test-model")
+	r := NewRouter(llm)
 
 	_, err := r.Route(context.Background(), "hello", targets.TargetConfig{
 		RepoOwner: "myorg", RepoName: "myrepo",
@@ -214,7 +214,7 @@ func TestRouter_JSONWithTrailingText(t *testing.T) {
 			{Content: `{"steps":[{"specialist":"closer","params":{"number":"7"},"reasoning":"close it"}]} Let me know if you need anything else!`, FinishReason: "stop"},
 		},
 	}
-	r := NewRouter(llm, "test-model")
+	r := NewRouter(llm)
 
 	decision, err := r.Route(context.Background(), "close issue #7", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
@@ -237,7 +237,7 @@ func TestRouter_JSONInCodeFence(t *testing.T) {
 			{Content: "```json\n{\"steps\":[{\"specialist\":\"closer\",\"params\":{\"number\":\"7\"},\"reasoning\":\"close it\"}]}\n```", FinishReason: "stop"},
 		},
 	}
-	r := NewRouter(llm, "test-model")
+	r := NewRouter(llm)
 
 	decision, err := r.Route(context.Background(), "close issue #7", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
@@ -260,7 +260,7 @@ func TestRouter_ThreadHistoryIncludedInPrompt(t *testing.T) {
 			{Content: `{"steps":[{"specialist":"issue_creator","params":{},"reasoning":"follow-up"}]}`, FinishReason: "stop"},
 		},
 	}
-	r := NewRouter(llm, "test-model")
+	r := NewRouter(llm)
 
 	threadMsgs := []ThreadMessage{
 		{User: "U001", Text: "I want to work on forgot password", Ts: "100.000"},

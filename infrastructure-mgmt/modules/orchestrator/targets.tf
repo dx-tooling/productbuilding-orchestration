@@ -11,17 +11,17 @@ resource "aws_secretsmanager_secret_version" "slack_signing_secret" {
   secret_string = var.slack_signing_secret
 }
 
-# ── Workspace-level Anthropic API key ────────────────────────────
+# ── Workspace-level LLM API key ──────────────────────────────────
 
-resource "aws_secretsmanager_secret" "anthropic_api_key" {
-  count = var.anthropic_api_key != "" ? 1 : 0
-  name  = "${var.project_prefix}/anthropic-api-key"
+resource "aws_secretsmanager_secret" "llm_api_key" {
+  count = var.llm_api_key != "" ? 1 : 0
+  name  = "${var.project_prefix}/llm-api-key"
 }
 
-resource "aws_secretsmanager_secret_version" "anthropic_api_key" {
-  count         = var.anthropic_api_key != "" ? 1 : 0
-  secret_id     = aws_secretsmanager_secret.anthropic_api_key[0].id
-  secret_string = var.anthropic_api_key
+resource "aws_secretsmanager_secret_version" "llm_api_key" {
+  count         = var.llm_api_key != "" ? 1 : 0
+  secret_id     = aws_secretsmanager_secret.llm_api_key[0].id
+  secret_string = var.llm_api_key
 }
 
 

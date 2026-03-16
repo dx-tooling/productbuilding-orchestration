@@ -164,12 +164,16 @@ func main() {
 	)
 
 	// ── Build Agent ────────────────────────────────────────────────────
-	anthropicClient := agentdomain.NewAnthropicClient(cfg.AnthropicAPIKey)
+	llmClient, err := agentdomain.NewLLMClient(cfg.LLMConfig())
+	if err != nil {
+		slog.Error("failed to create LLM client", "error", err)
+		os.Exit(1)
+	}
 	githubAdapter := agentdomain.NewGitHubClientAdapter(githubClient)
 	toolExecutor := agentdomain.NewToolExecutor(githubAdapter)
 	slackAdapter := agentdomain.NewSlackClientAdapter(slackClient)
 	convRepo := slackinfra.NewConversationRepository(db)
-	agentRunner := agentdomain.NewOrchestrator(anthropicClient, toolExecutor, slackAdapter, cfg.AnthropicModel,
+	agentRunner := agentdomain.NewOrchestrator(llmClient, toolExecutor, slackAdapter,
 		agentdomain.OrchestratorConfig{
 			ConversationLister: convRepo,
 			Workspace:          cfg.SlackWorkspace,

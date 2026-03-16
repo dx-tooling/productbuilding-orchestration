@@ -15,22 +15,24 @@ import (
 // AnthropicClient implements LLMClient using the Anthropic Messages API.
 type AnthropicClient struct {
 	client anthropic.Client
+	model  string
 	retry  RetryConfig
 }
 
 // NewAnthropicClient creates a new Anthropic API client.
-func NewAnthropicClient(apiKey string) *AnthropicClient {
+func NewAnthropicClient(apiKey, model string) *AnthropicClient {
 	return &AnthropicClient{
 		client: anthropic.NewClient(
 			option.WithAPIKey(apiKey),
 			option.WithMaxRetries(0), // We handle retries ourselves
 		),
+		model: model,
 		retry: DefaultRetryConfig(),
 	}
 }
 
 // NewAnthropicClientWithConfig creates a new Anthropic API client with custom retry and base URL.
-func NewAnthropicClientWithConfig(apiKey string, retry RetryConfig, baseURL string) *AnthropicClient {
+func NewAnthropicClientWithConfig(apiKey, model string, retry RetryConfig, baseURL string) *AnthropicClient {
 	opts := []option.RequestOption{
 		option.WithAPIKey(apiKey),
 		option.WithMaxRetries(0),
@@ -40,6 +42,7 @@ func NewAnthropicClientWithConfig(apiKey string, retry RetryConfig, baseURL stri
 	}
 	return &AnthropicClient{
 		client: anthropic.NewClient(opts...),
+		model:  model,
 		retry:  retry,
 	}
 }
@@ -83,13 +86,13 @@ func (c *AnthropicClient) ChatCompletion(ctx context.Context, req ChatRequest) (
 		}
 	}
 
-	return ChatResponse{}, lastErr
+	return ChatResponse{}, &ProviderUnavailableError{Provider: "anthropic", Err: lastErr}
 }
 
 // buildParams translates a ChatRequest into Anthropic MessageNewParams.
 func (c *AnthropicClient) buildParams(req ChatRequest) anthropic.MessageNewParams {
 	params := anthropic.MessageNewParams{
-		Model:     anthropic.Model(req.Model),
+		Model:     anthropic.Model(c.model),
 		MaxTokens: 16384,
 	}
 

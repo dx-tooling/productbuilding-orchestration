@@ -34,7 +34,7 @@ func TestOrchestrator_SingleStep_Research(t *testing.T) {
 	combinedLLM := &sequentialMockLLM{clients: []*mockLLMClient{routerLLM, specialistLLM}}
 
 	tools := &mockToolExecutor{}
-	orch := NewOrchestrator(combinedLLM, tools, nil, "test-model", OrchestratorConfig{})
+	orch := NewOrchestrator(combinedLLM, tools, nil, OrchestratorConfig{})
 
 	resp, err := orch.Run(context.Background(), RunRequest{
 		ChannelID: "C123",
@@ -93,7 +93,7 @@ func TestOrchestrator_SingleStep_IssueCreation(t *testing.T) {
 		}
 	}
 
-	orch := NewOrchestrator(combinedLLM, tools, nil, "test-model", OrchestratorConfig{})
+	orch := NewOrchestrator(combinedLLM, tools, nil, OrchestratorConfig{})
 
 	resp, err := orch.Run(context.Background(), RunRequest{
 		ChannelID: "C123",
@@ -128,7 +128,7 @@ func TestOrchestrator_RouterFallback_OnBadJSON(t *testing.T) {
 	combinedLLM := &sequentialMockLLM{clients: []*mockLLMClient{routerLLM, specialistLLM}}
 
 	tools := &mockToolExecutor{}
-	orch := NewOrchestrator(combinedLLM, tools, nil, "test-model", OrchestratorConfig{})
+	orch := NewOrchestrator(combinedLLM, tools, nil, OrchestratorConfig{})
 
 	resp, err := orch.Run(context.Background(), RunRequest{
 		ChannelID: "C123",
@@ -195,7 +195,7 @@ func TestOrchestrator_MultiStep_CreateThenDelegate(t *testing.T) {
 		}
 	}
 
-	orch := NewOrchestrator(combinedLLM, tools, nil, "test-model", OrchestratorConfig{})
+	orch := NewOrchestrator(combinedLLM, tools, nil, OrchestratorConfig{})
 
 	resp, err := orch.Run(context.Background(), RunRequest{
 		ChannelID: "C123",
@@ -258,7 +258,7 @@ func TestOrchestrator_MultiStep_PriorContextPassed(t *testing.T) {
 		}
 	}
 
-	orch := NewOrchestrator(combinedLLM, tools, nil, "test-model", OrchestratorConfig{})
+	orch := NewOrchestrator(combinedLLM, tools, nil, OrchestratorConfig{})
 
 	_, err := orch.Run(context.Background(), RunRequest{
 		ChannelID: "C123",
@@ -324,7 +324,7 @@ func TestOrchestrator_MultiStep_CreatedIssueInjectedAsLinkedIssue(t *testing.T) 
 		}
 	}
 
-	orch := NewOrchestrator(combinedLLM, tools, nil, "test-model", OrchestratorConfig{})
+	orch := NewOrchestrator(combinedLLM, tools, nil, OrchestratorConfig{})
 
 	_, err := orch.Run(context.Background(), RunRequest{
 		ChannelID: "C123",
@@ -361,7 +361,7 @@ func TestOrchestrator_RouterError_ReturnsError(t *testing.T) {
 	combinedLLM := &sequentialMockLLM{clients: []*mockLLMClient{routerLLM}}
 
 	tools := &mockToolExecutor{}
-	orch := NewOrchestrator(combinedLLM, tools, nil, "test-model", OrchestratorConfig{})
+	orch := NewOrchestrator(combinedLLM, tools, nil, OrchestratorConfig{})
 
 	_, err := orch.Run(context.Background(), RunRequest{
 		ChannelID: "C123",
@@ -391,7 +391,7 @@ func TestOrchestrator_SpecialistError_ReturnsError(t *testing.T) {
 	combinedLLM := &sequentialMockLLM{clients: []*mockLLMClient{routerLLM, specialistLLM}}
 
 	tools := &mockToolExecutor{}
-	orch := NewOrchestrator(combinedLLM, tools, nil, "test-model", OrchestratorConfig{})
+	orch := NewOrchestrator(combinedLLM, tools, nil, OrchestratorConfig{})
 
 	_, err := orch.Run(context.Background(), RunRequest{
 		ChannelID: "C123",
@@ -423,7 +423,7 @@ func TestOrchestrator_UnknownSpecialist_FallsBackToResearcher(t *testing.T) {
 	combinedLLM := &sequentialMockLLM{clients: []*mockLLMClient{routerLLM, specialistLLM}}
 
 	tools := &mockToolExecutor{}
-	orch := NewOrchestrator(combinedLLM, tools, nil, "test-model", OrchestratorConfig{})
+	orch := NewOrchestrator(combinedLLM, tools, nil, OrchestratorConfig{})
 
 	resp, err := orch.Run(context.Background(), RunRequest{
 		ChannelID: "C123",
@@ -461,7 +461,7 @@ func TestOrchestrator_ThreadContextFetched(t *testing.T) {
 			{User: "U001", Text: "Follow up", Ts: "100.002"},
 		},
 	}
-	orch := NewOrchestrator(combinedLLM, tools, fetcher, "test-model", OrchestratorConfig{})
+	orch := NewOrchestrator(combinedLLM, tools, fetcher, OrchestratorConfig{})
 
 	_, err := orch.Run(context.Background(), RunRequest{
 		ChannelID: "C123",
@@ -528,7 +528,7 @@ func TestOrchestrator_ThreadContextFetchedOnce_NotPerSpecialist(t *testing.T) {
 			{User: "U002", Text: "Follow up", Ts: "100.001"},
 		},
 	}
-	orch := NewOrchestrator(combinedLLM, tools, fetcher, "test-model", OrchestratorConfig{})
+	orch := NewOrchestrator(combinedLLM, tools, fetcher, OrchestratorConfig{})
 
 	_, err := orch.Run(context.Background(), RunRequest{
 		ChannelID: "C123",
@@ -579,7 +579,7 @@ func TestOrchestrator_MaxSteps_TruncatesExcessiveRouting(t *testing.T) {
 	combinedLLM := &sequentialMockLLM{clients: allClients}
 
 	tools := &mockToolExecutor{}
-	orch := NewOrchestrator(combinedLLM, tools, nil, "test-model", OrchestratorConfig{})
+	orch := NewOrchestrator(combinedLLM, tools, nil, OrchestratorConfig{})
 
 	resp, err := orch.Run(context.Background(), RunRequest{
 		ChannelID: "C123",
@@ -637,7 +637,7 @@ func TestOrchestrator_Reroute(t *testing.T) {
 		}
 	}
 
-	orch := NewOrchestrator(combinedLLM, tools, nil, "test-model", OrchestratorConfig{})
+	orch := NewOrchestrator(combinedLLM, tools, nil, OrchestratorConfig{})
 
 	resp, err := orch.Run(context.Background(), RunRequest{
 		ChannelID: "C123",

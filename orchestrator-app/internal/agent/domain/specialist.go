@@ -43,7 +43,6 @@ type Specialist struct {
 	config             SpecialistConfig
 	llm                LLMClient
 	tools              ToolExecutor
-	model              string
 	slackFetcher       SlackThreadFetcher
 	conversationLister ConversationLister
 	workspace          string
@@ -117,7 +116,6 @@ func (s *Specialist) Run(ctx context.Context, req RunRequest, prior *PriorStepCo
 
 		llmStart := time.Now()
 		resp, err := s.llm.ChatCompletion(ctx, ChatRequest{
-			Model:    s.model,
 			Messages: messages,
 			Tools:    s.config.ToolDefs,
 		})

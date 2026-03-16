@@ -50,8 +50,8 @@ variable "slack_signing_secret" {
   default     = ""
 }
 
-variable "anthropic_api_key" {
-  description = "Anthropic API key for the orchestration agent"
+variable "llm_api_key" {
+  description = "API key for the orchestration agent's primary LLM provider"
   type        = string
   sensitive   = true
   default     = ""

@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -43,10 +44,9 @@ func TestAnthropicClient_TextResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewAnthropicClientWithConfig("test-key", RetryConfig{}, server.URL)
+	client := NewAnthropicClientWithConfig("test-key", "claude-opus-4-6-20250616", RetryConfig{}, server.URL)
 
 	resp, err := client.ChatCompletion(context.Background(), ChatRequest{
-		Model:    "claude-opus-4-6-20250616",
 		Messages: []Message{{Role: "user", Content: "Hi"}},
 	})
 	if err != nil {
@@ -80,10 +80,9 @@ func TestAnthropicClient_SystemMessageExtracted(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewAnthropicClientWithConfig("test-key", RetryConfig{}, server.URL)
+	client := NewAnthropicClientWithConfig("test-key", "test", RetryConfig{}, server.URL)
 
 	_, err := client.ChatCompletion(context.Background(), ChatRequest{
-		Model: "test",
 		Messages: []Message{
 			{Role: "system", Content: "You are a helpful assistant."},
 			{Role: "user", Content: "Hi"},
@@ -135,10 +134,9 @@ func TestAnthropicClient_ToolCallResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewAnthropicClientWithConfig("test-key", RetryConfig{}, server.URL)
+	client := NewAnthropicClientWithConfig("test-key", "test", RetryConfig{}, server.URL)
 
 	resp, err := client.ChatCompletion(context.Background(), ChatRequest{
-		Model:    "test",
 		Messages: []Message{{Role: "user", Content: "Create an issue"}},
 	})
 	if err != nil {
@@ -187,10 +185,9 @@ func TestAnthropicClient_ToolUseRoundTrip(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewAnthropicClientWithConfig("test-key", RetryConfig{}, server.URL)
+	client := NewAnthropicClientWithConfig("test-key", "test", RetryConfig{}, server.URL)
 
 	_, err := client.ChatCompletion(context.Background(), ChatRequest{
-		Model: "test",
 		Messages: []Message{
 			{Role: "user", Content: "Create an issue"},
 			{
@@ -291,13 +288,12 @@ func TestAnthropicClient_HTTPError_NonRetryable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewAnthropicClientWithConfig("test-key",
+	client := NewAnthropicClientWithConfig("test-key", "test",
 		RetryConfig{MaxRetries: 3, BaseDelay: time.Millisecond, MaxDelay: 10 * time.Millisecond},
 		server.URL,
 	)
 
 	_, err := client.ChatCompletion(context.Background(), ChatRequest{
-		Model:    "test",
 		Messages: []Message{{Role: "user", Content: "Hi"}},
 	})
 	if err == nil {
@@ -331,13 +327,12 @@ func TestAnthropicClient_Retry_429ThenSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewAnthropicClientWithConfig("test-key",
+	client := NewAnthropicClientWithConfig("test-key", "test",
 		RetryConfig{MaxRetries: 3, BaseDelay: time.Millisecond, MaxDelay: 10 * time.Millisecond},
 		server.URL,
 	)
 
 	resp, err := client.ChatCompletion(context.Background(), ChatRequest{
-		Model:    "test",
 		Messages: []Message{{Role: "user", Content: "Hi"}},
 	})
 	if err != nil {
@@ -361,13 +356,12 @@ func TestAnthropicClient_Retry_MaxRetriesExhausted(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewAnthropicClientWithConfig("test-key",
+	client := NewAnthropicClientWithConfig("test-key", "test",
 		RetryConfig{MaxRetries: 3, BaseDelay: time.Millisecond, MaxDelay: 10 * time.Millisecond},
 		server.URL,
 	)
 
 	_, err := client.ChatCompletion(context.Background(), ChatRequest{
-		Model:    "test",
 		Messages: []Message{{Role: "user", Content: "Hi"}},
 	})
 	if err == nil {
@@ -376,6 +370,14 @@ func TestAnthropicClient_Retry_MaxRetriesExhausted(t *testing.T) {
 	// 1 initial + 3 retries = 4 total
 	if callCount != 4 {
 		t.Errorf("expected 4 calls (1 initial + 3 retries), got %d", callCount)
+	}
+	// Should be wrapped in ProviderUnavailableError
+	var unavail *ProviderUnavailableError
+	if !errors.As(err, &unavail) {
+		t.Errorf("expected ProviderUnavailableError, got %T: %v", err, err)
+	}
+	if unavail.Provider != "anthropic" {
+		t.Errorf("expected provider 'anthropic', got %q", unavail.Provider)
 	}
 }
 
@@ -395,13 +397,12 @@ func TestAnthropicClient_Retry_ContextCancelled(t *testing.T) {
 		cancel()
 	}()
 
-	client := NewAnthropicClientWithConfig("test-key",
+	client := NewAnthropicClientWithConfig("test-key", "test",
 		RetryConfig{MaxRetries: 10, BaseDelay: 200 * time.Millisecond, MaxDelay: 1 * time.Second},
 		server.URL,
 	)
 
 	_, err := client.ChatCompletion(ctx, ChatRequest{
-		Model:    "test",
 		Messages: []Message{{Role: "user", Content: "Hi"}},
 	})
 	if err == nil {

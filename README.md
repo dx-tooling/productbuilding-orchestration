@@ -33,7 +33,7 @@ GitHub (PR/issue events)                         Slack (@mentions)
    |       |              v                   v              |
    |       |         SQLite state        Traefik routing     |
    |       |              |                                  |
-   |       +---> slack/domain <-- agent/domain <-- Fireworks |
+   |       +---> slack/domain <-- agent/domain <-- LLM API   |
    |              |                    |                     |
    +--------------------------------------------+-----------+
                   v                    v
@@ -66,7 +66,7 @@ The dev server runs on `localhost:8091`.
 orchestrator-app/
   cmd/server/main.go            Entry point — builds the full dependency graph (no DI framework)
   internal/
-    agent/                      LLM agent: prompt assembly -> Fireworks API -> tool execution
+    agent/                      LLM agent: prompt assembly -> LLM API -> tool execution
     preview/                    Preview lifecycle: clone, compose, health-check, status tracking
     github/                     Webhook receiver: PR/issue event parsing and validation
     slack/                      Slack Events API: @mentions, notifications, thread tracking
@@ -206,10 +206,16 @@ All configuration is via environment variables, loaded with [caarlos0/env](https
 | `AWS_REGION` | `eu-central-1` | AWS region for Secrets Manager and Route53 |
 | `SLACK_SIGNING_SECRET` | — | Slack app signing secret for request verification |
 | `SLACK_WORKSPACE` | — | Slack workspace subdomain |
-| `FIREWORKS_API_KEY` | — | Fireworks API key for LLM calls |
+| `LLM_PROVIDER` | `anthropic` | LLM provider: `anthropic` or `openaicompat` |
+| `LLM_API_KEY` | — | API key for the primary LLM provider |
+| `LLM_MODEL` | `claude-opus-4-6` | Model identifier for the primary provider |
+| `LLM_BASE_URL` | — | Base URL for `openaicompat` provider (e.g. `https://api.fireworks.ai/inference/v1`) |
+| `LLM_FALLBACK_PROVIDER` | — | Optional fallback provider type |
+| `LLM_FALLBACK_API_KEY` | — | API key for the fallback provider |
+| `LLM_FALLBACK_MODEL` | — | Model for the fallback provider |
+| `LLM_FALLBACK_BASE_URL` | — | Base URL for the fallback provider (if `openaicompat`) |
 | `SLACK_CHANNEL_PREFIX` | `productbuilding-` | Prefix for Slack channel-to-repo matching |
 | `ACME_EMAIL` | `admin@example.com` | Email for Let's Encrypt ACME certificates |
-| `FIREWORKS_MODEL` | `accounts/fireworks/models/kimi-k2p5` | Fireworks model identifier |
 | `LLM_REQUEST_TIMEOUT_SECS` | `60` | Timeout per LLM API request |
 | `LLM_MAX_RETRIES` | `3` | Max retries for failed LLM requests |
 | `AGENT_RUN_TIMEOUT_SECS` | `120` | Max total time for an agent run |

@@ -16,7 +16,6 @@ type Orchestrator struct {
 	specialists        map[string]*Specialist
 	llm                LLMClient
 	tools              ToolExecutor
-	model              string
 	slackFetcher       SlackThreadFetcher
 	conversationLister ConversationLister
 	workspace          string
@@ -31,17 +30,16 @@ type OrchestratorConfig struct {
 }
 
 // NewOrchestrator creates a new multi-agent orchestrator.
-func NewOrchestrator(llm LLMClient, tools ToolExecutor, slackFetcher SlackThreadFetcher, model string, cfg OrchestratorConfig) *Orchestrator {
+func NewOrchestrator(llm LLMClient, tools ToolExecutor, slackFetcher SlackThreadFetcher, cfg OrchestratorConfig) *Orchestrator {
 	budget := cfg.TokenBudget
 	if budget.Total == 0 {
 		budget = DefaultTokenBudget()
 	}
 
 	o := &Orchestrator{
-		router:             NewRouter(llm, model),
+		router:             NewRouter(llm),
 		llm:                llm,
 		tools:              tools,
-		model:              model,
 		slackFetcher:       slackFetcher,
 		conversationLister: cfg.ConversationLister,
 		workspace:          cfg.Workspace,
@@ -98,7 +96,6 @@ func (o *Orchestrator) buildSpecialists() map[string]*Specialist {
 			config:             cfg,
 			llm:                o.llm,
 			tools:              o.tools,
-			model:              o.model,
 			slackFetcher:       o.slackFetcher,
 			conversationLister: o.conversationLister,
 			workspace:          o.workspace,
