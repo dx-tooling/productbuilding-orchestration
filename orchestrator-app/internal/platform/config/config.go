@@ -20,7 +20,7 @@ type Config struct {
 	AcmeEmail          string `env:"ACME_EMAIL" envDefault:"admin@example.com"`
 	SlackWorkspace     string `env:"SLACK_WORKSPACE"` // Slack workspace subdomain (e.g. "myteam")
 	AnthropicAPIKey    string `env:"ANTHROPIC_API_KEY"`
-	AnthropicModel     string `env:"ANTHROPIC_MODEL" envDefault:"claude-opus-4-6-20250616"`
+	AnthropicModel     string `env:"ANTHROPIC_MODEL" envDefault:"claude-opus-4-6"`
 	LLMRequestTimeout  int    `env:"LLM_REQUEST_TIMEOUT_SECS" envDefault:"60"`
 	LLMMaxRetries      int    `env:"LLM_MAX_RETRIES" envDefault:"3"`
 	AgentRunTimeout    int    `env:"AGENT_RUN_TIMEOUT_SECS" envDefault:"120"`
