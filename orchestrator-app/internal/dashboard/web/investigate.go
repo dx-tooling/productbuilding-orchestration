@@ -74,8 +74,17 @@ var investigateTmpl = template.Must(template.New("investigate").Funcs(investigat
         .tool-name { font-weight: 600; color: #6f42c1; }
         .tool-error { color: #721c24; }
         .tool-result { color: #155724; }
-        pre { background: #f1f1f1; padding: 0.5rem; border-radius: 3px; overflow-x: auto; font-size: 0.8rem; max-height: 200px; overflow-y: auto; }
+        pre { background: #f1f1f1; padding: 0.5rem; border-radius: 3px; overflow-x: auto; font-size: 0.8rem; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
         .latency { color: #999; font-size: 0.8rem; }
+        details { margin: 0.5rem 0; }
+        details summary { cursor: pointer; color: #666; font-size: 0.85rem; }
+        details summary:hover { color: #333; }
+        .msg { margin: 0.25rem 0; padding: 0.25rem 0.5rem; border-left: 2px solid #ccc; }
+        .msg-system { border-left-color: #6f42c1; }
+        .msg-user { border-left-color: #0366d6; }
+        .msg-assistant { border-left-color: #28a745; }
+        .msg-tool { border-left-color: #fd7e14; }
+        .msg-role { font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
         a { color: #0366d6; }
     </style>
 </head>
@@ -124,6 +133,17 @@ var investigateTmpl = template.Must(template.New("investigate").Funcs(investigat
             <div class="iteration">
                 <div><strong>Iteration {{add $i 1}}</strong> ({{$iter.MessageCount}} msgs in LLM context, finish: {{$iter.FinishReason}}) <span class="latency">{{$iter.LatencyMs}}ms</span></div>
                 {{if $iter.LLMContent}}<pre>{{truncate $iter.LLMContent 500}}</pre>{{end}}
+                {{if $iter.InputMessages}}
+                <details>
+                    <summary>Show full LLM context ({{len $iter.InputMessages}} messages)</summary>
+                    {{range $iter.InputMessages}}
+                    <div class="msg msg-{{.Role}}">
+                        <span class="msg-role">{{.Role}}</span>
+                        <pre>{{truncate .Content 3000}}</pre>
+                    </div>
+                    {{end}}
+                </details>
+                {{end}}
                 {{range $iter.ToolCalls}}
                 <div class="tool-call">
                     <span class="tool-name">{{.Name}}</span>

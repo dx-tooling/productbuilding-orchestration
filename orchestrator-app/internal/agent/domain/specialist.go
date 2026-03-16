@@ -130,10 +130,11 @@ func (s *Specialist) Run(ctx context.Context, req RunRequest, prior *PriorStepCo
 		var traceIter *IterationTrace
 		if traceStep != nil {
 			traceStep.Iterations = append(traceStep.Iterations, IterationTrace{
-				MessageCount: len(messages),
-				LLMContent:   resp.Content,
-				FinishReason: resp.FinishReason,
-				LatencyMs:    llmLatency,
+				MessageCount:  len(messages),
+				InputMessages: messagesToTrace(messages),
+				LLMContent:    resp.Content,
+				FinishReason:  resp.FinishReason,
+				LatencyMs:     llmLatency,
 			})
 			traceIter = &traceStep.Iterations[len(traceStep.Iterations)-1]
 		}
@@ -295,4 +296,22 @@ func (s *Specialist) executeListConversations(ctx context.Context, tc ToolCall, 
 		sb.WriteString(fmt.Sprintf("- %s (by %s) — <%s|view thread>\n", summary, c.UserName, link))
 	}
 	return sb.String(), nil
+}
+
+// messagesToTrace converts LLM messages to trace format, truncating long content.
+func messagesToTrace(msgs []Message) []TraceLLMMessage {
+	const maxContentLen = 2000
+	result := make([]TraceLLMMessage, len(msgs))
+	for i, m := range msgs {
+		content := m.Content
+		if m.Role == "system" && len(content) > maxContentLen {
+			content = content[:maxContentLen] + "... (truncated)"
+		}
+		// For tool result messages, include the tool call ID as context
+		if m.Role == "tool" && m.ToolCallID != "" {
+			content = "[tool_call_id: " + m.ToolCallID + "]\n" + content
+		}
+		result[i] = TraceLLMMessage{Role: m.Role, Content: content}
+	}
+	return result
 }

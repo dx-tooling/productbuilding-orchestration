@@ -26,11 +26,12 @@ type StepTrace struct {
 }
 
 type IterationTrace struct {
-	MessageCount int
-	LLMContent   string
-	ToolCalls    []ToolCallTrace
-	LatencyMs    int64
-	FinishReason string
+	MessageCount  int
+	InputMessages []TraceLLMMessage
+	LLMContent    string
+	ToolCalls     []ToolCallTrace
+	LatencyMs     int64
+	FinishReason  string
 }
 
 type ToolCallTrace struct {
