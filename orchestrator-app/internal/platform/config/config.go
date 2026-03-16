@@ -19,8 +19,8 @@ type Config struct {
 	SlackChannelPrefix string `env:"SLACK_CHANNEL_PREFIX" envDefault:"productbuilding-"`
 	AcmeEmail          string `env:"ACME_EMAIL" envDefault:"admin@example.com"`
 	SlackWorkspace     string `env:"SLACK_WORKSPACE"` // Slack workspace subdomain (e.g. "myteam")
-	FireworksAPIKey    string `env:"FIREWORKS_API_KEY"`
-	FireworksModel     string `env:"FIREWORKS_MODEL" envDefault:"accounts/fireworks/models/kimi-k2p5"`
+	AnthropicAPIKey    string `env:"ANTHROPIC_API_KEY"`
+	AnthropicModel     string `env:"ANTHROPIC_MODEL" envDefault:"claude-opus-4-6-20250616"`
 	LLMRequestTimeout  int    `env:"LLM_REQUEST_TIMEOUT_SECS" envDefault:"60"`
 	LLMMaxRetries      int    `env:"LLM_MAX_RETRIES" envDefault:"3"`
 	AgentRunTimeout    int    `env:"AGENT_RUN_TIMEOUT_SECS" envDefault:"120"`

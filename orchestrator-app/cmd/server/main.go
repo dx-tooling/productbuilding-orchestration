@@ -164,20 +164,12 @@ func main() {
 	)
 
 	// ── Build Agent ────────────────────────────────────────────────────
-	fireworksClient := agentdomain.NewFireworksClientWithConfig(
-		cfg.FireworksAPIKey,
-		time.Duration(cfg.LLMRequestTimeout)*time.Second,
-		agentdomain.RetryConfig{
-			MaxRetries: cfg.LLMMaxRetries,
-			BaseDelay:  1 * time.Second,
-			MaxDelay:   30 * time.Second,
-		},
-	)
+	anthropicClient := agentdomain.NewAnthropicClient(cfg.AnthropicAPIKey)
 	githubAdapter := agentdomain.NewGitHubClientAdapter(githubClient)
 	toolExecutor := agentdomain.NewToolExecutor(githubAdapter)
 	slackAdapter := agentdomain.NewSlackClientAdapter(slackClient)
 	convRepo := slackinfra.NewConversationRepository(db)
-	agentRunner := agentdomain.NewOrchestrator(fireworksClient, toolExecutor, slackAdapter, cfg.FireworksModel,
+	agentRunner := agentdomain.NewOrchestrator(anthropicClient, toolExecutor, slackAdapter, cfg.AnthropicModel,
 		agentdomain.OrchestratorConfig{
 			ConversationLister: convRepo,
 			Workspace:          cfg.SlackWorkspace,

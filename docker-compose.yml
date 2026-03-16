@@ -61,7 +61,7 @@ services:
       - AWS_REGION=${AWS_REGION:-eu-central-1}
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
       - SLACK_WORKSPACE=${SLACK_WORKSPACE:-}
-      - FIREWORKS_API_KEY=${FIREWORKS_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     restart: unless-stopped
 
 networks:
