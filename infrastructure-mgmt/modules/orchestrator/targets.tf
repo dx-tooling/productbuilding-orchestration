@@ -24,15 +24,6 @@ resource "aws_secretsmanager_secret_version" "anthropic_api_key" {
   secret_string = var.anthropic_api_key
 }
 
-moved {
-  from = aws_secretsmanager_secret.fireworks_api_key
-  to   = aws_secretsmanager_secret.anthropic_api_key
-}
-
-moved {
-  from = aws_secretsmanager_secret_version.fireworks_api_key
-  to   = aws_secretsmanager_secret_version.anthropic_api_key
-}
 
 # ── Per-target-repo resources: Secrets Manager secrets, GitHub webhooks, GitHub Actions secrets ──
 
