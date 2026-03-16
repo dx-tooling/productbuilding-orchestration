@@ -214,6 +214,60 @@ func TestToolExecutor_AddComment_OpenCodeDelegation(t *testing.T) {
 	}
 }
 
+func TestToolExecutor_AddComment_FixesMangledOpenCodePrefix(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		wantBody string
+	}{
+		{"space in prefix", "/openco de Do the thing", "/opencode Do the thing"},
+		{"space after slash", "/ opencode Do the thing", "/opencode Do the thing"},
+		{"multiple spaces", "/open code Do the thing", "/opencode Do the thing"},
+		{"correct prefix unchanged", "/opencode Do the thing", "/opencode Do the thing"},
+		{"regular comment unchanged", "Just a regular comment", "Just a regular comment"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gh := &mockGitHubClient{createCommentResult: 101}
+			exec := NewToolExecutor(gh)
+
+			_, err := exec.Execute(context.Background(), ToolCall{
+				Function: FunctionCall{
+					Name:      "add_github_comment",
+					Arguments: fmt.Sprintf(`{"number":7,"body":%q}`, tt.body),
+				},
+			}, testTarget)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			// The via-agent marker is appended, so strip it for comparison
+			gotBody := strings.TrimSuffix(gh.lastCommentBody, "\n\n<!-- via-agent -->")
+			if gotBody != tt.wantBody {
+				t.Errorf("body = %q, want %q", gotBody, tt.wantBody)
+			}
+		})
+	}
+}
+
+func TestToolExecutor_AddComment_MangledOpenCodeStillDelegates(t *testing.T) {
+	gh := &mockGitHubClient{createCommentResult: 101}
+	exec := NewToolExecutor(gh)
+
+	_, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "add_github_comment",
+			Arguments: `{"number":7,"body":"/openco de Implement the login feature"}`,
+		},
+	}, testTarget)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(exec.Effects().DelegatedIssues) != 1 {
+		t.Fatalf("expected 1 delegated issue after prefix fix, got %d", len(exec.Effects().DelegatedIssues))
+	}
+}
+
 func TestToolExecutor_AddComment_NonOpenCodeNoDelegation(t *testing.T) {
 	gh := &mockGitHubClient{createCommentResult: 102}
 	exec := NewToolExecutor(gh)

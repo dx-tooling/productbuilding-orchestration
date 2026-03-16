@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
@@ -203,6 +204,22 @@ func (e *GitHubToolExecutor) searchIssues(ctx context.Context, argsJSON string, 
 	return string(out), nil
 }
 
+// mangledOpenCodeRe matches /opencode with spaces inserted between characters.
+// Examples: "/openco de", "/ opencode", "/open code"
+var mangledOpenCodeRe = regexp.MustCompile(`^/\s*o\s*p\s*e\s*n\s*c\s*o\s*d\s*e\b`)
+
+// fixOpenCodePrefix repairs a mangled /opencode prefix caused by LLM tokenization.
+// If the body starts with something that looks like a broken /opencode, it replaces
+// just the prefix with the correct "/opencode". Non-opencode comments pass through unchanged.
+func fixOpenCodePrefix(body string) string {
+	trimmed := strings.TrimSpace(body)
+	loc := mangledOpenCodeRe.FindStringIndex(trimmed)
+	if loc == nil {
+		return body
+	}
+	return "/opencode" + trimmed[loc[1]:]
+}
+
 func (e *GitHubToolExecutor) addComment(ctx context.Context, argsJSON string, target targets.TargetConfig) (string, error) {
 	var args struct {
 		Number int    `json:"number"`
@@ -212,7 +229,10 @@ func (e *GitHubToolExecutor) addComment(ctx context.Context, argsJSON string, ta
 		return "", fmt.Errorf("parse arguments: %w", err)
 	}
 
-	body := args.Body + "\n\n<!-- via-agent -->"
+	// Fix mangled /opencode prefix (LLM tokenization sometimes inserts spaces)
+	commentBody := fixOpenCodePrefix(args.Body)
+
+	body := commentBody + "\n\n<!-- via-agent -->"
 	commentID, err := e.github.CreateComment(ctx, target.RepoOwner, target.RepoName, args.Number, body, target.GitHubPAT)
 	if err != nil {
 		return "", err
@@ -221,7 +241,7 @@ func (e *GitHubToolExecutor) addComment(ctx context.Context, argsJSON string, ta
 	e.effects.PostedComments = append(e.effects.PostedComments, commentID)
 
 	// Track issues delegated to OpenCode
-	if strings.HasPrefix(strings.TrimSpace(args.Body), "/opencode") {
+	if strings.HasPrefix(strings.TrimSpace(commentBody), "/opencode") {
 		e.effects.DelegatedIssues = append(e.effects.DelegatedIssues, args.Number)
 	}
 	commentURL := fmt.Sprintf("https://github.com/%s/%s/issues/%d#issuecomment-%d",
