@@ -58,6 +58,24 @@ type ConversationRecorder interface {
 	UpsertConversation(ctx context.Context, conv agent.Conversation) error
 }
 
+// TraceSaveRequest contains the data needed to persist an agent execution trace.
+type TraceSaveRequest struct {
+	RepoOwner     string
+	RepoName      string
+	GithubIssueID int
+	SlackChannel  string
+	SlackThreadTs string
+	UserName      string
+	UserText      string
+	TraceData     string
+	Error         string
+}
+
+// TraceSaver persists agent execution traces.
+type TraceSaver interface {
+	SaveTrace(ctx context.Context, record TraceSaveRequest) error
+}
+
 // Handler handles Slack Events API callbacks.
 type Handler struct {
 	agent                AgentRunner
@@ -66,6 +84,7 @@ type Handler struct {
 	conversationRecorder ConversationRecorder
 	slackClient          SlackClient
 	registry             TargetRegistry
+	traceSaver           TraceSaver
 	signingSecret        string
 	slackWorkspace       string
 	agentTimeout         time.Duration
@@ -98,6 +117,11 @@ func NewHandler(
 // SetAgentTimeout overrides the default agent run timeout.
 func (h *Handler) SetAgentTimeout(d time.Duration) {
 	h.agentTimeout = d
+}
+
+// SetTraceSaver sets the trace persistence backend.
+func (h *Handler) SetTraceSaver(ts TraceSaver) {
+	h.traceSaver = ts
 }
 
 // slackEnvelope represents the outer Slack Events API payload.
@@ -233,8 +257,38 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 		LinkedIssue: linkedIssue,
 	}
 
+	// Attach trace to context for recording
+	trace := &agent.Trace{}
+	ctx = agent.WithTrace(ctx, trace)
+
 	// Run agent
 	resp, err := h.agent.Run(ctx, req)
+
+	// Persist trace
+	if h.traceSaver != nil {
+		issueID := 0
+		if linkedIssue != nil {
+			issueID = linkedIssue.Number
+		}
+		traceJSON, _ := json.Marshal(trace)
+		traceErr := ""
+		if err != nil {
+			traceErr = err.Error()
+		}
+		if saveErr := h.traceSaver.SaveTrace(ctx, TraceSaveRequest{
+			RepoOwner:     target.RepoOwner,
+			RepoName:      target.RepoName,
+			GithubIssueID: issueID,
+			SlackChannel:  event.Channel,
+			SlackThreadTs: event.ThreadTs,
+			UserName:      displayName,
+			UserText:      text,
+			TraceData:     string(traceJSON),
+			Error:         traceErr,
+		}); saveErr != nil {
+			slog.Error("failed to save trace", "error", saveErr)
+		}
+	}
 
 	// Remove :eyes:, add :white_check_mark:
 	_ = h.slackClient.RemoveReaction(ctx, target.SlackBotToken, event.Channel, event.Ts, "eyes")

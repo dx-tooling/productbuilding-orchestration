@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"text/template"
+	"time"
 )
 
 // reroutePattern matches [REROUTE:specialist_name] signals in specialist text output.
@@ -98,6 +99,13 @@ func (s *Specialist) Run(ctx context.Context, req RunRequest, prior *PriorStepCo
 		)
 	}
 
+	// Initialize trace step for this specialist
+	var traceStep *StepTrace
+	if t := TraceFromContext(ctx); t != nil {
+		t.Steps = append(t.Steps, StepTrace{Specialist: s.config.Name})
+		traceStep = &t.Steps[len(t.Steps)-1]
+	}
+
 	// Agent loop
 	for i := 0; i < s.config.MaxIterations; i++ {
 		slog.Info("specialist llm call",
@@ -107,13 +115,27 @@ func (s *Specialist) Run(ctx context.Context, req RunRequest, prior *PriorStepCo
 			"message_count", len(messages),
 		)
 
+		llmStart := time.Now()
 		resp, err := s.llm.ChatCompletion(ctx, ChatRequest{
 			Model:    s.model,
 			Messages: messages,
 			Tools:    s.config.ToolDefs,
 		})
+		llmLatency := time.Since(llmStart).Milliseconds()
 		if err != nil {
 			return SpecialistResult{}, fmt.Errorf("specialist %s llm completion: %w", s.config.Name, err)
+		}
+
+		// Start recording this iteration
+		var traceIter *IterationTrace
+		if traceStep != nil {
+			traceStep.Iterations = append(traceStep.Iterations, IterationTrace{
+				MessageCount: len(messages),
+				LLMContent:   resp.Content,
+				FinishReason: resp.FinishReason,
+				LatencyMs:    llmLatency,
+			})
+			traceIter = &traceStep.Iterations[len(traceStep.Iterations)-1]
 		}
 
 		// Text response (no tool calls) — check for hallucination
@@ -165,11 +187,13 @@ func (s *Specialist) Run(ctx context.Context, req RunRequest, prior *PriorStepCo
 			var result string
 			var execErr error
 
+			toolStart := time.Now()
 			if tc.Function.Name == "list_conversations" && s.conversationLister != nil {
 				result, execErr = s.executeListConversations(ctx, tc, req.ChannelID)
 			} else {
 				result, execErr = s.tools.Execute(ctx, tc, req.Target)
 			}
+			toolLatency := time.Since(toolStart).Milliseconds()
 
 			if execErr != nil {
 				slog.Warn("specialist tool execution failed",
@@ -178,6 +202,21 @@ func (s *Specialist) Run(ctx context.Context, req RunRequest, prior *PriorStepCo
 					"error", execErr,
 				)
 				result = fmt.Sprintf("Error: %s", execErr.Error())
+			}
+
+			// Record tool call in trace
+			if traceIter != nil {
+				tcTrace := ToolCallTrace{
+					Name:      tc.Function.Name,
+					Arguments: tc.Function.Arguments,
+					LatencyMs: toolLatency,
+				}
+				if execErr != nil {
+					tcTrace.Error = execErr.Error()
+				} else {
+					tcTrace.Result = result
+				}
+				traceIter.ToolCalls = append(traceIter.ToolCalls, tcTrace)
 			}
 
 			messages = append(messages, Message{

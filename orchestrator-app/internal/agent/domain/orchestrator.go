@@ -131,6 +131,17 @@ func (o *Orchestrator) Run(ctx context.Context, req RunRequest) (RunResponse, er
 		"channel", req.ChannelID,
 	)
 
+	// Record routing trace
+	if t := TraceFromContext(ctx); t != nil {
+		stepNames := make([]string, len(decision.Steps))
+		for i, s := range decision.Steps {
+			stepNames[i] = s.Specialist
+		}
+		t.Routing = &RoutingTrace{
+			OutputText: fmt.Sprintf("steps: %v", stepNames),
+		}
+	}
+
 	// Execute specialists in sequence
 	var mergedEffects SideEffects
 	var lastText string

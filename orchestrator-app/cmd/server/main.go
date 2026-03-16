@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
@@ -8,6 +9,7 @@ import (
 
 	// Agent vertical
 	agentdomain "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/agent/domain"
+	agentinfra "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/agent/infra"
 
 	// Dashboard vertical
 	dashboardweb "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/dashboard/web"
@@ -33,6 +35,74 @@ import (
 	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/server"
 	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
 )
+
+// dashboardTraceAdapter adapts agentinfra.TraceRepository to dashboardweb.TraceQuerier.
+type dashboardTraceAdapter struct {
+	repo *agentinfra.TraceRepository
+}
+
+func newDashboardTraceAdapter(repo *agentinfra.TraceRepository) *dashboardTraceAdapter {
+	return &dashboardTraceAdapter{repo: repo}
+}
+
+func (a *dashboardTraceAdapter) FindByIssue(ctx context.Context, owner, repo string, issueID int) ([]dashboardweb.TraceResult, error) {
+	records, err := a.repo.FindByIssue(ctx, owner, repo, issueID)
+	if err != nil {
+		return nil, err
+	}
+	return convertTraceRecords(records), nil
+}
+
+func (a *dashboardTraceAdapter) FindBySlackThread(ctx context.Context, channel, threadTs string) ([]dashboardweb.TraceResult, error) {
+	records, err := a.repo.FindBySlackThread(ctx, channel, threadTs)
+	if err != nil {
+		return nil, err
+	}
+	return convertTraceRecords(records), nil
+}
+
+func convertTraceRecords(records []agentinfra.TraceRecord) []dashboardweb.TraceResult {
+	results := make([]dashboardweb.TraceResult, len(records))
+	for i, r := range records {
+		results[i] = dashboardweb.TraceResult{
+			ID:            r.ID,
+			RepoOwner:     r.RepoOwner,
+			RepoName:      r.RepoName,
+			GithubIssueID: r.GithubIssueID,
+			SlackChannel:  r.SlackChannel,
+			SlackThreadTs: r.SlackThreadTs,
+			UserName:      r.UserName,
+			UserText:      r.UserText,
+			TraceData:     r.TraceData,
+			Error:         r.Error,
+			CreatedAt:     r.CreatedAt,
+		}
+	}
+	return results
+}
+
+// slackTraceAdapter adapts agentinfra.TraceRepository to slackweb.TraceSaver.
+type slackTraceAdapter struct {
+	repo *agentinfra.TraceRepository
+}
+
+func newSlackTraceAdapter(repo *agentinfra.TraceRepository) *slackTraceAdapter {
+	return &slackTraceAdapter{repo: repo}
+}
+
+func (a *slackTraceAdapter) SaveTrace(ctx context.Context, req slackweb.TraceSaveRequest) error {
+	return a.repo.SaveTrace(ctx, agentinfra.TraceRecord{
+		RepoOwner:     req.RepoOwner,
+		RepoName:      req.RepoName,
+		GithubIssueID: req.GithubIssueID,
+		SlackChannel:  req.SlackChannel,
+		SlackThreadTs: req.SlackThreadTs,
+		UserName:      req.UserName,
+		UserText:      req.UserText,
+		TraceData:     req.TraceData,
+		Error:         req.Error,
+	})
+}
 
 func main() {
 	// Load configuration
@@ -115,17 +185,21 @@ func main() {
 		},
 	)
 
+	// ── Build Trace Repository ────────────────────────────────────────
+	traceRepo := agentinfra.NewTraceRepository(db)
+
 	// ── Build HTTP Routes ──────────────────────────────────────────────
 	mux := http.NewServeMux()
 
 	// Register vertical routes
-	dashboardweb.RegisterRoutes(mux, previewService)
+	dashboardweb.RegisterRoutes(mux, previewService, newDashboardTraceAdapter(traceRepo))
 	previewweb.RegisterRoutes(mux, previewService)
 	githubweb.RegisterRoutes(mux, registry, previewService, slackNotifier)
 
 	// Register Slack Events API routes (agent-driven @mention handling)
 	slackHandler := slackweb.NewHandler(agentRunner, slackRepo, slackRepo, convRepo, slackClient, registry, cfg.SlackSigningSecret, cfg.SlackWorkspace)
 	slackHandler.SetAgentTimeout(time.Duration(cfg.AgentRunTimeout) * time.Second)
+	slackHandler.SetTraceSaver(newSlackTraceAdapter(traceRepo))
 	slackweb.RegisterRoutes(mux, slackHandler)
 
 	// ── Health Endpoints (outside application middleware) ───────────────

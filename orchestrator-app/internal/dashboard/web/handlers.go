@@ -29,6 +29,14 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!DOCTYPE htm
 </head>
 <body>
     <h1>Preview Orchestrator</h1>
+
+    <h2>Investigation</h2>
+    <form method="POST" action="/investigate" style="display:flex;gap:0.5rem;margin-bottom:1.5rem">
+        <input type="text" name="q" placeholder="#123, GitHub issue/PR URL, or Slack thread URL" style="flex:1;padding:0.5rem;font-size:1rem;border:1px solid #ccc;border-radius:4px">
+        <button type="submit" style="padding:0.5rem 1.5rem;font-size:1rem;background:#0366d6;color:white;border:none;border-radius:4px;cursor:pointer">Investigate</button>
+    </form>
+
+    <h2>Active Previews</h2>
     {{if .Previews}}
     <table>
         <thead>
@@ -56,6 +64,7 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!DOCTYPE htm
 
 type Handler struct {
 	previewService *domain.Service
+	traceQuerier   TraceQuerier
 }
 
 func NewHandler(previewService *domain.Service) *Handler {

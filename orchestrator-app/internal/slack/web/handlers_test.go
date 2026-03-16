@@ -969,6 +969,75 @@ func TestHandleEvent_PostToThreadError_LogsAndContinues(t *testing.T) {
 	}
 }
 
+type mockTraceSaver struct {
+	mu     sync.Mutex
+	traces []TraceSaveRequest
+}
+
+func (m *mockTraceSaver) SaveTrace(_ context.Context, record TraceSaveRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.traces = append(m.traces, record)
+	return nil
+}
+
+func (m *mockTraceSaver) getSaved() []TraceSaveRequest {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.traces
+}
+
+func TestHandleEvent_SavesTraceAfterAgentRun(t *testing.T) {
+	agentRunner := &mockAgentRunner{
+		response: agent.RunResponse{Text: "Done!"},
+	}
+	slackClient := &mockSlackClient{
+		userName:    "Alice",
+		channelName: "productbuilding-playground",
+	}
+	registry := &mockTargetRegistry{
+		channelConfig: defaultTarget(),
+		channelFound:  true,
+		botToken:      "xoxb-test",
+	}
+	traceSaver := &mockTraceSaver{}
+
+	h := NewHandler(agentRunner, &mockThreadFinder{}, &mockThreadSaver{}, &mockConversationRecorder{}, slackClient, registry, testSigningSecret, "")
+	h.traceSaver = traceSaver
+
+	payload := map[string]interface{}{
+		"type": "event_callback",
+		"event": map[string]interface{}{
+			"type":    "app_mention",
+			"user":    "U123",
+			"text":    "<@UBOT> check CI",
+			"channel": "C0PRODUCT",
+			"ts":      "1234567890.123456",
+		},
+		"authorizations": []map[string]string{{"user_id": "UBOT"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := makeSignedRequest(t, body)
+	rec := httptest.NewRecorder()
+
+	h.HandleEvent(rec, req)
+	time.Sleep(200 * time.Millisecond)
+
+	saved := traceSaver.getSaved()
+	if len(saved) != 1 {
+		t.Fatalf("expected 1 saved trace, got %d", len(saved))
+	}
+	if saved[0].UserName != "Alice" {
+		t.Errorf("expected user 'Alice', got %q", saved[0].UserName)
+	}
+	if saved[0].UserText != "check CI" {
+		t.Errorf("expected user text 'check CI', got %q", saved[0].UserText)
+	}
+	if saved[0].RepoOwner != "example-org" {
+		t.Errorf("expected repo owner 'example-org', got %q", saved[0].RepoOwner)
+	}
+}
+
 func TestHandleEvent_UnregisteredChannel_Ignored(t *testing.T) {
 	agentRunner := &mockAgentRunner{}
 	slackClient := &mockSlackClient{channelName: "random-channel"}
