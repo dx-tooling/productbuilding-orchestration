@@ -122,7 +122,7 @@ var investigateTmpl = template.Must(template.New("investigate").Funcs(investigat
             <div class="step-header">Specialist: {{.Specialist}}</div>
             {{range $i, $iter := .Iterations}}
             <div class="iteration">
-                <div><strong>Iteration {{add $i 1}}</strong> ({{$iter.MessageCount}} messages, {{$iter.FinishReason}}) <span class="latency">{{$iter.LatencyMs}}ms</span></div>
+                <div><strong>Iteration {{add $i 1}}</strong> ({{$iter.MessageCount}} msgs in LLM context, finish: {{$iter.FinishReason}}) <span class="latency">{{$iter.LatencyMs}}ms</span></div>
                 {{if $iter.LLMContent}}<pre>{{truncate $iter.LLMContent 500}}</pre>{{end}}
                 {{range $iter.ToolCalls}}
                 <div class="tool-call">
