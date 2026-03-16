@@ -950,19 +950,19 @@ mise run ssh -- 'sudo bash -c "
   fi
 "'
 
-echo "==> Refreshing Fireworks API key..."
+echo "==> Refreshing LLM API key..."
 mise run ssh -- 'sudo bash -c "
   REGION=\$(grep AWS_REGION /opt/orchestrator/repo/.env | cut -d= -f2)
   PREFIX=\$(grep PROJECT_PREFIX /opt/orchestrator/repo/.env | cut -d= -f2)
   SECRET=\$(aws secretsmanager get-secret-value --region \"\$REGION\" \
-    --secret-id \"\$PREFIX/fireworks-api-key\" \
+    --secret-id \"\$PREFIX/llm-api-key\" \
     --query SecretString --output text 2>/dev/null || echo \"\")
-  sed -i /^FIREWORKS_API_KEY=/d /opt/orchestrator/repo/.env
+  sed -i /^LLM_API_KEY=/d /opt/orchestrator/repo/.env
   if [ -n \"\$SECRET\" ]; then
-    echo \"FIREWORKS_API_KEY=\$SECRET\" >> /opt/orchestrator/repo/.env
-    echo \"Fireworks API key loaded\"
+    echo \"LLM_API_KEY=\$SECRET\" >> /opt/orchestrator/repo/.env
+    echo \"LLM API key loaded\"
   else
-    echo \"No Fireworks API key configured (skipped)\"
+    echo \"No LLM API key configured (skipped)\"
   fi
 "'
 
@@ -988,6 +988,299 @@ echo "Check logs: mise run ssh -- docker compose logs orchestrator"
 exit 1
 EOF
 chmod +x "$DEPLOY_DIR/.mise/tasks/deploy"
+
+# --- switch-llm-provider ---
+cat > "$DEPLOY_DIR/.mise/tasks/switch-llm-provider" <<'TASKEOF'
+#!/usr/bin/env bash
+#MISE description="Switch the LLM provider configuration (interactive)"
+set -euo pipefail
+
+# ── Helpers ───────────────────────────────────────────────────────────
+
+mask_value() {
+    local val="$1"
+    if [[ -z "$val" ]]; then
+        echo "(not set)"
+    elif [[ ${#val} -le 8 ]]; then
+        echo "****"
+    else
+        echo "${val:0:4}...${val: -4}"
+    fi
+}
+
+read_env_var() {
+    local var_name="$1"
+    mise run ssh -- "grep '^${var_name}=' /opt/orchestrator/repo/.env 2>/dev/null | cut -d= -f2-" 2>/dev/null || echo ""
+}
+
+# ── Read current config ───────────────────────────────────────────────
+
+echo "==> Reading current LLM configuration from server..."
+echo ""
+
+CUR_PROVIDER=$(read_env_var LLM_PROVIDER)
+CUR_MODEL=$(read_env_var LLM_MODEL)
+CUR_API_KEY=$(read_env_var LLM_API_KEY)
+CUR_BASE_URL=$(read_env_var LLM_BASE_URL)
+CUR_FB_PROVIDER=$(read_env_var LLM_FALLBACK_PROVIDER)
+CUR_FB_MODEL=$(read_env_var LLM_FALLBACK_MODEL)
+CUR_FB_API_KEY=$(read_env_var LLM_FALLBACK_API_KEY)
+CUR_FB_BASE_URL=$(read_env_var LLM_FALLBACK_BASE_URL)
+
+echo "Current configuration:"
+echo "  Provider:          ${CUR_PROVIDER:-(not set, defaults to anthropic)}"
+echo "  Model:             ${CUR_MODEL:-(not set, defaults to claude-opus-4-6)}"
+echo "  API Key:           $(mask_value "$CUR_API_KEY")"
+echo "  Base URL:          ${CUR_BASE_URL:-(not set)}"
+if [[ -n "$CUR_FB_PROVIDER" ]]; then
+    echo "  Fallback Provider: $CUR_FB_PROVIDER"
+    echo "  Fallback Model:    ${CUR_FB_MODEL:-(not set)}"
+    echo "  Fallback API Key:  $(mask_value "$CUR_FB_API_KEY")"
+    echo "  Fallback Base URL: ${CUR_FB_BASE_URL:-(not set)}"
+fi
+echo ""
+
+# ── Provider type ─────────────────────────────────────────────────────
+
+echo "Provider types:"
+echo "  1) anthropic     — Anthropic API (Claude models)"
+echo "  2) openaicompat  — OpenAI-compatible API (Fireworks, OpenAI, etc.)"
+echo ""
+
+DEFAULT_PROVIDER="${CUR_PROVIDER:-anthropic}"
+read -rp "Provider type [${DEFAULT_PROVIDER}]: " NEW_PROVIDER
+NEW_PROVIDER="${NEW_PROVIDER:-$DEFAULT_PROVIDER}"
+
+if [[ "$NEW_PROVIDER" != "anthropic" && "$NEW_PROVIDER" != "openaicompat" ]]; then
+    echo "Error: Provider must be 'anthropic' or 'openaicompat'" >&2
+    exit 1
+fi
+
+# ── Model ─────────────────────────────────────────────────────────────
+
+if [[ "$NEW_PROVIDER" == "anthropic" ]]; then
+    MODEL_HINT="e.g. claude-opus-4-6, claude-sonnet-4-6"
+    DEFAULT_MODEL="${CUR_MODEL:-claude-opus-4-6}"
+else
+    MODEL_HINT="e.g. accounts/fireworks/models/llama4-maverick-instruct-basic"
+    DEFAULT_MODEL="${CUR_MODEL:-}"
+fi
+
+read -rp "Model ($MODEL_HINT) [${DEFAULT_MODEL}]: " NEW_MODEL
+NEW_MODEL="${NEW_MODEL:-$DEFAULT_MODEL}"
+
+if [[ -z "$NEW_MODEL" ]]; then
+    echo "Error: Model is required" >&2
+    exit 1
+fi
+
+# ── API key ───────────────────────────────────────────────────────────
+
+if [[ -n "$CUR_API_KEY" ]]; then
+    echo "Current API key: $(mask_value "$CUR_API_KEY")"
+    read -rp "API key (Enter to keep current): " NEW_API_KEY
+    NEW_API_KEY="${NEW_API_KEY:-$CUR_API_KEY}"
+else
+    read -rp "API key: " NEW_API_KEY
+fi
+
+if [[ -z "$NEW_API_KEY" ]]; then
+    echo "Error: API key is required" >&2
+    exit 1
+fi
+
+# ── Base URL (openaicompat only) ──────────────────────────────────────
+
+NEW_BASE_URL=""
+if [[ "$NEW_PROVIDER" == "openaicompat" ]]; then
+    echo ""
+    echo "Base URL presets:"
+    echo "  1) Fireworks  — https://api.fireworks.ai/inference/v1"
+    echo "  2) OpenAI     — https://api.openai.com/v1"
+    echo "  3) Custom"
+    echo ""
+    DEFAULT_BASE_URL="${CUR_BASE_URL:-https://api.fireworks.ai/inference/v1}"
+    read -rp "Base URL [${DEFAULT_BASE_URL}]: " NEW_BASE_URL
+    NEW_BASE_URL="${NEW_BASE_URL:-$DEFAULT_BASE_URL}"
+
+    # Allow shorthand
+    case "$NEW_BASE_URL" in
+        1|fireworks|Fireworks) NEW_BASE_URL="https://api.fireworks.ai/inference/v1" ;;
+        2|openai|OpenAI)       NEW_BASE_URL="https://api.openai.com/v1" ;;
+    esac
+fi
+
+# ── Fallback (optional) ──────────────────────────────────────────────
+
+echo ""
+read -rp "Configure a fallback provider? [y/N]: " CONFIGURE_FALLBACK
+CONFIGURE_FALLBACK="${CONFIGURE_FALLBACK:-n}"
+
+NEW_FB_PROVIDER=""
+NEW_FB_MODEL=""
+NEW_FB_API_KEY=""
+NEW_FB_BASE_URL=""
+
+if [[ "$CONFIGURE_FALLBACK" =~ ^[Yy]$ ]]; then
+    echo ""
+    echo "Fallback provider types:"
+    echo "  1) anthropic     — Anthropic API (Claude models)"
+    echo "  2) openaicompat  — OpenAI-compatible API"
+    echo ""
+
+    DEFAULT_FB_PROVIDER="${CUR_FB_PROVIDER:-openaicompat}"
+    read -rp "Fallback provider [${DEFAULT_FB_PROVIDER}]: " NEW_FB_PROVIDER
+    NEW_FB_PROVIDER="${NEW_FB_PROVIDER:-$DEFAULT_FB_PROVIDER}"
+
+    if [[ "$NEW_FB_PROVIDER" == "anthropic" ]]; then
+        FB_MODEL_HINT="e.g. claude-opus-4-6, claude-sonnet-4-6"
+        DEFAULT_FB_MODEL="${CUR_FB_MODEL:-claude-sonnet-4-6}"
+    else
+        FB_MODEL_HINT="e.g. accounts/fireworks/models/llama4-maverick-instruct-basic"
+        DEFAULT_FB_MODEL="${CUR_FB_MODEL:-}"
+    fi
+
+    read -rp "Fallback model ($FB_MODEL_HINT) [${DEFAULT_FB_MODEL}]: " NEW_FB_MODEL
+    NEW_FB_MODEL="${NEW_FB_MODEL:-$DEFAULT_FB_MODEL}"
+
+    if [[ -n "$CUR_FB_API_KEY" ]]; then
+        echo "Current fallback API key: $(mask_value "$CUR_FB_API_KEY")"
+        read -rp "Fallback API key (Enter to keep current): " NEW_FB_API_KEY
+        NEW_FB_API_KEY="${NEW_FB_API_KEY:-$CUR_FB_API_KEY}"
+    else
+        read -rp "Fallback API key: " NEW_FB_API_KEY
+    fi
+
+    if [[ "$NEW_FB_PROVIDER" == "openaicompat" ]]; then
+        DEFAULT_FB_BASE_URL="${CUR_FB_BASE_URL:-https://api.fireworks.ai/inference/v1}"
+        read -rp "Fallback base URL [${DEFAULT_FB_BASE_URL}]: " NEW_FB_BASE_URL
+        NEW_FB_BASE_URL="${NEW_FB_BASE_URL:-$DEFAULT_FB_BASE_URL}"
+        case "$NEW_FB_BASE_URL" in
+            1|fireworks|Fireworks) NEW_FB_BASE_URL="https://api.fireworks.ai/inference/v1" ;;
+            2|openai|OpenAI)       NEW_FB_BASE_URL="https://api.openai.com/v1" ;;
+        esac
+    fi
+fi
+
+# ── Summary + confirm ────────────────────────────────────────────────
+
+echo ""
+echo "════════════════════════════════════════════"
+echo "  New LLM Configuration"
+echo "════════════════════════════════════════════"
+echo "  Provider:  $NEW_PROVIDER"
+echo "  Model:     $NEW_MODEL"
+echo "  API Key:   $(mask_value "$NEW_API_KEY")"
+if [[ -n "$NEW_BASE_URL" ]]; then
+    echo "  Base URL:  $NEW_BASE_URL"
+fi
+if [[ -n "$NEW_FB_PROVIDER" ]]; then
+    echo ""
+    echo "  Fallback Provider:  $NEW_FB_PROVIDER"
+    echo "  Fallback Model:     $NEW_FB_MODEL"
+    echo "  Fallback API Key:   $(mask_value "$NEW_FB_API_KEY")"
+    if [[ -n "$NEW_FB_BASE_URL" ]]; then
+        echo "  Fallback Base URL:  $NEW_FB_BASE_URL"
+    fi
+fi
+echo "════════════════════════════════════════════"
+echo ""
+
+read -rp "Apply this configuration? [y/N]: " CONFIRM
+if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+    echo "Aborted."
+    exit 0
+fi
+
+# ── Update Secrets Manager ────────────────────────────────────────────
+
+echo ""
+echo "==> Loading AWS credentials..."
+eval "$($(dirname "$0")/../lib/load-secrets)"
+
+REGION=$(mise run ssh -- "grep '^AWS_REGION=' /opt/orchestrator/repo/.env | cut -d= -f2" 2>/dev/null)
+PREFIX=$(mise run ssh -- "grep '^PROJECT_PREFIX=' /opt/orchestrator/repo/.env | cut -d= -f2" 2>/dev/null)
+
+echo "==> Updating LLM API key in Secrets Manager (${PREFIX}/llm-api-key)..."
+aws secretsmanager put-secret-value \
+    --region "$REGION" \
+    --secret-id "${PREFIX}/llm-api-key" \
+    --secret-string "$NEW_API_KEY" \
+    --output text > /dev/null
+
+if [[ -n "$NEW_FB_API_KEY" ]]; then
+    echo "==> Updating fallback API key in Secrets Manager (${PREFIX}/llm-fallback-api-key)..."
+    # Create if it doesn't exist, update if it does
+    if ! aws secretsmanager describe-secret --region "$REGION" --secret-id "${PREFIX}/llm-fallback-api-key" >/dev/null 2>&1; then
+        aws secretsmanager create-secret \
+            --region "$REGION" \
+            --name "${PREFIX}/llm-fallback-api-key" \
+            --secret-string "$NEW_FB_API_KEY" \
+            --output text > /dev/null
+    else
+        aws secretsmanager put-secret-value \
+            --region "$REGION" \
+            --secret-id "${PREFIX}/llm-fallback-api-key" \
+            --secret-string "$NEW_FB_API_KEY" \
+            --output text > /dev/null
+    fi
+fi
+
+# ── Update server .env ────────────────────────────────────────────────
+
+echo "==> Updating .env on server..."
+mise run ssh -- 'sudo bash -c "
+  ENV_FILE=/opt/orchestrator/repo/.env
+
+  # Remove all existing LLM_ vars
+  sed -i /^LLM_/d \"\$ENV_FILE\"
+
+  # Write new values
+  echo \"LLM_PROVIDER='"$NEW_PROVIDER"'\" >> \"\$ENV_FILE\"
+  echo \"LLM_MODEL='"$NEW_MODEL"'\" >> \"\$ENV_FILE\"
+  echo \"LLM_API_KEY='"$NEW_API_KEY"'\" >> \"\$ENV_FILE\"
+  '"$(if [[ -n "$NEW_BASE_URL" ]]; then echo "echo \"LLM_BASE_URL=$NEW_BASE_URL\" >> \"\$ENV_FILE\""; fi)"'
+  '"$(if [[ -n "$NEW_FB_PROVIDER" ]]; then echo "
+  echo \"LLM_FALLBACK_PROVIDER=$NEW_FB_PROVIDER\" >> \"\$ENV_FILE\"
+  echo \"LLM_FALLBACK_MODEL=$NEW_FB_MODEL\" >> \"\$ENV_FILE\"
+  echo \"LLM_FALLBACK_API_KEY=$NEW_FB_API_KEY\" >> \"\$ENV_FILE\"
+  "; fi)"'
+  '"$(if [[ -n "$NEW_FB_BASE_URL" ]]; then echo "echo \"LLM_FALLBACK_BASE_URL=$NEW_FB_BASE_URL\" >> \"\$ENV_FILE\""; fi)"'
+
+  echo \"Updated .env with new LLM configuration\"
+"'
+
+# ── Restart container ─────────────────────────────────────────────────
+
+echo "==> Restarting orchestrator (env-only change, no rebuild)..."
+mise run ssh -- "cd /opt/orchestrator/repo && docker compose up -d orchestrator"
+
+# ── Health check ──────────────────────────────────────────────────────
+
+echo "==> Waiting for health check..."
+DOMAIN=$(mise run ssh -- "grep '^PREVIEW_DOMAIN=' /opt/orchestrator/repo/.env | cut -d= -f2" 2>/dev/null)
+if [[ -z "$DOMAIN" ]]; then
+    echo "Error: Could not determine PREVIEW_DOMAIN from server .env" >&2
+    exit 1
+fi
+
+for i in $(seq 1 15); do
+    if curl -sf "https://api.${DOMAIN}/healthz" >/dev/null 2>&1; then
+        echo ""
+        echo "LLM provider switched successfully."
+        echo "  Provider: $NEW_PROVIDER"
+        echo "  Model:    $NEW_MODEL"
+        echo "  Healthy at: https://api.${DOMAIN}/"
+        exit 0
+    fi
+    sleep 2
+done
+
+echo "Warning: orchestrator did not become healthy within 30 seconds."
+echo "Check logs: mise run ssh -- 'cd /opt/orchestrator/repo && docker compose logs orchestrator'"
+exit 1
+TASKEOF
+chmod +x "$DEPLOY_DIR/.mise/tasks/switch-llm-provider"
 
 # --- instance-start ---
 cat > "$DEPLOY_DIR/.mise/tasks/instance-start" <<'EOF'

@@ -17,13 +17,13 @@ const (
 )
 
 type InvestigationQuery struct {
-	Type           QueryType
-	Number         int    // issue/PR number (QueryIssue and QueryGitHub)
-	Owner          string // GitHub owner (QueryGitHub only)
-	Repo           string // GitHub repo (QueryGitHub only)
-	SlackChannel   string // Slack channel ID (QuerySlack only)
-	SlackTs        string // message timestamp (QuerySlack only)
-	SlackThreadTs  string // parent thread timestamp (QuerySlack only)
+	Type          QueryType
+	Number        int    // issue/PR number (QueryIssue and QueryGitHub)
+	Owner         string // GitHub owner (QueryGitHub only)
+	Repo          string // GitHub repo (QueryGitHub only)
+	SlackChannel  string // Slack channel ID (QuerySlack only)
+	SlackTs       string // message timestamp (QuerySlack only)
+	SlackThreadTs string // parent thread timestamp (QuerySlack only)
 }
 
 var (
