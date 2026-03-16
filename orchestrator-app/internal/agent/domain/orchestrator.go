@@ -52,26 +52,26 @@ func NewOrchestrator(llm LLMClient, tools ToolExecutor, slackFetcher SlackThread
 	return o
 }
 
-// buildSpecialists creates all specialist instances.
-func (o *Orchestrator) buildSpecialists() map[string]*Specialist {
-	specs := map[string]SpecialistConfig{
+// defaultSpecialistConfigs returns the specialist configuration map.
+func defaultSpecialistConfigs() map[string]SpecialistConfig {
+	return map[string]SpecialistConfig{
 		"issue_creator": {
 			Name:           "issue_creator",
 			PromptTemplate: issueCreatorPromptTmpl,
 			ToolDefs:       IssueCreatorTools(),
-			MaxIterations:  4,
+			MaxIterations:  5,
 		},
 		"delegator": {
 			Name:           "delegator",
 			PromptTemplate: delegatorPromptTmpl,
 			ToolDefs:       DelegatorTools(),
-			MaxIterations:  3,
+			MaxIterations:  5,
 		},
 		"commenter": {
 			Name:           "commenter",
 			PromptTemplate: commenterPromptTmpl,
 			ToolDefs:       CommenterTools(),
-			MaxIterations:  3,
+			MaxIterations:  5,
 		},
 		"researcher": {
 			Name:           "researcher",
@@ -83,9 +83,14 @@ func (o *Orchestrator) buildSpecialists() map[string]*Specialist {
 			Name:           "closer",
 			PromptTemplate: closerPromptTmpl,
 			ToolDefs:       CloserTools(),
-			MaxIterations:  3,
+			MaxIterations:  5,
 		},
 	}
+}
+
+// buildSpecialists creates all specialist instances.
+func (o *Orchestrator) buildSpecialists() map[string]*Specialist {
+	specs := defaultSpecialistConfigs()
 
 	result := make(map[string]*Specialist, len(specs))
 	for name, cfg := range specs {
