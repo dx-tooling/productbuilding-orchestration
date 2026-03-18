@@ -70,7 +70,7 @@ CFG_INSTANCE_TYPE="t3.xlarge"
 CFG_SSH_PUBLIC_KEY=""
 CFG_SLACK_WORKSPACE=""
 CFG_SLACK_SIGNING_SECRET=""
-CFG_FIREWORKS_API_KEY=""
+CFG_LLM_API_KEY=""
 CFG_AWS_ACCOUNT_ID=""
 
 if [[ "$NON_INTERACTIVE" == false ]]; then
@@ -205,13 +205,11 @@ fi
 # ── 6. AI Integration (optional) ──
 
 section_header "AI Integration (optional)"
-echo "  Fireworks API key for target repo GitHub Actions workflows (e.g., opencode.yml)."
-echo "  This is NOT the orchestrator's own LLM key — use 'mise run switch-llm-provider'"
-echo "  in the deployment repo to configure the orchestrator's LLM backend after deploy."
-echo "  Get one at: https://fireworks.ai/account/api-keys"
+echo "  LLM API key for the orchestration agent (e.g., Anthropic, Fireworks)."
+echo "  You can also configure this post-deploy via 'mise run switch-llm-provider'."
 echo ""
 
-read -rp "  Fireworks API key (leave empty to skip): " CFG_FIREWORKS_API_KEY
+read -rp "  LLM API key (leave empty to skip): " CFG_LLM_API_KEY
 
 # ── Summary ──
 
@@ -236,8 +234,8 @@ echo ""
 if [[ -n "$CFG_SLACK_WORKSPACE" ]]; then
     echo "  Slack:          $CFG_SLACK_WORKSPACE"
 fi
-if [[ -n "$CFG_FIREWORKS_API_KEY" ]]; then
-    echo "  Fireworks:      $(mask_secret "$CFG_FIREWORKS_API_KEY")"
+if [[ -n "$CFG_LLM_API_KEY" ]]; then
+    echo "  LLM Key:        $(mask_secret "$CFG_LLM_API_KEY")"
 fi
 echo ""
 
@@ -330,7 +328,7 @@ github_mgmt_pat = "<same GitHub PAT>"
 ssh_public_key  = "<your SSH public key>"
 # Optional:
 # slack_signing_secret = "..."
-# fireworks_api_key    = "..."
+# llm_api_key          = "..."
 \`\`\`
 
 ### 3. Bootstrap state backend (one-time)
@@ -659,7 +657,7 @@ module "orchestrator" {
   ssh_public_key           = var.ssh_public_key
   slack_workspace          = var.slack_workspace
   slack_signing_secret     = var.slack_signing_secret
-  fireworks_api_key        = var.fireworks_api_key
+  llm_api_key              = var.llm_api_key
   targets                  = var.targets
   acme_email               = var.acme_email
   orchestration_repo       = "${ORCH_DIRNAME}"
@@ -722,11 +720,11 @@ variable "slack_signing_secret" {
   default     = "${CFG_SLACK_SIGNING_SECRET}"
 }
 
-variable "fireworks_api_key" {
-  description = "Fireworks AI API key"
+variable "llm_api_key" {
+  description = "API key for the orchestration agent's primary LLM provider"
   type        = string
   sensitive   = true
-  default     = "${CFG_FIREWORKS_API_KEY}"
+  default     = "${CFG_LLM_API_KEY}"
 }
 
 variable "acme_email" {
@@ -1982,7 +1980,7 @@ github_mgmt_pat      = "${CFG_GITHUB_PAT_MGMT}"
 ssh_public_key       = "${CFG_SSH_PUBLIC_KEY}"
 slack_workspace      = "${CFG_SLACK_WORKSPACE}"
 slack_signing_secret = "${CFG_SLACK_SIGNING_SECRET}"
-fireworks_api_key    = "${CFG_FIREWORKS_API_KEY}"
+llm_api_key          = "${CFG_LLM_API_KEY}"
 TFVARSEOF
     chmod 600 "$DEPLOY_DIR/infrastructure-mgmt/main/terraform.tfvars"
 
