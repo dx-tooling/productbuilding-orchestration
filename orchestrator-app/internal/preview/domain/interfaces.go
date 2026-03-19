@@ -35,6 +35,7 @@ type PRCommenter interface {
 	CreateComment(ctx context.Context, owner, repo string, prNumber int, body, pat string) (commentID int64, err error)
 	UpdateComment(ctx context.Context, owner, repo string, commentID int64, body, pat string) error
 	DeleteComment(ctx context.Context, owner, repo string, commentID int64, pat string) error
+	DeleteAllBotComments(ctx context.Context, owner, repo string, prNumber int, pat string) error
 }
 
 // DeployRequest is the input for deploying or updating a preview.

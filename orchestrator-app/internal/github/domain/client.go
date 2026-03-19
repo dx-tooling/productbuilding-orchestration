@@ -807,3 +807,55 @@ func (c *Client) DeleteComment(ctx context.Context, owner, repo string, commentI
 
 	return nil
 }
+
+// listCommentResponse represents a GitHub issue comment with full details
+type listCommentResponse struct {
+	ID   int64  `json:"id"`
+	Body string `json:"body"`
+	User struct {
+		Login string `json:"login"`
+		Type  string `json:"type"`
+	} `json:"user"`
+}
+
+// orchestratorMarker is the unique HTML comment that identifies our bot comments
+const orchestratorMarker = "<!-- productbuilding-orchestrator -->"
+
+// DeleteAllBotComments removes all our bot comments from a PR (identified by unique marker)
+func (c *Client) DeleteAllBotComments(ctx context.Context, owner, repo string, prNumber int, pat string) error {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/%d/comments", owner, repo, prNumber)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("list comments: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("list comments: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	var comments []listCommentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&comments); err != nil {
+		return fmt.Errorf("decode comments: %w", err)
+	}
+
+	// Delete only comments with our unique marker
+	for _, comment := range comments {
+		if strings.Contains(comment.Body, orchestratorMarker) {
+			if err := c.DeleteComment(ctx, owner, repo, comment.ID, pat); err != nil {
+				slog.Warn("failed to delete old orchestrator comment", "comment_id", comment.ID, "error", err)
+			}
+		}
+	}
+
+	return nil
+}

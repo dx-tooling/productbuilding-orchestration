@@ -191,10 +191,10 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 		AnimationURL: "https://raw.githubusercontent.com/dx-tooling/assets/refs/heads/main/productbuilding/crane-building-animation-128x128.gif",
 	}
 
-	// 1. Delete previous bot comment and post new acknowledgment (before acquiring mutex)
-	existing, _ := s.repo.FindByRepoPR(ctx, req.RepoOwner, req.RepoName, req.PRNumber)
-	if existing != nil && existing.GithubCommentID > 0 {
-		_ = s.commenter.DeleteComment(ctx, req.RepoOwner, req.RepoName, existing.GithubCommentID, pat)
+	// 1. Delete ALL previous bot comments and post new acknowledgment (before acquiring mutex)
+	// This keeps the PR clean by removing old/aborted preview comments
+	if err := s.commenter.DeleteAllBotComments(ctx, req.RepoOwner, req.RepoName, req.PRNumber, pat); err != nil {
+		log.Warn("failed to clean up old bot comments", "error", err)
 	}
 
 	ackBody := progressComment("Preview deploying", meta, 0, "Queued, waiting to start...")
@@ -411,7 +411,7 @@ func (s *Service) DeletePreview(ctx context.Context, req DeployRequest, pat stri
 	preview.Status = StatusDeleted
 	_ = s.repo.Update(ctx, *preview)
 
-	_, err = s.commenter.CreateComment(ctx, req.RepoOwner, req.RepoName, req.PRNumber, "### Preview removed", pat)
+	_, err = s.commenter.CreateComment(ctx, req.RepoOwner, req.RepoName, req.PRNumber, "<!-- productbuilding-orchestrator -->\n### Preview removed", pat)
 	if err != nil {
 		log.Warn("failed to post removal comment", "error", err)
 	}
@@ -514,6 +514,8 @@ func (m commentMeta) logsLink() string {
 // In-progress comments include an animation; the final "ready" comment does not.
 func progressComment(title string, meta commentMeta, completedSteps int, statusLine string) string {
 	var b strings.Builder
+	// Add unique marker to identify our bot comments for cleanup
+	fmt.Fprintf(&b, "<!-- productbuilding-orchestrator -->\n")
 	fmt.Fprintf(&b, "### %s\n\n", title)
 	fmt.Fprintf(&b, "Commit %s\n\n", meta.commitLink())
 
@@ -542,6 +544,8 @@ func progressComment(title string, meta commentMeta, completedSteps int, statusL
 // failedProgressComment builds a markdown comment showing which step failed.
 func failedProgressComment(meta commentMeta, completedSteps int, stage, message string) string {
 	var b strings.Builder
+	// Add unique marker to identify our bot comments for cleanup
+	fmt.Fprintf(&b, "<!-- productbuilding-orchestrator -->\n")
 	fmt.Fprintf(&b, "### Preview failed\n\n")
 	fmt.Fprintf(&b, "Commit %s\n\n", meta.commitLink())
 
