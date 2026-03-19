@@ -205,7 +205,8 @@ fi
 # ── 6. AI Integration (optional) ──
 
 section_header "AI Integration (optional)"
-echo "  LLM API key for the orchestration agent (e.g., Anthropic, Fireworks)."
+echo "  Anthropic API key for the orchestration agent."
+echo "  Recommended key type: standard Anthropic API key for Messages API."
 echo "  You can also configure this post-deploy via 'mise run switch-llm-provider'."
 echo ""
 
@@ -722,7 +723,7 @@ variable "slack_signing_secret" {
 }
 
 variable "llm_api_key" {
-  description = "API key for the orchestration agent's primary LLM provider"
+  description = "Anthropic API key for the orchestration agent"
   type        = string
   sensitive   = true
   default     = "${CFG_LLM_API_KEY}"
@@ -979,9 +980,15 @@ mise run ssh -- 'sudo bash -c "
     --secret-id \"\$PREFIX/llm-api-key\" \
     --query SecretString --output text 2>/dev/null || echo \"\")
   sed -i /^LLM_API_KEY=/d /opt/orchestrator/repo/.env
+  sed -i /^LLM_PROVIDER=/d /opt/orchestrator/repo/.env
+  sed -i /^LLM_MODEL=/d /opt/orchestrator/repo/.env
+  sed -i /^LLM_BASE_URL=/d /opt/orchestrator/repo/.env
   if [ -n \"\$SECRET\" ]; then
     echo \"LLM_API_KEY=\$SECRET\" >> /opt/orchestrator/repo/.env
-    echo \"LLM API key loaded\"
+    # Anthropic is the deployment default and should not depend on stale env.
+    echo \"LLM_PROVIDER=anthropic\" >> /opt/orchestrator/repo/.env
+    echo \"LLM_MODEL=claude-opus-4-6\" >> /opt/orchestrator/repo/.env
+    echo \"LLM config loaded (provider=anthropic)\"
   else
     echo \"No LLM API key configured (skipped)\"
   fi

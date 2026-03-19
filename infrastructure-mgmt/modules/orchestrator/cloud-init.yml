@@ -87,6 +87,8 @@ write_files:
         --output text 2>/dev/null || echo "")
       if [[ -n "$LLM_API_KEY" ]]; then
         echo "LLM_API_KEY=$LLM_API_KEY" >> /opt/orchestrator/repo/.env
+        echo "LLM_PROVIDER=anthropic" >> /opt/orchestrator/repo/.env
+        echo "LLM_MODEL=claude-opus-4-6" >> /opt/orchestrator/repo/.env
         echo "=== LLM API key loaded ==="
       fi
 
