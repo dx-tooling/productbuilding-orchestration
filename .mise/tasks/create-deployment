@@ -377,6 +377,7 @@ mise run deploy
 | \`mise run instance-stop\` | Stop EC2 instance (cost savings) |
 | \`mise run instance-status\` | Check EC2 instance state |
 | \`mise run onboard-target\` | Interactive: register new target repo |
+| \`mise run slack-setup\` | Print Slack app setup checklist and URLs |
 | \`mise run switch-llm-provider\` | Interactive: change LLM provider, model, API key |
 | \`mise run secrets-decrypt\` | Decrypt secrets (requires secrets/.key) |
 | \`mise run secrets-encrypt\` | Encrypt secrets (public key only) |
@@ -1458,6 +1459,122 @@ fi
 EOF
 chmod +x "$DEPLOY_DIR/.mise/tasks/preview-logs"
 
+# --- slack-setup ---
+cat > "$DEPLOY_DIR/.mise/tasks/slack-setup" <<'EOF'
+#!/usr/bin/env bash
+#MISE description="Show Slack app setup checklist for this deployment"
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+INFRA_DIR="$PROJECT_DIR/infrastructure-mgmt/main"
+TFVARS_FILE="$INFRA_DIR/terraform.tfvars"
+VARS_FILE="$INFRA_DIR/variables.tf"
+
+# Needed for reading OpenTofu outputs from remote state.
+eval "$($(dirname "$0")/../lib/load-secrets)"
+
+PREVIEW_DOMAIN="$(cd "$INFRA_DIR" && tofu output -raw preview_domain 2>/dev/null || true)"
+if [[ -z "$PREVIEW_DOMAIN" ]]; then
+  PREVIEW_DOMAIN="<your-preview-domain>"
+fi
+SLACK_EVENTS_URL="https://api.${PREVIEW_DOMAIN}/slack/events"
+
+SLACK_WORKSPACE=""
+if [[ -f "$TFVARS_FILE" ]]; then
+  SLACK_WORKSPACE="$(awk -F'"' '/^\s*slack_workspace\s*=/{print $2}' "$TFVARS_FILE" | head -n1)"
+fi
+if [[ -z "$SLACK_WORKSPACE" && -f "$VARS_FILE" ]]; then
+  SLACK_WORKSPACE="$(awk '
+    /variable "slack_workspace"/ { in_block=1; next }
+    in_block && /^\}/ { in_block=0 }
+    in_block && /default[[:space:]]*=/ {
+      if (match($0, /"[^"]+"/)) {
+        print substr($0, RSTART+1, RLENGTH-2)
+        exit
+      }
+    }
+  ' "$VARS_FILE")"
+fi
+if [[ -z "$SLACK_WORKSPACE" ]]; then
+  SLACK_WORKSPACE="<your-workspace>"
+fi
+
+cat <<EOT
+Slack setup checklist
+=====================
+
+Deployment values
+-----------------
+- Preview domain:     ${PREVIEW_DOMAIN}
+- Events endpoint:    ${SLACK_EVENTS_URL}
+- Workspace hint:     ${SLACK_WORKSPACE}
+
+1) Create Slack app
+-------------------
+- Create app: https://api.slack.com/apps
+- Install to workspace: ${SLACK_WORKSPACE}
+
+2) Configure Bot Token Scopes
+-----------------------------
+OAuth & Permissions -> Bot Token Scopes:
+- chat:write
+- chat:write.public
+- reactions:write
+- reactions:read
+- channels:read
+- channels:history
+- app_mentions:read
+- users:read
+
+After adding scopes, reinstall the app to the workspace.
+
+3) Configure Event Subscriptions
+--------------------------------
+Event Subscriptions:
+- Enable Events: On
+- Request URL: ${SLACK_EVENTS_URL}
+- Subscribe to bot events: app_mention
+
+4) Add signing secret to deployment
+-----------------------------------
+- Copy Signing Secret from Slack app -> Basic Information
+- Store it in this deployment repo:
+  infrastructure-mgmt/main/terraform.tfvars
+  slack_signing_secret = "<value>"
+
+Then apply and redeploy:
+- mise run infra-apply
+- mise run deploy
+
+5) Connect target repos/channels
+--------------------------------
+- Run: mise run onboard-target
+- Enable Slack integration when prompted
+- Provide:
+  - Slack Bot Token (xoxb-...)
+  - Slack channel (recommended: #productbuilding-<repo>)
+- Then run:
+  - mise run secrets-encrypt
+  - mise run infra-apply
+  - mise run deploy
+
+6) Validate end-to-end
+----------------------
+- Invite bot into each channel:
+  /invite @ProductBuilder Bot
+- In the channel, mention:
+  @ProductBuilder help
+- Open/update a PR in an onboarded repo and confirm Slack thread updates.
+
+Troubleshooting tips
+--------------------
+- If events fail to verify: ensure signing secret matches current app value.
+- If bot does not post: check scopes, reinstall app, and re-invite the bot.
+- If one repo works but another does not: rerun onboard-target for that repo and deploy again.
+EOT
+EOF
+chmod +x "$DEPLOY_DIR/.mise/tasks/slack-setup"
+
 # --- onboard-target ---
 cat > "$DEPLOY_DIR/.mise/tasks/onboard-target" <<'TASKEOF'
 #!/usr/bin/env bash
@@ -1894,6 +2011,14 @@ mise run ssh -- "docker --version && docker network ls | grep preview-net"
 ```bash
 mise run deploy
 ```
+
+## Step 6b: Set up Slack integration (optional)
+
+```bash
+mise run slack-setup
+```
+
+This prints a deployment-specific checklist with required bot scopes, event subscription URL, and follow-up commands.
 
 ## Step 7: Onboard target repos
 
