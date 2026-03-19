@@ -203,6 +203,12 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 		log.Warn("failed to post ack comment", "error", err)
 	}
 
+	// Look up existing preview record for data reuse
+	existing, _ := s.repo.FindByRepoPR(ctx, req.RepoOwner, req.RepoName, req.PRNumber)
+	if err != nil {
+		log.Warn("failed to post ack comment", "error", err)
+	}
+
 	lockKey := fmt.Sprintf("%s/%s#%d", req.RepoOwner, req.RepoName, req.PRNumber)
 	mu := s.getLock(lockKey)
 	mu.Lock()
