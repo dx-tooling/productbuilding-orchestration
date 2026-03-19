@@ -915,6 +915,25 @@ cat > "$DEPLOY_DIR/.mise/tasks/deploy" <<'EOF'
 #MISE description="Deploy latest code to the EC2 instance"
 set -euo pipefail
 
+echo "==> Loading local AWS credentials for infra outputs..."
+eval "$($(dirname "$0")/../lib/load-secrets)"
+
+echo "==> Syncing infrastructure values into server .env..."
+INFRA_DIR="$(dirname "$0")/../../infrastructure-mgmt/main"
+ZONE_ID=$(cd "$INFRA_DIR" && tofu output -raw route53_zone_id 2>/dev/null || true)
+DOMAIN=$(cd "$INFRA_DIR" && tofu output -raw preview_domain 2>/dev/null || true)
+
+if [[ -n "$ZONE_ID" || -n "$DOMAIN" ]]; then
+  mise run ssh -- "sudo bash -c '
+    ENV_FILE=/opt/orchestrator/repo/.env
+    [[ -n \"$ZONE_ID\" ]] && sed -i /^AWS_HOSTED_ZONE_ID=/d \"\$ENV_FILE\" && echo \"AWS_HOSTED_ZONE_ID=$ZONE_ID\" >> \"\$ENV_FILE\"
+    [[ -n \"$DOMAIN\" ]] && sed -i /^PREVIEW_DOMAIN=/d \"\$ENV_FILE\" && echo \"PREVIEW_DOMAIN=$DOMAIN\" >> \"\$ENV_FILE\"
+    echo \"Synced infra values in \$ENV_FILE\"
+  '"
+else
+  echo "Warning: Could not read infra outputs, skipping .env infra sync."
+fi
+
 echo "==> Pulling latest code on server..."
 mise run ssh -- "cd /opt/orchestrator/repo && git pull"
 
@@ -1939,6 +1958,12 @@ The orchestrator loads `targets.json` at startup. If you added a new target but 
 ### Health check failing
 
 The orchestrator polls `https://pr-{number}-preview.{domain}{healthcheck_path}` until it gets a 200 response or the timeout expires.
+
+### Let's Encrypt certificate not issued
+
+If Traefik logs show `NoSuchHostedZone` or ACME DNS challenge failures, the server `.env` may contain an outdated `AWS_HOSTED_ZONE_ID` (for example after Route53 zone recreation).
+
+**Fix:** run `mise run deploy` again. The deploy task now re-syncs `AWS_HOSTED_ZONE_ID` and `PREVIEW_DOMAIN` from OpenTofu outputs before restarting Traefik.
 
 ### Slack notifications not arriving
 
