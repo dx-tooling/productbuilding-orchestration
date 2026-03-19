@@ -79,7 +79,9 @@ func (r *ComposeRunner) GenerateOverride(workDir, serviceName, routerName, host 
 }
 
 // Up builds and starts a compose project.
-func (r *ComposeRunner) Up(ctx context.Context, projectName, workDir string, composeFiles []string) error {
+// extraEnv is a list of "KEY=VALUE" strings added to the subprocess environment,
+// making them available for variable substitution in compose files.
+func (r *ComposeRunner) Up(ctx context.Context, projectName, workDir string, composeFiles []string, extraEnv []string) error {
 	args := []string{"compose", "-p", projectName}
 	for _, f := range composeFiles {
 		args = append(args, "-f", f)
@@ -90,6 +92,9 @@ func (r *ComposeRunner) Up(ctx context.Context, projectName, workDir string, com
 
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = workDir
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("compose up failed: %w\n%s", err, output)

@@ -14,7 +14,7 @@ type SourceDownloader interface {
 // ComposeManager manages Docker Compose projects for preview deployments.
 type ComposeManager interface {
 	GenerateOverride(workDir, serviceName, routerName, host string, port int) (overridePath string, err error)
-	Up(ctx context.Context, projectName, workDir string, composeFiles []string) error
+	Up(ctx context.Context, projectName, workDir string, composeFiles []string, extraEnv []string) error
 	Down(ctx context.Context, projectName, workDir string) error
 	// Exec runs a command in a running container
 	Exec(ctx context.Context, projectName, serviceName, workDir string, command []string) error

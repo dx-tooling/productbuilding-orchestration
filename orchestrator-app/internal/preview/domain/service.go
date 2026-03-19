@@ -54,6 +54,10 @@ type Service struct {
 	// Per-PR mutex to prevent concurrent operations on the same preview.
 	locksMu sync.Mutex
 	locks   map[string]*sync.Mutex
+
+	// Track ongoing deployments to allow cancellation
+	deploymentsMu sync.Mutex
+	deployments   map[string]context.CancelFunc
 }
 
 func NewService(
@@ -78,6 +82,7 @@ func NewService(
 		previewDomain:  previewDomain,
 		workspaceDir:   workspaceDir,
 		locks:          make(map[string]*sync.Mutex),
+		deployments:    make(map[string]context.CancelFunc),
 	}
 }
 
@@ -88,6 +93,37 @@ func (s *Service) getLock(key string) *sync.Mutex {
 		s.locks[key] = &sync.Mutex{}
 	}
 	return s.locks[key]
+}
+
+// getDeploymentKey returns a unique key for a PR deployment
+func (s *Service) getDeploymentKey(req DeployRequest) string {
+	return fmt.Sprintf("%s/%s#%d", req.RepoOwner, req.RepoName, req.PRNumber)
+}
+
+// cancelExistingDeployment cancels any ongoing deployment for the same PR
+func (s *Service) cancelExistingDeployment(key string) {
+	s.deploymentsMu.Lock()
+	defer s.deploymentsMu.Unlock()
+
+	if cancel, exists := s.deployments[key]; exists && cancel != nil {
+		slog.Info("cancelling existing deployment", "key", key)
+		cancel()
+		delete(s.deployments, key)
+	}
+}
+
+// registerDeployment tracks a new deployment with its cancel function
+func (s *Service) registerDeployment(key string, cancel context.CancelFunc) {
+	s.deploymentsMu.Lock()
+	defer s.deploymentsMu.Unlock()
+	s.deployments[key] = cancel
+}
+
+// unregisterDeployment removes a deployment from tracking
+func (s *Service) unregisterDeployment(key string) {
+	s.deploymentsMu.Lock()
+	defer s.deploymentsMu.Unlock()
+	delete(s.deployments, key)
 }
 
 func (s *Service) ListPreviews(ctx context.Context) ([]Preview, error) {
@@ -172,6 +208,14 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	mu.Lock()
 	defer mu.Unlock()
 
+	// Cancel any existing deployment for this PR and create new cancellable context
+	deploymentKey := s.getDeploymentKey(req)
+	s.cancelExistingDeployment(deploymentKey)
+	deployCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	s.registerDeployment(deploymentKey, cancel)
+	defer s.unregisterDeployment(deploymentKey)
+
 	log.Info("starting preview deployment")
 
 	// 2. Upsert preview record (pending)
@@ -187,33 +231,33 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	// Store the new comment ID on the preview
 	preview.GithubCommentID = commentID
 
-	if err := s.repo.Upsert(ctx, preview); err != nil {
+	if err := s.repo.Upsert(deployCtx, preview); err != nil {
 		log.Error("failed to upsert preview", "error", err)
 		return
 	}
 
 	// 3. Download source (status: building)
-	s.setStatus(ctx, &preview, StatusBuilding, log)
-	s.updateComment(ctx, &preview,
+	s.setStatus(deployCtx, &preview, StatusBuilding, log)
+	s.updateComment(deployCtx, &preview,
 		progressComment("Preview deploying", meta, 0, "Downloading source..."),
 		pat, log)
 
 	workDir := filepath.Join(s.workspaceDir, preview.ComposeProject)
 	_ = os.RemoveAll(workDir)
 	if err := os.MkdirAll(workDir, 0755); err != nil {
-		s.failPreview(ctx, &preview, stepDownload, "workspace", fmt.Sprintf("create workspace: %v", err), pat, log)
+		s.failPreview(deployCtx, &preview, stepDownload, "workspace", fmt.Sprintf("create workspace: %v", err), pat, log)
 		return
 	}
 
-	if _, err := s.downloader.DownloadSource(ctx, req.RepoOwner, req.RepoName, req.HeadSHA, pat, workDir); err != nil {
-		s.failPreview(ctx, &preview, stepDownload, "download", fmt.Sprintf("download source: %v", err), pat, log)
+	if _, err := s.downloader.DownloadSource(deployCtx, req.RepoOwner, req.RepoName, req.HeadSHA, pat, workDir); err != nil {
+		s.failPreview(deployCtx, &preview, stepDownload, "download", fmt.Sprintf("download source: %v", err), pat, log)
 		return
 	}
 
 	// 4. Parse preview contract
 	contract, err := ParseContract(workDir)
 	if err != nil {
-		s.failPreview(ctx, &preview, stepDownload+1, "contract", fmt.Sprintf("parse contract: %v", err), pat, log)
+		s.failPreview(deployCtx, &preview, stepDownload+1, "contract", fmt.Sprintf("parse contract: %v", err), pat, log)
 		return
 	}
 
@@ -227,37 +271,44 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	composeFile := contract.Compose.File
 	overridePath, err := s.compose.GenerateOverride(workDir, contract.Compose.Service, routerName, host, contract.Runtime.InternalPort)
 	if err != nil {
-		s.failPreview(ctx, &preview, stepDownload+1, "override", fmt.Sprintf("generate override: %v", err), pat, log)
+		s.failPreview(deployCtx, &preview, stepDownload+1, "override", fmt.Sprintf("generate override: %v", err), pat, log)
 		return
 	}
 	overrideRel, _ := filepath.Rel(workDir, overridePath)
 
 	// 6. Docker compose up (status: deploying)
-	s.setStatus(ctx, &preview, StatusDeploying, log)
-	s.updateComment(ctx, &preview,
+	s.setStatus(deployCtx, &preview, StatusDeploying, log)
+	s.updateComment(deployCtx, &preview,
 		progressComment("Preview deploying", meta, stepDownload+1, "Building and starting containers..."),
 		pat, log)
 
-	if err := s.compose.Up(ctx, preview.ComposeProject, workDir, []string{composeFile, overrideRel}); err != nil {
-		s.failPreview(ctx, &preview, stepContainers, "compose_up", fmt.Sprintf("compose up: %v", err), pat, log)
+	// Expose the PAT as GITHUB_TOKEN so repo contracts can use it for authenticated
+	// operations (e.g. composer, npm, go modules). The contract decides how to use it.
+	var composeEnv []string
+	if pat != "" {
+		composeEnv = []string{"GITHUB_TOKEN=" + pat}
+	}
+
+	if err := s.compose.Up(deployCtx, preview.ComposeProject, workDir, []string{composeFile, overrideRel}, composeEnv); err != nil {
+		s.failPreview(deployCtx, &preview, stepContainers, "compose_up", fmt.Sprintf("compose up: %v", err), pat, log)
 		return
 	}
 
 	// 7. Run database migrations (if configured)
 	if contract.Database != nil && contract.Database.MigrateCommand != "" {
-		s.updateComment(ctx, &preview,
+		s.updateComment(deployCtx, &preview,
 			progressComment("Preview deploying", meta, stepContainers+1, "Running database migrations..."),
 			pat, log)
 
 		migrateCmd := []string{"sh", "-c", contract.Database.MigrateCommand}
-		if err := s.compose.Exec(ctx, preview.ComposeProject, contract.Compose.Service, workDir, migrateCmd); err != nil {
-			s.failPreview(ctx, &preview, stepMigrations, "migrations", fmt.Sprintf("database migrations: %v", err), pat, log)
+		if err := s.compose.Exec(deployCtx, preview.ComposeProject, contract.Compose.Service, workDir, migrateCmd); err != nil {
+			s.failPreview(deployCtx, &preview, stepMigrations, "migrations", fmt.Sprintf("database migrations: %v", err), pat, log)
 			return
 		}
 	}
 
 	// 8. Health check
-	s.updateComment(ctx, &preview,
+	s.updateComment(deployCtx, &preview,
 		progressComment("Preview deploying", meta, stepMigrations+1, "Running health check..."),
 		pat, log)
 
@@ -265,25 +316,25 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	healthURL := fmt.Sprintf("http://%s:%d%s", containerName, contract.Runtime.InternalPort, contract.Runtime.HealthcheckPath)
 	timeout := time.Duration(contract.Runtime.StartupTimeout) * time.Second
 
-	if err := s.healthChecker.WaitForHealthy(ctx, healthURL, timeout); err != nil {
-		s.failPreview(ctx, &preview, stepHealth, "healthcheck", fmt.Sprintf("health check: %v", err), pat, log)
+	if err := s.healthChecker.WaitForHealthy(deployCtx, healthURL, timeout); err != nil {
+		s.failPreview(deployCtx, &preview, stepHealth, "healthcheck", fmt.Sprintf("health check: %v", err), pat, log)
 		return
 	}
 
 	// 8. TLS certificate readiness (wait for Traefik to provision via Let's Encrypt)
-	s.updateComment(ctx, &preview,
+	s.updateComment(deployCtx, &preview,
 		progressComment("Preview deploying", meta, stepHealth+1, "Waiting for TLS certificate..."),
 		pat, log)
 
 	tlsTimeout := 120 * time.Second
-	if err := s.healthChecker.WaitForTLS(ctx, meta.PreviewURL, tlsTimeout); err != nil {
-		s.failPreview(ctx, &preview, stepTLS, "tls", fmt.Sprintf("TLS readiness: %v", err), pat, log)
+	if err := s.healthChecker.WaitForTLS(deployCtx, meta.PreviewURL, tlsTimeout); err != nil {
+		s.failPreview(deployCtx, &preview, stepTLS, "tls", fmt.Sprintf("TLS readiness: %v", err), pat, log)
 		return
 	}
 
 	// 9. Run post-deploy commands (if configured)
 	if len(contract.PostDeployCommands) > 0 {
-		s.updateComment(ctx, &preview,
+		s.updateComment(deployCtx, &preview,
 			progressComment("Preview deploying", meta, stepTLS+1, "Running post-deploy commands..."),
 			pat, log)
 
@@ -301,8 +352,8 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 			log.Info("running post-deploy command", "service", service, "cmd", cmd.Command, "desc", desc)
 
 			execCmd := []string{"sh", "-c", cmd.Command}
-			if err := s.compose.Exec(ctx, preview.ComposeProject, service, workDir, execCmd); err != nil {
-				s.failPreview(ctx, &preview, stepPostDeploy, "post_deploy", fmt.Sprintf("post-deploy command '%s': %v", desc, err), pat, log)
+			if err := s.compose.Exec(deployCtx, preview.ComposeProject, service, workDir, execCmd); err != nil {
+				s.failPreview(deployCtx, &preview, stepPostDeploy, "post_deploy", fmt.Sprintf("post-deploy command '%s': %v", desc, err), pat, log)
 				return
 			}
 		}
@@ -313,15 +364,15 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	preview.LastSuccessfulSHA = req.HeadSHA
 	preview.ErrorStage = ""
 	preview.ErrorMessage = ""
-	_ = s.repo.Update(ctx, preview)
+	_ = s.repo.Update(deployCtx, preview)
 
-	s.updateComment(ctx, &preview,
+	s.updateComment(deployCtx, &preview,
 		progressComment("Preview ready", meta, numSteps, fmt.Sprintf("**[%s](%s)**  •  %s", meta.PreviewURL, meta.PreviewURL, meta.logsLink())),
 		pat, log)
 
 	// Notify Slack that preview is ready
 	if target, ok := s.targetRegistry.Get(preview.RepoOwner, preview.RepoName); ok {
-		s.notifySlack(ctx, &preview, slackfacade.EventPRReady, "ready", target)
+		s.notifySlack(deployCtx, &preview, slackfacade.EventPRReady, "ready", target)
 	}
 
 	log.Info("preview ready", "url", preview.PreviewURL)
