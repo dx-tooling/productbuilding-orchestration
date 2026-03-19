@@ -244,7 +244,7 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	}
 
 	// 7. Run database migrations (if configured)
-	if contract.Database.MigrateCommand != "" {
+	if contract.Database != nil && contract.Database.MigrateCommand != "" {
 		s.updateComment(ctx, &preview,
 			progressComment("Preview deploying", meta, stepContainers+1, "Running database migrations..."),
 			pat, log)
