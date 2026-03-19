@@ -1721,6 +1721,21 @@ if [[ ! -f "$TFVARS_FILE" ]]; then
     echo '}' >> "$TFVARS_FILE"
 fi
 
+# Self-heal malformed files (e.g. missing top-level "targets = {").
+if ! awk 'BEGIN{ok=0} /^[[:space:]]*targets[[:space:]]*=[[:space:]]*\{[[:space:]]*$/ {ok=1} END{exit ok?0:1}' "$TFVARS_FILE"; then
+    cp "$TFVARS_FILE" "$TFVARS_FILE.bak.pre-normalize"
+    {
+        echo 'targets = {'
+        awk '1' "$TFVARS_FILE"
+    } > "$TFVARS_FILE.tmp"
+    mv "$TFVARS_FILE.tmp" "$TFVARS_FILE"
+fi
+
+# Ensure the file ends with a closing brace for the top-level map.
+if ! awk 'NF{last=$0} END{exit(last ~ /^[[:space:]]*}[[:space:]]*$/ ? 0 : 1)}' "$TFVARS_FILE"; then
+    echo "}" >> "$TFVARS_FILE"
+fi
+
 if [[ "$ENABLE_SLACK" =~ ^[Yy]$ ]]; then
   ENTRY="  \"$REPO_NAME\" = {
     repo_owner        = \"$REPO_OWNER\"
