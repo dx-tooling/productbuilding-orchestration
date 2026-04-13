@@ -12,8 +12,9 @@ race conditions it solves.
 
 | File | Role |
 |---|---|
-| `facade/dto.go` | `NotificationEvent` struct, event type constants, classification helpers (`IsPR`, `IsComment`) |
-| `domain/notifier.go` | `Notifier` — buffering, debouncing, thread resolution, Slack posting |
+| `facade/dto.go` | `NotificationEvent` struct, event type constants (including `EventCIFailed`/`EventCIPassed`), classification helpers (`IsPR`, `IsComment`) |
+| `domain/notifier.go` | `Notifier` — buffering, debouncing, thread resolution, feature context assembly, Slack posting |
+| `domain/message_generator.go` | `MessageGenerator` — produces conversational PM-style messages from events + feature snapshots |
 | `domain/models.go` | `SlackThread` — the GitHub-issue-to-Slack-thread mapping persisted in SQLite |
 
 ## Event lifecycle
@@ -180,6 +181,49 @@ event ──> lookup ───┬─ direct match ──────────
 - **retryWait** (default 5s) is an internal field, overridable in tests to
   avoid slow sleeps.
 
+## Feature context assembly
+
+Before formatting any message, `flush()` assembles a `FeatureSnapshot` via the
+`FeatureContextAssembler` interface:
+
+```
+flush() {
+    // Determine reference event
+    refEvent = status or first comment
+
+    // Assemble context
+    if refEvent.IsPR() → assembler.ForPR(owner, repo, pat, prNumber, linkedIssue)
+    else               → assembler.ForIssue(owner, repo, pat, issueNumber)
+
+    // Format messages using snapshot
+    parentMsg  = messages.ParentMessage(event, snapshot)
+    replyMsg   = messages.EventMessage(event, snapshot)
+}
+```
+
+The assembler is a soft dependency — if it returns an error, `snap` is nil and
+the `MessageGenerator` falls back to event-only data. If the assembler itself is
+nil (e.g. in tests without feature context), all messages still render correctly.
+
+The `FeatureSnapshot` contains:
+- **Issue state**: number, title, body, open/closed
+- **PR state**: number, author, additions/deletions, head SHA, merge status
+- **CI status**: aggregate (passing/failing/pending/unknown) + per-check details
+- **Preview state**: status (ready/building/failed) + URL
+
+## Message generation
+
+The `MessageGenerator` replaced the old `formatParentMessage`/`formatEventMessage`
+functions. Key differences from the old format:
+
+- Body text uses blockquotes (`> text`) instead of code blocks (`` ``` ``)
+- No thread separators (`─────`)
+- Conversational tone ("The preview is live — you can try it out here")
+- Context-aware: merged PRs mention CI status, closed issues mention the addressing PR
+- CI events (`EventCIFailed`/`EventCIPassed`) format check run names and failure summaries
+
+Both `ParentMessage` and `EventMessage` accept a `*FeatureSnapshot` that can be nil.
+
 ## Test matrix
 
 | Test | What it verifies |
@@ -196,3 +240,8 @@ event ──> lookup ───┬─ direct match ──────────
 | `Flush_RetriesForNewIssue_FindsThreadMapping` | Status retry finds thread created by concurrent handler |
 | `PRLinksToIssueThread_CreatesNewMapping` | Linked-issue fallback + PR mapping |
 | `MultiplePRsPerIssue_AllLinkToSameThread` | Multiple PRs on same issue share thread |
+| `NewThread_UsesMessageGenerator` | New thread uses conversational format (blockquotes, no separators) |
+| `ExistingThread_UsesMessageGenerator` | Thread reply uses new comment format |
+| `AssemblerError_FallsBackGracefully` | Assembler failure still posts message (nil snapshot fallback) |
+| `PREvent_PassesLinkedIssueToAssembler` | Assembler receives correct linkedIssue from PR event |
+| `IssueEvent_CallsForIssue` | Issue events route to ForIssue (not ForPR) |

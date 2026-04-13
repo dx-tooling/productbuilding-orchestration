@@ -93,6 +93,8 @@ Each vertical under `internal/` is organized into sub-packages:
 
 Verticals communicate through interfaces defined in `domain/`. The dependency graph is wired explicitly in `main.go`.
 
+One cross-cutting package sits outside the vertical structure: `internal/featurecontext/` aggregates issue, PR, CI, and preview state into a single `FeatureSnapshot` used by both the Slack notifier (to enrich notifications) and the agent handler (to provide pre-loaded context).
+
 ### Database
 
 SQLite with three tables:
@@ -238,5 +240,6 @@ All configuration is via environment variables, loaded with [caarlos0/env](https
 
 ## Further reading
 
-- [CLAUDE.md](CLAUDE.md) — AI assistant context for working with this codebase
-- [orchestrator-app/internal/slack/domain/NOTIFIER.md](orchestrator-app/internal/slack/domain/NOTIFIER.md) — Two-lane notification buffer design
+- [AGENTS.md](AGENTS.md) — Project guide for AI coding agents working in this codebase
+- [TESTING.md](TESTING.md) — Testing guide: mock conventions, httptest patterns, preview service integration tests
+- [orchestrator-app/internal/slack/domain/NOTIFIER.md](orchestrator-app/internal/slack/domain/NOTIFIER.md) — Two-lane notification buffer design, feature context assembly, message generation

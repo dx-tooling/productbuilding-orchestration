@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Project guide for AI coding agents working in this repository.
 
 ## What This Is
 
@@ -46,13 +46,14 @@ The Go app (`orchestrator-app/`) is organized into independent verticals, each w
 - **agent** — LLM agent loop: prompt assembly -> LLM API call -> tool execution -> response. Multi-provider backend (Anthropic, OpenAI-compatible) with optional fallback. Tools wrap GitHub and Slack actions via adapter pattern.
 - **preview** — Preview lifecycle: clone repo, run Docker Compose, track status in SQLite, health-check, report back on PR.
 - **github** — Webhook receiver: parses/validates incoming PR/issue events, triggers preview or agent flows.
-- **slack** — Slack Events API handler, @mention routing to agent, notification debouncing, thread tracking.
+- **slack** — Slack Events API handler, @mention routing to agent, notification debouncing, thread tracking. See `internal/slack/domain/NOTIFIER.md` for the two-lane event buffer design.
 - **dashboard** — Simple web dashboard.
 - **platform** — Cross-cutting: config (env vars via `caarlos0/env`), SQLite database + migrations, logging (slog), HTTP server with graceful shutdown, target registry.
+- **featurecontext** — Cross-cutting context assembly: gathers issue state, PR details, CI check runs, and preview status into a single `FeatureSnapshot`. Used by the Slack notifier (to enrich notifications) and the Slack handler (to inject feature state into agent context). Adapters in `adapters.go` bridge the GitHub client and preview repository to consumer-side interfaces.
 
 ### Dependency graph (main.go)
 
-`cmd/server/main.go` constructs the full dependency graph explicitly — no DI framework. Config -> DB -> migrations -> registry -> infra implementations -> domain services -> HTTP handlers -> server.
+`cmd/server/main.go` constructs the full dependency graph explicitly — no DI framework. Config -> DB -> migrations -> registry -> feature assembler -> infra implementations -> domain services -> HTTP handlers -> server.
 
 ### Infrastructure
 
@@ -65,7 +66,24 @@ SQLite with migrations in `orchestrator-app/migrations/` (embedded via `embed.FS
 
 ### Key patterns
 
-- **Adapter pattern**: GitHub/Slack clients wrapped for agent tool consumption (`github_adapter.go`, `slack_adapter.go`).
-- **Interface-based testing**: Repositories and external clients are interfaces; tests use mocks.
-- **Option functions**: `AgentOption` for optional agent configuration.
+- **Adapter pattern**: GitHub/Slack clients wrapped for agent tool consumption (`github_adapter.go`, `slack_adapter.go`). The `featurecontext` package uses the same pattern — `GitHubIssueAdapter`, `GitHubPRAdapter`, etc. bridge the GitHub client to consumer-defined interfaces.
+- **Interface-based testing**: Every external dependency is behind a domain interface. Tests inject mock implementations — no real Docker, GitHub API, Slack API, or network calls needed. See `TESTING.md` for patterns and conventions.
+- **Functional options**: `ServiceOption` on preview service (e.g. `WithSlackThreadChecker`), `HealthCheckerOption` on health checker (e.g. `WithPollInterval`, `WithHTTPClient`), `AgentOption` on agent configuration. Follow this pattern when adding optional dependencies.
+- **baseURL injection**: Both the GitHub client and Slack client have a `baseURL` field that defaults to the production API URL but can be overridden for httptest servers in tests. All HTTP methods must use `c.apiURL()` (GitHub) or `c.baseURL` (Slack) — never hardcode API URLs.
 - **Reconciliation on startup**: Self-healing after re-provisioning.
+
+## Testing
+
+Every external system integration is fully testable through deterministic mocks. No test in this codebase requires Docker, network access, or real API calls.
+
+See `TESTING.md` for the complete guide: mock conventions, httptest patterns, how to write integration tests for the preview service, and how to add tests for new features.
+
+### Quality gate
+
+All three checks must pass before committing:
+
+```sh
+mise run app-tests    # Unit tests with race detector
+mise run app-quality  # go vet + gofmt
+mise run app-build    # Compile check
+```
