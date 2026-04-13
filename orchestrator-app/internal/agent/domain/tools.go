@@ -106,12 +106,22 @@ type ToolExecutor interface {
 	Execute(ctx context.Context, call ToolCall, target targets.TargetConfig) (string, error)
 	Effects() SideEffects
 	ResetEffects()
+	SetOnIssueCreated(fn func(owner, repo string, number int, title string))
 }
 
 // GitHubToolExecutor executes agent tools against the GitHub API.
 type GitHubToolExecutor struct {
-	github  GitHubClient
-	effects SideEffects
+	github         GitHubClient
+	effects        SideEffects
+	onIssueCreated func(owner, repo string, number int, title string)
+}
+
+// SetOnIssueCreated registers a callback that fires immediately after a GitHub
+// issue is created, before the agent loop continues. This enables the Slack
+// handler to save the thread mapping early, avoiding the race where the GitHub
+// webhook arrives before the agent finishes.
+func (e *GitHubToolExecutor) SetOnIssueCreated(fn func(owner, repo string, number int, title string)) {
+	e.onIssueCreated = fn
 }
 
 // NewToolExecutor creates a new tool executor backed by the given GitHub client.
@@ -178,6 +188,9 @@ func (e *GitHubToolExecutor) createIssue(ctx context.Context, argsJSON string, t
 	}
 
 	e.effects.CreatedIssues = append(e.effects.CreatedIssues, CreatedIssue{Number: number, Title: args.Title})
+	if e.onIssueCreated != nil {
+		e.onIssueCreated(target.RepoOwner, target.RepoName, number, args.Title)
+	}
 
 	return fmt.Sprintf("Created issue #%d: %s\nURL: https://github.com/%s/%s/issues/%d",
 		number, args.Title, target.RepoOwner, target.RepoName, number), nil

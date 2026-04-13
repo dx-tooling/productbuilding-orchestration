@@ -52,7 +52,8 @@ type NotificationEvent struct {
 // IsPR returns true if the event is related to a pull request
 func (e NotificationEvent) IsPR() bool {
 	switch e.Type {
-	case EventPROpened, EventPRReady, EventPRFailed, EventPRMerged, EventPRClosed:
+	case EventPROpened, EventPRReady, EventPRFailed, EventPRMerged, EventPRClosed,
+		EventCIFailed, EventCIPassed:
 		return true
 	default:
 		return false

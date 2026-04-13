@@ -242,36 +242,44 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 	// Add :eyes: reaction as thinking indicator
 	_ = h.slackClient.AddReaction(ctx, target.SlackBotToken, event.Channel, event.Ts, "eyes")
 
-	// Look up existing thread mapping for linked issue context
-	var linkedIssue *agent.IssueContext
+	// Look up thread once (used for both linked issue and feature context)
+	var thread *domain.SlackThread
 	threadTs := event.ThreadTs
 	if threadTs != "" {
-		if thread, err := h.threadFinder.FindThreadBySlackTs(ctx, threadTs); err == nil && thread != nil {
-			linkedIssue = &agent.IssueContext{
-				Number: thread.GithubIssueID,
-				Title:  "", // Will be fetched by agent if needed
-				State:  "",
-			}
-			if thread.GithubPRID > 0 {
-				linkedIssue.Number = thread.GithubPRID
-			}
+		thread, _ = h.threadFinder.FindThreadBySlackTs(ctx, threadTs)
+	}
+
+	// Use thread for linked issue
+	var linkedIssue *agent.IssueContext
+	if thread != nil {
+		linkedIssue = &agent.IssueContext{
+			Number: thread.GithubIssueID,
+			Title:  "", // Will be fetched by agent if needed
+			State:  "",
+		}
+		if thread.GithubPRID > 0 {
+			linkedIssue.Number = thread.GithubPRID
 		}
 	}
 
-	// Assemble feature context for enriching agent with current state
+	// Use same thread for feature context
 	var featureSummary string
-	if h.featureAssembler != nil && threadTs != "" {
-		if thread, err := h.threadFinder.FindThreadBySlackTs(ctx, threadTs); err == nil && thread != nil {
-			var snap *featurecontext.FeatureSnapshot
-			if thread.GithubPRID > 0 {
-				snap, _ = h.featureAssembler.ForPR(ctx, target.RepoOwner, target.RepoName, target.GitHubPAT, thread.GithubPRID, thread.GithubIssueID)
-			} else if thread.GithubIssueID > 0 {
-				snap, _ = h.featureAssembler.ForIssue(ctx, target.RepoOwner, target.RepoName, target.GitHubPAT, thread.GithubIssueID)
-			}
-			if snap != nil {
-				featureSummary = FormatFeatureSummary(snap)
-			}
+	if h.featureAssembler != nil && thread != nil {
+		var snap *featurecontext.FeatureSnapshot
+		if thread.GithubPRID > 0 {
+			snap, _ = h.featureAssembler.ForPR(ctx, target.RepoOwner, target.RepoName, target.GitHubPAT, thread.GithubPRID, thread.GithubIssueID)
+		} else if thread.GithubIssueID > 0 {
+			snap, _ = h.featureAssembler.ForIssue(ctx, target.RepoOwner, target.RepoName, target.GitHubPAT, thread.GithubIssueID)
 		}
+		if snap != nil {
+			featureSummary = FormatFeatureSummary(snap)
+		}
+	}
+
+	// Determine the thread timestamp to use for thread mappings
+	replyTs := event.Ts // top-level mention → start new thread
+	if event.ThreadTs != "" {
+		replyTs = event.ThreadTs // in-thread mention → reply in existing thread
 	}
 
 	// Build agent request
@@ -285,6 +293,18 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 		Target:         target,
 		LinkedIssue:    linkedIssue,
 		FeatureSummary: featureSummary,
+		OnIssueCreated: func(owner, repo string, number int, title string) {
+			thread, err := domain.NewSlackThread(owner, repo, number, 0, event.Channel, replyTs)
+			if err != nil {
+				slog.Warn("failed to create early thread mapping", "error", err)
+				return
+			}
+			if err := h.threadSaver.SaveThread(ctx, thread); err != nil {
+				slog.Warn("failed to save early thread mapping", "error", err, "issue", number)
+			} else {
+				slog.Info("saved early thread mapping", "issue", number, "thread_ts", replyTs)
+			}
+		},
 	}
 
 	// Attach trace to context for recording
@@ -340,10 +360,6 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 	if err != nil {
 		slog.Error("agent error", "error", err, "channel", event.Channel)
 		_ = h.slackClient.AddReaction(ctx, target.SlackBotToken, event.Channel, event.Ts, "x")
-		replyTs := event.Ts
-		if event.ThreadTs != "" {
-			replyTs = event.ThreadTs
-		}
 		if err := h.slackClient.PostToThread(ctx, target.SlackBotToken, event.Channel, replyTs,
 			domain.MessageBlock{Text: userFacingErrorMessage(err)}); err != nil {
 			slog.Error("failed to post error reply", "error", err, "channel", event.Channel, "thread_ts", replyTs)
@@ -352,12 +368,6 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 	}
 
 	_ = h.slackClient.AddReaction(ctx, target.SlackBotToken, event.Channel, event.Ts, "white_check_mark")
-
-	// Post response as thread reply
-	replyTs := event.Ts // top-level mention → start new thread
-	if event.ThreadTs != "" {
-		replyTs = event.ThreadTs // in-thread mention → reply in existing thread
-	}
 
 	// Save thread mappings FIRST so the notifier can find them when the
 	// GitHub webhook fires (race: webhook may arrive before agent returns).

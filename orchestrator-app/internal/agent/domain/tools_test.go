@@ -734,3 +734,80 @@ func TestToolDefinitions_Count(t *testing.T) {
 		t.Errorf("expected 14 tool definitions, got %d", len(defs))
 	}
 }
+
+func TestToolExecutor_CreateIssue_FiresCallback(t *testing.T) {
+	gh := &mockGitHubClient{createIssueResult: 42}
+	exec := NewToolExecutor(gh)
+
+	var callbackOwner, callbackRepo, callbackTitle string
+	var callbackNumber int
+	exec.SetOnIssueCreated(func(owner, repo string, number int, title string) {
+		callbackOwner = owner
+		callbackRepo = repo
+		callbackNumber = number
+		callbackTitle = title
+	})
+
+	_, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "create_github_issue",
+			Arguments: `{"title":"Bug fix","body":"Fix the login"}`,
+		},
+	}, testTarget)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if callbackOwner != "acme" {
+		t.Errorf("callback owner = %q, want %q", callbackOwner, "acme")
+	}
+	if callbackRepo != "widgets" {
+		t.Errorf("callback repo = %q, want %q", callbackRepo, "widgets")
+	}
+	if callbackNumber != 42 {
+		t.Errorf("callback number = %d, want %d", callbackNumber, 42)
+	}
+	if callbackTitle != "Bug fix" {
+		t.Errorf("callback title = %q, want %q", callbackTitle, "Bug fix")
+	}
+}
+
+func TestToolExecutor_CreateIssue_NilCallback_NoPanic(t *testing.T) {
+	gh := &mockGitHubClient{createIssueResult: 42}
+	exec := NewToolExecutor(gh)
+	// Don't set callback
+
+	_, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "create_github_issue",
+			Arguments: `{"title":"Bug fix","body":"Fix the login"}`,
+		},
+	}, testTarget)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestToolExecutor_SetOnIssueCreated(t *testing.T) {
+	gh := &mockGitHubClient{}
+	exec := NewToolExecutor(gh)
+
+	called := false
+	exec.SetOnIssueCreated(func(_, _ string, _ int, _ string) {
+		called = true
+	})
+
+	// The function should be stored — verify by creating an issue
+	gh.createIssueResult = 1
+	exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "create_github_issue",
+			Arguments: `{"title":"Test","body":"Test"}`,
+		},
+	}, testTarget)
+
+	if !called {
+		t.Error("SetOnIssueCreated callback was not stored/called")
+	}
+}

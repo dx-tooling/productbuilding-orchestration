@@ -32,6 +32,7 @@ type RunRequest struct {
 	LinkedIssue    *IssueContext
 	ThreadMessages []ThreadMessage // Pre-fetched thread context; if set, specialist skips fetching
 	FeatureSummary string          // Pre-formatted feature context summary for LLM
+	OnIssueCreated func(owner, repo string, number int, title string)
 }
 
 // RunResponse is returned after the agent completes.

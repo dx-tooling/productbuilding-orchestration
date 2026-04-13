@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
-	"strings"
 	"sync"
 	"time"
 
@@ -144,7 +143,12 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 			if refEvent.IsPR() {
 				snap, _ = n.assembler.ForPR(ctx, refEvent.RepoOwner, refEvent.RepoName, target.GitHubPAT, refEvent.IssueNumber, refEvent.LinkedIssueNumber)
 			} else {
-				snap, _ = n.assembler.ForIssue(ctx, refEvent.RepoOwner, refEvent.RepoName, target.GitHubPAT, refEvent.IssueNumber)
+				// Check if thread has a linked PR (e.g., issue closed after PR merged)
+				if t, _ := n.repository.FindThreadByNumber(ctx, refEvent.RepoOwner, refEvent.RepoName, refEvent.IssueNumber); t != nil && t.GithubPRID > 0 {
+					snap, _ = n.assembler.ForPR(ctx, refEvent.RepoOwner, refEvent.RepoName, target.GitHubPAT, t.GithubPRID, refEvent.IssueNumber)
+				} else {
+					snap, _ = n.assembler.ForIssue(ctx, refEvent.RepoOwner, refEvent.RepoName, target.GitHubPAT, refEvent.IssueNumber)
+				}
 			}
 		}
 	}
@@ -204,66 +208,80 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 			}
 		}
 
-		newThread := false
-		if thread == nil {
-			newThread = true
-			parentMsg := n.messages.ParentMessage(*event, snap)
-			parentTs, err := n.client.PostMessage(ctx, target.SlackBotToken, target.SlackChannel, parentMsg)
-			if err != nil {
-				slog.Warn("failed to create slack thread",
-					"error", err,
-					"channel", target.SlackChannel,
-					"repo", event.RepoOwner+"/"+event.RepoName,
-					"issue", event.IssueNumber,
-				)
-				return
-			}
-
-			var issueID, prID int
-			if event.IsPR() {
-				prID = event.IssueNumber
-			} else {
-				issueID = event.IssueNumber
-			}
-
-			thread = &SlackThread{
-				ID:            uuid.New().String(),
-				RepoOwner:     event.RepoOwner,
-				RepoName:      event.RepoName,
-				GithubIssueID: issueID,
-				GithubPRID:    prID,
-				SlackChannel:  target.SlackChannel,
-				SlackThreadTs: parentTs,
-				SlackParentTs: parentTs,
-				ThreadType:    event.ThreadType(),
-			}
-
-			if err := n.repository.SaveThread(ctx, thread); err != nil {
-				slog.Warn("failed to save slack thread", "error", err)
-			}
-
-			n.mu.Lock()
-			n.reactions[parentTs] = event.Emoji
-			n.mu.Unlock()
-		} else if event.IsPR() && thread.GithubPRID == 0 && thread.GithubIssueID == event.IssueNumber {
-			// Same GitHub number was first seen as an issue, now arriving as a PR
-			// (PRs are issues in GitHub and share the numbering space).
-			thread.GithubPRID = event.IssueNumber
-			thread.ThreadType = "pull_request"
-			if err := n.repository.SaveThread(ctx, thread); err != nil {
-				slog.Warn("failed to update thread type", "error", err)
-			}
+		// Only EventIssueOpened and EventPROpened should create new threads.
+		// Other events (CI, preview, close, merge) are only meaningful as
+		// replies in existing threads — skip them if no thread exists.
+		if thread == nil && event.Type != slackfacade.EventIssueOpened && event.Type != slackfacade.EventPROpened {
+			slog.Info("skipping notification: no existing thread for non-creation event",
+				"event", event.Type,
+				"repo", event.RepoOwner+"/"+event.RepoName,
+				"number", event.IssueNumber,
+			)
+			p.status = nil
 		}
 
-		// Post status update to thread (only if not the first message creating the thread)
-		if !newThread {
-			updateMsg := n.messages.EventMessage(*event, snap)
-			if err := n.client.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, updateMsg); err != nil {
-				slog.Warn("failed to post to slack thread",
-					"error", err,
-					"channel", thread.SlackChannel,
-					"thread", thread.SlackThreadTs,
-				)
+		if p.status != nil {
+			newThread := false
+			if thread == nil {
+				newThread = true
+				parentMsg := n.messages.ParentMessage(*event, snap)
+				parentTs, err := n.client.PostMessage(ctx, target.SlackBotToken, target.SlackChannel, parentMsg)
+				if err != nil {
+					slog.Warn("failed to create slack thread",
+						"error", err,
+						"channel", target.SlackChannel,
+						"repo", event.RepoOwner+"/"+event.RepoName,
+						"issue", event.IssueNumber,
+					)
+					return
+				}
+
+				var issueID, prID int
+				if event.IsPR() {
+					prID = event.IssueNumber
+				} else {
+					issueID = event.IssueNumber
+				}
+
+				thread = &SlackThread{
+					ID:            uuid.New().String(),
+					RepoOwner:     event.RepoOwner,
+					RepoName:      event.RepoName,
+					GithubIssueID: issueID,
+					GithubPRID:    prID,
+					SlackChannel:  target.SlackChannel,
+					SlackThreadTs: parentTs,
+					SlackParentTs: parentTs,
+					ThreadType:    event.ThreadType(),
+				}
+
+				if err := n.repository.SaveThread(ctx, thread); err != nil {
+					slog.Warn("failed to save slack thread", "error", err)
+				}
+
+				n.mu.Lock()
+				n.reactions[parentTs] = event.Emoji
+				n.mu.Unlock()
+			} else if event.IsPR() && thread.GithubPRID == 0 && thread.GithubIssueID == event.IssueNumber {
+				// Same GitHub number was first seen as an issue, now arriving as a PR
+				// (PRs are issues in GitHub and share the numbering space).
+				thread.GithubPRID = event.IssueNumber
+				thread.ThreadType = "pull_request"
+				if err := n.repository.SaveThread(ctx, thread); err != nil {
+					slog.Warn("failed to update thread type", "error", err)
+				}
+			}
+
+			// Post status update to thread (only if not the first message creating the thread)
+			if !newThread {
+				updateMsg := n.messages.EventMessage(*event, snap)
+				if err := n.client.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, updateMsg); err != nil {
+					slog.Warn("failed to post to slack thread",
+						"error", err,
+						"channel", thread.SlackChannel,
+						"thread", thread.SlackThreadTs,
+					)
+				}
 			}
 		}
 	}
@@ -319,7 +337,7 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
-// Regex patterns for sanitizeForCodeBlock (compiled once at package level)
+// Regex patterns for sanitizeBody (compiled once at package level).
 var (
 	htmlTagRe       = regexp.MustCompile(`<[^>]*>`)
 	mdImageRe       = regexp.MustCompile(`!\[([^\]]*)\]\([^)]*\)`)
@@ -330,21 +348,3 @@ var (
 	tripleTickRe    = regexp.MustCompile("```[a-zA-Z]*")
 	excessNewlineRe = regexp.MustCompile(`\n{3,}`)
 )
-
-// sanitizeForCodeBlock transforms raw GitHub markdown into plain text
-// suitable for display inside a Slack code block.
-func sanitizeForCodeBlock(s string) string {
-	s = htmlTagRe.ReplaceAllString(s, "")
-	s = strings.ReplaceAll(s, "&nbsp;", " ")
-	s = strings.ReplaceAll(s, "&amp;", "&")
-	s = strings.ReplaceAll(s, "&lt;", "<")
-	s = strings.ReplaceAll(s, "&gt;", ">")
-	s = mdImageRe.ReplaceAllString(s, "$1")
-	s = mdLinkRe.ReplaceAllString(s, "$1")
-	s = headingMarkerRe.ReplaceAllString(s, "")
-	s = boldRe.ReplaceAllString(s, "$1")
-	s = italicRe.ReplaceAllString(s, "$1")
-	s = tripleTickRe.ReplaceAllString(s, "")
-	s = excessNewlineRe.ReplaceAllString(s, "\n\n")
-	return strings.TrimSpace(s)
-}

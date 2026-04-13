@@ -17,6 +17,7 @@ import (
 	"time"
 
 	agent "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/agent/domain"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/featurecontext"
 	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
 	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/domain"
 )
@@ -54,15 +55,26 @@ func (m *mockAgentRunner) getLastReq() agent.RunRequest {
 }
 
 type mockThreadFinder struct {
-	thread *domain.SlackThread
-	err    error
+	mu        sync.Mutex
+	thread    *domain.SlackThread
+	err       error
+	callCount int
 }
 
 func (m *mockThreadFinder) FindThreadBySlackTs(_ context.Context, _ string) (*domain.SlackThread, error) {
+	m.mu.Lock()
+	m.callCount++
+	m.mu.Unlock()
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.thread, nil
+}
+
+func (m *mockThreadFinder) getCallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.callCount
 }
 
 type mockThreadSaver struct {
@@ -193,6 +205,52 @@ func (m *mockTargetRegistry) GetByChannelName(_ string) (targets.TargetConfig, b
 
 func (m *mockTargetRegistry) AnyBotToken() string {
 	return m.botToken
+}
+
+// callbackInvokingRunner is an AgentRunner that invokes OnIssueCreated during Run()
+type callbackInvokingRunner struct {
+	mu                sync.Mutex
+	response          agent.RunResponse
+	called            bool
+	lastReq           agent.RunRequest
+	savedBeforeReturn bool
+	threadSaver       *mockThreadSaver
+}
+
+func (r *callbackInvokingRunner) Run(_ context.Context, req agent.RunRequest) (agent.RunResponse, error) {
+	r.mu.Lock()
+	r.called = true
+	r.lastReq = req
+	r.mu.Unlock()
+
+	// Simulate tool execution invoking the callback during Run
+	if req.OnIssueCreated != nil {
+		req.OnIssueCreated("example-org", "playground", 42, "New bug")
+	}
+
+	// Check if the thread was saved during the callback
+	saved := r.threadSaver.getSaved()
+	r.mu.Lock()
+	r.savedBeforeReturn = len(saved) > 0
+	r.mu.Unlock()
+
+	return r.response, nil
+}
+
+func (r *callbackInvokingRunner) wasCalled() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.called
+}
+
+type mockFeatureAssembler struct{}
+
+func (m *mockFeatureAssembler) ForPR(_ context.Context, _, _, _ string, _, _ int) (*featurecontext.FeatureSnapshot, error) {
+	return nil, nil
+}
+
+func (m *mockFeatureAssembler) ForIssue(_ context.Context, _, _, _ string, _ int) (*featurecontext.FeatureSnapshot, error) {
+	return nil, nil
 }
 
 // --- Helpers ---
@@ -1065,5 +1123,161 @@ func TestHandleEvent_UnregisteredChannel_Ignored(t *testing.T) {
 
 	if agentRunner.wasCalled() {
 		t.Error("Agent should not be called for unregistered channel")
+	}
+}
+
+func TestHandler_AppMention_ThreadLookedUpOnce(t *testing.T) {
+	agentRunner := &mockAgentRunner{
+		response: agent.RunResponse{Text: "Done"},
+	}
+	threadFinder := &mockThreadFinder{
+		thread: &domain.SlackThread{
+			GithubIssueID: 42,
+			GithubPRID:    52,
+			RepoOwner:     "example-org",
+			RepoName:      "playground",
+		},
+	}
+	slackClient := &mockSlackClient{
+		userName:    "Alice",
+		channelName: "productbuilding-playground",
+	}
+	registry := &mockTargetRegistry{
+		channelConfig: defaultTarget(),
+		channelFound:  true,
+		botToken:      "xoxb-test",
+	}
+
+	h := NewHandler(agentRunner, threadFinder, &mockThreadSaver{}, &mockConversationRecorder{}, slackClient, registry, testSigningSecret, "")
+	// Also set feature assembler to exercise the second lookup path
+	h.SetFeatureAssembler(&mockFeatureAssembler{})
+
+	payload := map[string]interface{}{
+		"type": "event_callback",
+		"event": map[string]interface{}{
+			"type":      "app_mention",
+			"user":      "U123",
+			"text":      "<@UBOT> what's the status?",
+			"thread_ts": "parent-ts-123",
+			"channel":   "C0PRODUCT",
+			"ts":        "1234567890.123456",
+		},
+		"authorizations": []map[string]string{{"user_id": "UBOT"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := makeSignedRequest(t, body)
+	rec := httptest.NewRecorder()
+
+	h.HandleEvent(rec, req)
+	time.Sleep(200 * time.Millisecond)
+
+	count := threadFinder.getCallCount()
+	if count != 1 {
+		t.Errorf("Expected FindThreadBySlackTs called exactly 1 time, got %d", count)
+	}
+}
+
+func TestHandler_AppMention_IssueCreated_SavesThreadImmediately(t *testing.T) {
+	threadSaver := &mockThreadSaver{}
+	slackClient := &mockSlackClient{
+		userName:    "Alice",
+		channelName: "productbuilding-playground",
+	}
+	registry := &mockTargetRegistry{
+		channelConfig: defaultTarget(),
+		channelFound:  true,
+		botToken:      "xoxb-test",
+	}
+
+	// Agent runner that synchronously invokes OnIssueCreated within Run()
+	agentRunner := &mockAgentRunner{}
+	agentRunner.response = agent.RunResponse{
+		Text: "Created issue #42",
+		SideEffects: agent.SideEffects{
+			CreatedIssues: []agent.CreatedIssue{{Number: 42, Title: "New bug"}},
+		},
+	}
+
+	runner := &callbackInvokingRunner{
+		response:    agentRunner.response,
+		threadSaver: threadSaver,
+	}
+
+	h := NewHandler(runner, &mockThreadFinder{}, threadSaver, &mockConversationRecorder{}, slackClient, registry, testSigningSecret, "")
+
+	payload := map[string]interface{}{
+		"type": "event_callback",
+		"event": map[string]interface{}{
+			"type":    "app_mention",
+			"user":    "U123",
+			"text":    "<@UBOT> create a bug report",
+			"channel": "C0PRODUCT",
+			"ts":      "1234567890.123456",
+		},
+		"authorizations": []map[string]string{{"user_id": "UBOT"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := makeSignedRequest(t, body)
+	rec := httptest.NewRecorder()
+
+	h.HandleEvent(rec, req)
+	time.Sleep(200 * time.Millisecond)
+
+	runner.mu.Lock()
+	savedBefore := runner.savedBeforeReturn
+	runner.mu.Unlock()
+
+	if !savedBefore {
+		t.Error("Expected thread to be saved BEFORE Run() returns (via OnIssueCreated callback)")
+	}
+}
+
+func TestHandler_AppMention_NoThread_StillWorks(t *testing.T) {
+	agentRunner := &mockAgentRunner{
+		response: agent.RunResponse{Text: "I can help!"},
+	}
+	threadFinder := &mockThreadFinder{thread: nil}
+	slackClient := &mockSlackClient{
+		userName:    "Alice",
+		channelName: "productbuilding-playground",
+	}
+	registry := &mockTargetRegistry{
+		channelConfig: defaultTarget(),
+		channelFound:  true,
+		botToken:      "xoxb-test",
+	}
+
+	h := NewHandler(agentRunner, threadFinder, &mockThreadSaver{}, &mockConversationRecorder{}, slackClient, registry, testSigningSecret, "")
+	h.SetFeatureAssembler(&mockFeatureAssembler{})
+
+	payload := map[string]interface{}{
+		"type": "event_callback",
+		"event": map[string]interface{}{
+			"type":      "app_mention",
+			"user":      "U123",
+			"text":      "<@UBOT> hello",
+			"thread_ts": "parent-ts-123",
+			"channel":   "C0PRODUCT",
+			"ts":        "1234567890.123456",
+		},
+		"authorizations": []map[string]string{{"user_id": "UBOT"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := makeSignedRequest(t, body)
+	rec := httptest.NewRecorder()
+
+	h.HandleEvent(rec, req)
+	time.Sleep(200 * time.Millisecond)
+
+	if !agentRunner.wasCalled() {
+		t.Fatal("Expected agent to be called")
+	}
+
+	lastReq := agentRunner.getLastReq()
+	if lastReq.LinkedIssue != nil {
+		t.Errorf("Expected nil LinkedIssue when no thread, got %+v", lastReq.LinkedIssue)
+	}
+	if lastReq.FeatureSummary != "" {
+		t.Errorf("Expected empty FeatureSummary when no thread, got %q", lastReq.FeatureSummary)
 	}
 }

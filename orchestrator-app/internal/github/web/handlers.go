@@ -119,11 +119,13 @@ func (h *Handler) handlePullRequest(w http.ResponseWriter, r *http.Request, body
 		// Deploy/update preview asynchronously
 		go h.previewService.DeployPreview(context.Background(), req, target.GitHubPAT)
 	case "closed":
-		// Tear down preview asynchronously
 		go h.previewService.DeletePreview(context.Background(), req, target.GitHubPAT)
-		// Notify Slack about PR close
 		if h.notifier != nil {
-			go h.notifySlackPR(slackfacade.EventPRClosed, event, target)
+			eventType := slackfacade.EventPRClosed
+			if event.Merged {
+				eventType = slackfacade.EventPRMerged
+			}
+			go h.notifySlackPR(eventType, event, target)
 		}
 	default:
 		slog.Debug("ignoring PR action", "action", event.Action)

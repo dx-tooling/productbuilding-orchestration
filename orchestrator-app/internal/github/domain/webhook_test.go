@@ -118,6 +118,64 @@ func TestParsePREvent_ExtractsBodyTitleAuthor(t *testing.T) {
 	}
 }
 
+func TestParsePREvent_Merged(t *testing.T) {
+	payload := []byte(`{
+		"action": "closed",
+		"pull_request": {
+			"number": 42,
+			"merged": true,
+			"title": "Add feature",
+			"user": {"login": "alice"},
+			"head": {
+				"sha": "abc123",
+				"ref": "feature/test"
+			}
+		},
+		"repository": {
+			"owner": {"login": "example-org"},
+			"name": "my-app"
+		}
+	}`)
+
+	event, err := ParsePREvent(payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !event.Merged {
+		t.Error("Expected Merged to be true for merged PR")
+	}
+}
+
+func TestParsePREvent_ClosedNotMerged(t *testing.T) {
+	payload := []byte(`{
+		"action": "closed",
+		"pull_request": {
+			"number": 42,
+			"merged": false,
+			"title": "Abandoned PR",
+			"user": {"login": "alice"},
+			"head": {
+				"sha": "abc123",
+				"ref": "feature/test"
+			}
+		},
+		"repository": {
+			"owner": {"login": "example-org"},
+			"name": "my-app"
+		}
+	}`)
+
+	event, err := ParsePREvent(payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if event.Merged {
+		t.Error("Expected Merged to be false for closed-not-merged PR")
+	}
+}
+
 func TestExtractLinkedIssue(t *testing.T) {
 	tests := []struct {
 		name string

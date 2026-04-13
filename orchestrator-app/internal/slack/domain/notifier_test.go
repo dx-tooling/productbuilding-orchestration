@@ -787,66 +787,284 @@ func TestNotifier_PRWithLinkedIssue_FindsThreadWithoutRetrySleep(t *testing.T) {
 	}
 }
 
-func TestSanitizeForCodeBlock(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{
-			name:  "strips HTML tags",
-			input: "<p>Hello <b>world</b></p>",
-			want:  "Hello world",
-		},
-		{
-			name:  "converts markdown images to alt text",
-			input: "See ![screenshot](https://img.example.com/shot.png) here",
-			want:  "See screenshot here",
-		},
-		{
-			name:  "converts markdown links to text",
-			input: "Check [this PR](https://github.com/foo/bar/pull/1) out",
-			want:  "Check this PR out",
-		},
-		{
-			name:  "strips heading markers",
-			input: "### Summary\nSome text\n## Details\nMore text",
-			want:  "Summary\nSome text\nDetails\nMore text",
-		},
-		{
-			name:  "strips bold markers",
-			input: "This is **important** stuff",
-			want:  "This is important stuff",
-		},
-		{
-			name:  "removes triple backticks",
-			input: "```go\nfmt.Println(\"hi\")\n```",
-			want:  "fmt.Println(\"hi\")",
-		},
-		{
-			name:  "collapses excessive newlines",
-			input: "line1\n\n\n\n\nline2",
-			want:  "line1\n\nline2",
-		},
-		{
-			name:  "replaces HTML entities",
-			input: "opencode session&nbsp;&nbsp;|&nbsp;&nbsp;github run &amp; deploy &lt;v2&gt;",
-			want:  "opencode session  |  github run & deploy <v2>",
-		},
-		{
-			name:  "empty string",
-			input: "",
-			want:  "",
+func TestNotifier_IssueClosed_WithLinkedPR_UsesForPR(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	assembler := &mockAssembler{
+		snapshot: &featurecontext.FeatureSnapshot{
+			PR: &featurecontext.PRState{Number: 52, Merged: true},
 		},
 	}
+	notifier := NewNotifier(client, repo, debouncer, assembler)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := sanitizeForCodeBlock(tt.input)
-			if got != tt.want {
-				t.Errorf("sanitizeForCodeBlock() = %q, want %q", got, tt.want)
-			}
-		})
+	target := targets.TargetConfig{
+		RepoOwner:     "example-org",
+		RepoName:      "test-repo",
+		GitHubPAT:     "ghp_test",
+		SlackChannel:  "#test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	// Pre-populate thread with GithubIssueID=42, GithubPRID=52
+	repo.SaveThread(context.Background(), &SlackThread{
+		ID:            "thread-id",
+		RepoOwner:     "example-org",
+		RepoName:      "test-repo",
+		GithubIssueID: 42,
+		GithubPRID:    52,
+		SlackChannel:  "#test",
+		SlackThreadTs: "thread-ts",
+		ThreadType:    "issue",
+	})
+
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventIssueClosed,
+		RepoOwner:   "example-org",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+	}
+
+	notifier.Notify(context.Background(), event, target)
+	debouncer.executeAll()
+
+	assembler.mu.Lock()
+	defer assembler.mu.Unlock()
+
+	if len(assembler.forPRCalls) != 1 {
+		t.Fatalf("Expected 1 ForPR call, got %d (forIssueCalls=%d)", len(assembler.forPRCalls), len(assembler.forIssueCalls))
+	}
+	call := assembler.forPRCalls[0]
+	if call.PRNumber != 52 {
+		t.Errorf("Expected ForPR with PRNumber=52, got %d", call.PRNumber)
+	}
+	if call.LinkedIssue != 42 {
+		t.Errorf("Expected ForPR with LinkedIssue=42, got %d", call.LinkedIssue)
+	}
+}
+
+func TestNotifier_IssueClosed_WithLinkedPR_MessageShowsPR(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	assembler := &mockAssembler{
+		snapshot: &featurecontext.FeatureSnapshot{
+			PR: &featurecontext.PRState{Number: 52, Merged: true, Title: "Implement feature"},
+		},
+	}
+	notifier := NewNotifier(client, repo, debouncer, assembler)
+
+	target := targets.TargetConfig{
+		RepoOwner:     "example-org",
+		RepoName:      "test-repo",
+		GitHubPAT:     "ghp_test",
+		SlackChannel:  "#test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	repo.SaveThread(context.Background(), &SlackThread{
+		ID:            "thread-id",
+		RepoOwner:     "example-org",
+		RepoName:      "test-repo",
+		GithubIssueID: 42,
+		GithubPRID:    52,
+		SlackChannel:  "#test",
+		SlackThreadTs: "thread-ts",
+		ThreadType:    "issue",
+	})
+
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventIssueClosed,
+		RepoOwner:   "example-org",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+	}
+
+	notifier.Notify(context.Background(), event, target)
+	debouncer.executeAll()
+
+	// Should have posted a message mentioning the PR
+	found := false
+	for _, msg := range client.postedMessages {
+		if strings.Contains(msg.Text, "merged") || strings.Contains(msg.Text, "#52") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		var texts []string
+		for _, msg := range client.postedMessages {
+			texts = append(texts, msg.Text)
+		}
+		t.Errorf("Expected message mentioning merged PR #52, got: %v", texts)
+	}
+}
+
+func TestNotifier_IssueClosed_NoLinkedPR_UsesForIssue(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	assembler := &mockAssembler{
+		snapshot: &featurecontext.FeatureSnapshot{},
+	}
+	notifier := NewNotifier(client, repo, debouncer, assembler)
+
+	target := targets.TargetConfig{
+		RepoOwner:     "example-org",
+		RepoName:      "test-repo",
+		GitHubPAT:     "ghp_test",
+		SlackChannel:  "#test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	// Thread with no linked PR
+	repo.SaveThread(context.Background(), &SlackThread{
+		ID:            "thread-id",
+		RepoOwner:     "example-org",
+		RepoName:      "test-repo",
+		GithubIssueID: 42,
+		GithubPRID:    0,
+		SlackChannel:  "#test",
+		SlackThreadTs: "thread-ts",
+		ThreadType:    "issue",
+	})
+
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventIssueClosed,
+		RepoOwner:   "example-org",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+	}
+
+	notifier.Notify(context.Background(), event, target)
+	debouncer.executeAll()
+
+	assembler.mu.Lock()
+	defer assembler.mu.Unlock()
+
+	if len(assembler.forIssueCalls) != 1 {
+		t.Fatalf("Expected 1 ForIssue call, got %d (forPRCalls=%d)", len(assembler.forIssueCalls), len(assembler.forPRCalls))
+	}
+	if len(assembler.forPRCalls) != 0 {
+		t.Errorf("Expected no ForPR calls, got %d", len(assembler.forPRCalls))
+	}
+}
+
+func TestNotifier_CIFailed_NoThread_SkipsNotification(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
+	notifier.retryWait = 10 * time.Millisecond
+
+	target := targets.TargetConfig{
+		RepoOwner:     "acme",
+		RepoName:      "widgets",
+		SlackChannel:  "#test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventCIFailed,
+		RepoOwner:   "acme",
+		RepoName:    "widgets",
+		IssueNumber: 10,
+	}
+
+	notifier.Notify(context.Background(), event, target)
+	debouncer.executeAll()
+
+	if len(client.postedMessages) != 0 {
+		t.Errorf("Expected no messages for CI event with no thread, got %d: %+v", len(client.postedMessages), client.postedMessages)
+	}
+}
+
+func TestNotifier_PreviewReady_NoThread_SkipsNotification(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
+	notifier.retryWait = 10 * time.Millisecond
+
+	target := targets.TargetConfig{
+		RepoOwner:     "acme",
+		RepoName:      "widgets",
+		SlackChannel:  "#test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventPRReady,
+		RepoOwner:   "acme",
+		RepoName:    "widgets",
+		IssueNumber: 10,
+	}
+
+	notifier.Notify(context.Background(), event, target)
+	debouncer.executeAll()
+
+	if len(client.postedMessages) != 0 {
+		t.Errorf("Expected no messages for preview event with no thread, got %d", len(client.postedMessages))
+	}
+}
+
+func TestNotifier_PRMerged_NoThread_SkipsNotification(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
+	notifier.retryWait = 10 * time.Millisecond
+
+	target := targets.TargetConfig{
+		RepoOwner:     "acme",
+		RepoName:      "widgets",
+		SlackChannel:  "#test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventPRMerged,
+		RepoOwner:   "acme",
+		RepoName:    "widgets",
+		IssueNumber: 10,
+	}
+
+	notifier.Notify(context.Background(), event, target)
+	debouncer.executeAll()
+
+	if len(client.postedMessages) != 0 {
+		t.Errorf("Expected no messages for merged event with no thread, got %d", len(client.postedMessages))
+	}
+}
+
+func TestNotifier_IssueOpened_NoThread_StillCreatesThread(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
+	notifier.retryWait = 10 * time.Millisecond
+
+	target := targets.TargetConfig{
+		RepoOwner:     "acme",
+		RepoName:      "widgets",
+		SlackChannel:  "#test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventIssueOpened,
+		RepoOwner:   "acme",
+		RepoName:    "widgets",
+		IssueNumber: 10,
+		Title:       "New issue",
+		Author:      "alice",
+	}
+
+	notifier.Notify(context.Background(), event, target)
+	debouncer.executeAll()
+
+	if len(client.postedMessages) != 1 {
+		t.Errorf("Expected 1 message for issue opened (creates thread), got %d", len(client.postedMessages))
 	}
 }
 
@@ -1047,6 +1265,8 @@ func TestNotifier_CommentBeforeLifecycle_SameBatch(t *testing.T) {
 
 func TestNotifier_StatusDedup_StillWorks(t *testing.T) {
 	// Multiple status events should be deduped (only latest survives).
+	// When PRReady overwrites PROpened via debounce, PRReady is a non-creation
+	// event with no existing thread — it is correctly skipped by the orphan guard.
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
@@ -1081,12 +1301,10 @@ func TestNotifier_StatusDedup_StillWorks(t *testing.T) {
 	notifier.Notify(context.Background(), event2, target)
 	debouncer.executeAll()
 
-	// PRReady overwrites PROpened; only 1 parent message created
-	if len(client.postedMessages) != 1 {
-		t.Fatalf("Expected 1 message (status dedup), got %d: %+v", len(client.postedMessages), client.postedMessages)
-	}
-	if !strings.Contains(client.postedMessages[0].Text, "#42") {
-		t.Errorf("Expected parent message with #42, got: %s", client.postedMessages[0].Text)
+	// PRReady overwrites PROpened; PRReady is a non-creation event with no
+	// existing thread, so it is correctly skipped (no orphan threads).
+	if len(client.postedMessages) != 0 {
+		t.Fatalf("Expected 0 messages (PRReady without thread is skipped), got %d: %+v", len(client.postedMessages), client.postedMessages)
 	}
 }
 
@@ -1222,6 +1440,7 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
 	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
+	notifier.retryWait = 10 * time.Millisecond
 
 	target := targets.TargetConfig{
 		RepoOwner:     "example-org",
@@ -1230,13 +1449,24 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 		SlackBotToken: "xoxb-test",
 	}
 
+	// Pre-populate thread so non-creation events have a thread to post to
+	repo.SaveThread(context.Background(), &SlackThread{
+		ID:            "format-test-thread",
+		RepoOwner:     "example-org",
+		RepoName:      "test-repo",
+		GithubPRID:    42,
+		SlackChannel:  "#productbuilding-test",
+		SlackThreadTs: "format-thread-ts",
+		ThreadType:    "pull_request",
+	})
+
 	tests := []struct {
 		name     string
 		event    slackfacade.NotificationEvent
 		contains string
 	}{
 		{
-			name: "PR ready creates parent (new thread)",
+			name: "PR ready posts to existing thread",
 			event: slackfacade.NotificationEvent{
 				Type:        slackfacade.EventPRReady,
 				RepoOwner:   "example-org",
@@ -1246,7 +1476,7 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 				PreviewURL:  "https://preview.example.com",
 				UserNote:    "Test with admin/admin",
 			},
-			contains: "#42",
+			contains: "preview is live",
 		},
 		{
 			name: "Preview failed",

@@ -39,6 +39,7 @@ type PREvent struct {
 	Title     string
 	Body      string
 	Author    string
+	Merged    bool
 }
 
 // webhookPayload mirrors the relevant fields of a GitHub PR webhook.
@@ -48,6 +49,7 @@ type webhookPayload struct {
 		Number int    `json:"number"`
 		Title  string `json:"title"`
 		Body   string `json:"body"`
+		Merged bool   `json:"merged"`
 		User   struct {
 			Login string `json:"login"`
 		} `json:"user"`
@@ -85,6 +87,7 @@ func ParsePREvent(payload []byte) (*PREvent, error) {
 		Title:     p.PullRequest.Title,
 		Body:      p.PullRequest.Body,
 		Author:    p.PullRequest.User.Login,
+		Merged:    p.PullRequest.Merged,
 	}, nil
 }
 

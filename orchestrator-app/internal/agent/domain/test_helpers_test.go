@@ -30,10 +30,11 @@ func (m *mockLLMClient) ChatCompletion(_ context.Context, req ChatRequest) (Chat
 
 // mockToolExecutor records calls and returns canned results.
 type mockToolExecutor struct {
-	results   map[string]string
-	effects   SideEffects
-	calls     []ToolCall
-	onExecute func(ToolCall) // optional callback to mutate effects on execution
+	results        map[string]string
+	effects        SideEffects
+	calls          []ToolCall
+	onExecute      func(ToolCall) // optional callback to mutate effects on execution
+	onIssueCreated func(owner, repo string, number int, title string)
 }
 
 func (m *mockToolExecutor) Execute(_ context.Context, call ToolCall, _ targets.TargetConfig) (string, error) {
@@ -53,6 +54,10 @@ func (m *mockToolExecutor) Effects() SideEffects {
 
 func (m *mockToolExecutor) ResetEffects() {
 	m.effects = SideEffects{}
+}
+
+func (m *mockToolExecutor) SetOnIssueCreated(fn func(owner, repo string, number int, title string)) {
+	m.onIssueCreated = fn
 }
 
 // mockSlackFetcher returns canned thread messages and counts calls.

@@ -513,3 +513,56 @@ func TestSpecialist_RerouteSignalPopulated(t *testing.T) {
 		t.Errorf("expected empty text after stripping reroute, got %q", result.Text)
 	}
 }
+
+func TestSpecialist_PassesOnIssueCreatedToTools(t *testing.T) {
+	// LLM makes a tool call that creates an issue, then returns text
+	llm := &mockLLMClient{
+		responses: []ChatResponse{
+			{
+				ToolCalls: []ToolCall{
+					{ID: "call_1", Type: "function", Function: FunctionCall{
+						Name: "create_github_issue", Arguments: `{"title":"New bug","body":"Details"}`,
+					}},
+				},
+				FinishReason: "tool_calls",
+			},
+			{Content: "Created the issue.", FinishReason: "stop"},
+		},
+	}
+
+	callbackFired := false
+	tools := &mockToolExecutor{
+		results: map[string]string{
+			"create_github_issue": "Created issue #42",
+		},
+	}
+	// Set onExecute after tools is declared to avoid reference issue
+	tools.onExecute = func(tc ToolCall) {
+		if tc.Function.Name == "create_github_issue" && tools.onIssueCreated != nil {
+			tools.onIssueCreated("acme", "widgets", 42, "New bug")
+			callbackFired = true
+		}
+	}
+
+	s := newTestSpecialist(llm, tools)
+
+	req := RunRequest{
+		ChannelID: "C123",
+		MessageTs: "123.456",
+		UserText:  "Create an issue",
+		UserName:  "alice",
+		Target:    agentTarget,
+		OnIssueCreated: func(owner, repo string, number int, title string) {
+			// This should be passed through to the tool executor
+		},
+	}
+
+	_, err := s.Run(context.Background(), req, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !callbackFired {
+		t.Error("Expected OnIssueCreated callback to be passed to tools and fired")
+	}
+}

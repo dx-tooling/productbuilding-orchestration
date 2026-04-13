@@ -52,6 +52,9 @@ type Specialist struct {
 // Run executes the specialist's focused agent loop.
 func (s *Specialist) Run(ctx context.Context, req RunRequest, prior *PriorStepContext) (SpecialistResult, error) {
 	s.tools.ResetEffects()
+	if req.OnIssueCreated != nil {
+		s.tools.SetOnIssueCreated(req.OnIssueCreated)
+	}
 
 	systemPrompt, err := s.renderPrompt(req)
 	if err != nil {

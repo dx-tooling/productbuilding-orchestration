@@ -282,6 +282,131 @@ func TestHandleWebhook_PROpened_PassesLinkedIssueNumber(t *testing.T) {
 	}
 }
 
+func TestHandleWebhook_PRMerged_NotifiesSlack(t *testing.T) {
+	previewSvc := &mockPreviewService{}
+	slackNotifier := &mockSlackNotifier{}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:     "example-org",
+			RepoName:      "playground",
+			GitHubPAT:     "github_pat_test",
+			WebhookSecret: "secret123",
+			SlackChannel:  "#productbuilding",
+			SlackBotToken: "xoxb-test",
+		},
+		found: true,
+	}
+
+	handler := NewHandler(registry, previewSvc, slackNotifier)
+
+	payload := map[string]interface{}{
+		"action": "closed",
+		"pull_request": map[string]interface{}{
+			"number": 17,
+			"title":  "Added tech/arch section",
+			"body":   "Fixes #16",
+			"merged": true,
+			"user":   map[string]string{"login": "alice"},
+			"head": map[string]string{
+				"sha": "c07b81d7",
+				"ref": "feature/homepage-tech",
+			},
+		},
+		"repository": map[string]interface{}{
+			"owner": map[string]string{"login": "example-org"},
+			"name":  "playground",
+		},
+	}
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(body))
+	req.Header.Set("X-GitHub-Event", "pull_request")
+	req.Header.Set("X-Hub-Signature-256", generateSignature(body, "secret123"))
+
+	rec := httptest.NewRecorder()
+	handler.HandleWebhook(rec, req)
+
+	time.Sleep(100 * time.Millisecond)
+
+	slackNotifier.mu.Lock()
+	defer slackNotifier.mu.Unlock()
+
+	if !slackNotifier.notifyCalled {
+		t.Fatal("Expected Slack notification for PR merged")
+	}
+
+	if len(slackNotifier.events) < 1 {
+		t.Fatal("Expected at least 1 Slack event")
+	}
+
+	event := slackNotifier.events[len(slackNotifier.events)-1]
+	if event.Type != facade.EventPRMerged {
+		t.Errorf("Expected event type %s, got %s", facade.EventPRMerged, event.Type)
+	}
+	if event.IssueNumber != 17 {
+		t.Errorf("Expected IssueNumber 17, got %d", event.IssueNumber)
+	}
+}
+
+func TestHandleWebhook_PRClosedNotMerged_NotifiesSlack(t *testing.T) {
+	previewSvc := &mockPreviewService{}
+	slackNotifier := &mockSlackNotifier{}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:     "example-org",
+			RepoName:      "playground",
+			GitHubPAT:     "github_pat_test",
+			WebhookSecret: "secret123",
+			SlackChannel:  "#productbuilding",
+			SlackBotToken: "xoxb-test",
+		},
+		found: true,
+	}
+
+	handler := NewHandler(registry, previewSvc, slackNotifier)
+
+	payload := map[string]interface{}{
+		"action": "closed",
+		"pull_request": map[string]interface{}{
+			"number": 17,
+			"title":  "Abandoned PR",
+			"body":   "",
+			"merged": false,
+			"user":   map[string]string{"login": "alice"},
+			"head": map[string]string{
+				"sha": "c07b81d7",
+				"ref": "feature/abandoned",
+			},
+		},
+		"repository": map[string]interface{}{
+			"owner": map[string]string{"login": "example-org"},
+			"name":  "playground",
+		},
+	}
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(body))
+	req.Header.Set("X-GitHub-Event", "pull_request")
+	req.Header.Set("X-Hub-Signature-256", generateSignature(body, "secret123"))
+
+	rec := httptest.NewRecorder()
+	handler.HandleWebhook(rec, req)
+
+	time.Sleep(100 * time.Millisecond)
+
+	slackNotifier.mu.Lock()
+	defer slackNotifier.mu.Unlock()
+
+	if !slackNotifier.notifyCalled {
+		t.Fatal("Expected Slack notification for PR closed")
+	}
+
+	event := slackNotifier.events[len(slackNotifier.events)-1]
+	if event.Type != facade.EventPRClosed {
+		t.Errorf("Expected event type %s, got %s", facade.EventPRClosed, event.Type)
+	}
+}
+
 func TestHandleWebhook_IssueCommentFromSlack_SkipsNotification(t *testing.T) {
 	previewSvc := &mockPreviewService{}
 	slackNotifier := &mockSlackNotifier{}

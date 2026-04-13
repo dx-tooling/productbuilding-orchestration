@@ -223,6 +223,19 @@ database:
 `
 }
 
+func contractWithUserNote() string {
+	return `version: 1
+compose:
+  file: docker-compose.yml
+  service: app
+runtime:
+  internal_port: 8080
+  healthcheck_path: /healthz
+  startup_timeout_seconds: 30
+user_facing_note: "Login with test@example.com"
+`
+}
+
 func contractWithPostDeploy() string {
 	return `version: 1
 compose:
@@ -422,6 +435,7 @@ type notifyCall struct {
 	RepoName  string
 	PRNumber  int
 	Status    string
+	UserNote  string
 }
 
 type mockSlackNotifier struct {
@@ -439,6 +453,7 @@ func (m *mockSlackNotifier) Notify(ctx context.Context, event slackfacade.Notifi
 		RepoName:  event.RepoName,
 		PRNumber:  event.IssueNumber,
 		Status:    event.Status,
+		UserNote:  event.UserNote,
 	})
 	return m.err
 }
@@ -875,4 +890,57 @@ func TestDeployPreview_ContextCancellation(t *testing.T) {
 		t.Errorf("expected 0 compose up calls after cancellation, got %d", len(d.compose.upCalls))
 	}
 	d.compose.mu.Unlock()
+}
+
+func TestDeployPreview_ReadyNotification_IncludesUserNote(t *testing.T) {
+	d := setupTestService(t)
+	d.dl.contractYAML = contractWithUserNote()
+	req := testDeployRequest()
+
+	d.svc.DeployPreview(context.Background(), req, "ghp_test")
+
+	d.notifier.mu.Lock()
+	defer d.notifier.mu.Unlock()
+
+	var readyCall *notifyCall
+	for i, call := range d.notifier.calls {
+		if call.EventType == slackfacade.EventPRReady {
+			readyCall = &d.notifier.calls[i]
+			break
+		}
+	}
+
+	if readyCall == nil {
+		t.Fatal("Expected EventPRReady notification")
+	}
+	if readyCall.UserNote != "Login with test@example.com" {
+		t.Errorf("Expected UserNote %q, got %q", "Login with test@example.com", readyCall.UserNote)
+	}
+}
+
+func TestDeployPreview_FailedNotification_NoUserNote(t *testing.T) {
+	d := setupTestService(t)
+	d.dl.contractYAML = contractWithUserNote()
+	d.health.healthyErr = fmt.Errorf("timed out")
+	req := testDeployRequest()
+
+	d.svc.DeployPreview(context.Background(), req, "ghp_test")
+
+	d.notifier.mu.Lock()
+	defer d.notifier.mu.Unlock()
+
+	var failedCall *notifyCall
+	for i, call := range d.notifier.calls {
+		if call.EventType == slackfacade.EventPRFailed {
+			failedCall = &d.notifier.calls[i]
+			break
+		}
+	}
+
+	if failedCall == nil {
+		t.Fatal("Expected EventPRFailed notification")
+	}
+	if failedCall.UserNote != "" {
+		t.Errorf("Expected empty UserNote on failure, got %q", failedCall.UserNote)
+	}
 }

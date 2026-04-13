@@ -120,6 +120,25 @@ func TestMessageGenerator_EventMessage_PreviewReady(t *testing.T) {
 	}
 }
 
+func TestMessageGenerator_EventMessage_PreviewReady_WithUserNote(t *testing.T) {
+	g := NewMessageGenerator()
+	event := slackfacade.NotificationEvent{
+		Type:       slackfacade.EventPRReady,
+		PreviewURL: "https://preview.example.com",
+		LogsURL:    "https://preview.example.com/logs",
+		UserNote:   "Use test@example.com",
+	}
+
+	msg := g.EventMessage(event, nil)
+
+	if !strings.Contains(msg.Text, "> *Note:*") {
+		t.Errorf("Expected '> *Note:*' in message, got: %s", msg.Text)
+	}
+	if !strings.Contains(msg.Text, "test@example.com") {
+		t.Errorf("Expected user note text in message, got: %s", msg.Text)
+	}
+}
+
 func TestMessageGenerator_EventMessage_PreviewFailed(t *testing.T) {
 	g := NewMessageGenerator()
 	event := slackfacade.NotificationEvent{

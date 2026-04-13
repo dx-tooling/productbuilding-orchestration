@@ -227,9 +227,6 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 
 	// Look up existing preview record for data reuse
 	existing, _ := s.repo.FindByRepoPR(ctx, req.RepoOwner, req.RepoName, req.PRNumber)
-	if err != nil {
-		log.Warn("failed to post ack comment", "error", err)
-	}
 
 	lockKey := fmt.Sprintf("%s/%s#%d", req.RepoOwner, req.RepoName, req.PRNumber)
 	mu := s.getLock(lockKey)
@@ -418,7 +415,7 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 
 	// Notify Slack that preview is ready
 	if target, ok := s.targetRegistry.Get(preview.RepoOwner, preview.RepoName); ok {
-		s.notifySlack(deployCtx, &preview, slackfacade.EventPRReady, "ready", target)
+		s.notifySlack(deployCtx, &preview, slackfacade.EventPRReady, "ready", target, meta.UserFacingNote)
 	}
 
 	log.Info("preview ready", "url", preview.PreviewURL)
@@ -490,7 +487,7 @@ func (s *Service) failPreview(ctx context.Context, p *Preview, completedSteps in
 
 	// Notify Slack that preview failed
 	if target, ok := s.targetRegistry.Get(p.RepoOwner, p.RepoName); ok {
-		s.notifySlack(ctx, p, slackfacade.EventPRFailed, stage+": "+message, target)
+		s.notifySlack(ctx, p, slackfacade.EventPRFailed, stage+": "+message, target, "")
 	}
 }
 
@@ -503,7 +500,7 @@ func (s *Service) updateComment(ctx context.Context, p *Preview, body, pat strin
 }
 
 // notifySlack sends a Slack notification for preview status updates
-func (s *Service) notifySlack(ctx context.Context, p *Preview, eventType slackfacade.EventType, status string, target targets.TargetConfig) {
+func (s *Service) notifySlack(ctx context.Context, p *Preview, eventType slackfacade.EventType, status string, target targets.TargetConfig, userNote string) {
 	if s.notifier == nil {
 		return
 	}
@@ -525,6 +522,7 @@ func (s *Service) notifySlack(ctx context.Context, p *Preview, eventType slackfa
 		PreviewURL:  p.PreviewURL,
 		LogsURL:     logsURL,
 		Author:      "ProductBuilder",
+		UserNote:    userNote,
 	}
 
 	if err := s.notifier.Notify(ctx, event, target); err != nil {
