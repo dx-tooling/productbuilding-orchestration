@@ -1,11 +1,18 @@
 package domain
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -291,5 +298,270 @@ func TestClient_CreateIssue_APIError(t *testing.T) {
 	_, err := client.CreateIssue(context.Background(), "owner", "repo", "Title", "Body", "pat")
 	if err == nil {
 		t.Error("CreateIssue() expected error for 422 response")
+	}
+}
+
+// createTestTarGz constructs a valid tar.gz in memory with entries prefixed by rootDir/.
+// This mimics GitHub's tarball format where everything is under "owner-repo-sha/".
+func createTestTarGz(t *testing.T, rootDir string, files map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+
+	for path, content := range files {
+		fullPath := rootDir + "/" + path
+		if err := tw.WriteHeader(&tar.Header{
+			Name:     fullPath,
+			Mode:     0644,
+			Size:     int64(len(content)),
+			Typeflag: tar.TypeReg,
+		}); err != nil {
+			t.Fatalf("write tar header: %v", err)
+		}
+		if _, err := tw.Write([]byte(content)); err != nil {
+			t.Fatalf("write tar content: %v", err)
+		}
+	}
+
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar writer: %v", err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatalf("close gzip writer: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestClient_DownloadSource_Success(t *testing.T) {
+	tarball := createTestTarGz(t, "acme-widgets-abc1234", map[string]string{
+		"main.go":     "package main",
+		"README.md":   "# Hello",
+		"sub/file.go": "package sub",
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			t.Errorf("Expected GET, got %s", r.Method)
+		}
+		if r.URL.Path != "/repos/acme/widgets/tarball/abc1234f" {
+			t.Errorf("Expected path /repos/acme/widgets/tarball/abc1234f, got %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer ghp_test123" {
+			t.Errorf("Expected Authorization Bearer ghp_test123, got %s", r.Header.Get("Authorization"))
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write(tarball)
+	}))
+	defer server.Close()
+
+	client := &Client{httpClient: &http.Client{}, baseURL: server.URL}
+	destDir := t.TempDir()
+
+	result, err := client.DownloadSource(context.Background(), "acme", "widgets", "abc1234f", "ghp_test123", destDir)
+	if err != nil {
+		t.Fatalf("DownloadSource() error = %v", err)
+	}
+	if result != destDir {
+		t.Errorf("DownloadSource() result = %q, want %q", result, destDir)
+	}
+
+	// Verify files were extracted with root directory stripped
+	for _, path := range []string{"main.go", "README.md", "sub/file.go"} {
+		fullPath := filepath.Join(destDir, path)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			t.Errorf("Expected extracted file %s to exist", path)
+		}
+	}
+
+	// Verify content
+	content, err := os.ReadFile(filepath.Join(destDir, "main.go"))
+	if err != nil {
+		t.Fatalf("ReadFile error = %v", err)
+	}
+	if string(content) != "package main" {
+		t.Errorf("main.go content = %q, want %q", string(content), "package main")
+	}
+}
+
+func TestClient_DownloadSource_NotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+	defer server.Close()
+
+	client := &Client{httpClient: &http.Client{}, baseURL: server.URL}
+
+	_, err := client.DownloadSource(context.Background(), "acme", "widgets", "deadbeef", "ghp_test", t.TempDir())
+	if err == nil {
+		t.Error("DownloadSource() expected error for 404 response")
+	}
+}
+
+func TestClient_CreateComment_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("Expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/repos/acme/widgets/issues/10/comments" {
+			t.Errorf("Expected path /repos/acme/widgets/issues/10/comments, got %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer ghp_test123" {
+			t.Errorf("Expected auth header, got %s", r.Header.Get("Authorization"))
+		}
+
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]string
+		json.Unmarshal(body, &payload)
+		if payload["body"] != "Preview deploying" {
+			t.Errorf("Expected body 'Preview deploying', got %q", payload["body"])
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{"id": 999})
+	}))
+	defer server.Close()
+
+	client := &Client{httpClient: &http.Client{}, baseURL: server.URL}
+
+	id, err := client.CreateComment(context.Background(), "acme", "widgets", 10, "Preview deploying", "ghp_test123")
+	if err != nil {
+		t.Fatalf("CreateComment() error = %v", err)
+	}
+	if id != 999 {
+		t.Errorf("CreateComment() id = %d, want 999", id)
+	}
+}
+
+func TestClient_CreateComment_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"message":"Forbidden"}`))
+	}))
+	defer server.Close()
+
+	client := &Client{httpClient: &http.Client{}, baseURL: server.URL}
+
+	_, err := client.CreateComment(context.Background(), "acme", "widgets", 10, "body", "ghp_test")
+	if err == nil {
+		t.Error("CreateComment() expected error for 403 response")
+	}
+}
+
+func TestClient_UpdateComment_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "PATCH" {
+			t.Errorf("Expected PATCH, got %s", r.Method)
+		}
+		if r.URL.Path != "/repos/acme/widgets/issues/comments/999" {
+			t.Errorf("Expected path /repos/acme/widgets/issues/comments/999, got %s", r.URL.Path)
+		}
+
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]string
+		json.Unmarshal(body, &payload)
+		if payload["body"] != "Updated text" {
+			t.Errorf("Expected body 'Updated text', got %q", payload["body"])
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := &Client{httpClient: &http.Client{}, baseURL: server.URL}
+
+	err := client.UpdateComment(context.Background(), "acme", "widgets", 999, "Updated text", "ghp_test123")
+	if err != nil {
+		t.Fatalf("UpdateComment() error = %v", err)
+	}
+}
+
+func TestClient_UpdateComment_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+	defer server.Close()
+
+	client := &Client{httpClient: &http.Client{}, baseURL: server.URL}
+
+	err := client.UpdateComment(context.Background(), "acme", "widgets", 999, "body", "ghp_test")
+	if err == nil {
+		t.Error("UpdateComment() expected error for 404 response")
+	}
+}
+
+func TestClient_DeleteComment_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "DELETE" {
+			t.Errorf("Expected DELETE, got %s", r.Method)
+		}
+		if r.URL.Path != "/repos/acme/widgets/issues/comments/999" {
+			t.Errorf("Expected path /repos/acme/widgets/issues/comments/999, got %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client := &Client{httpClient: &http.Client{}, baseURL: server.URL}
+
+	err := client.DeleteComment(context.Background(), "acme", "widgets", 999, "ghp_test123")
+	if err != nil {
+		t.Fatalf("DeleteComment() error = %v", err)
+	}
+}
+
+func TestClient_DeleteComment_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	client := &Client{httpClient: &http.Client{}, baseURL: server.URL}
+
+	err := client.DeleteComment(context.Background(), "acme", "widgets", 999, "ghp_test")
+	if err == nil {
+		t.Error("DeleteComment() expected error for 403 response")
+	}
+}
+
+func TestClient_DeleteAllBotComments_FindsAndDeletesMarked(t *testing.T) {
+	var deleteCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/comments"):
+			// List comments: 2 with marker, 1 without
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode([]map[string]interface{}{
+				{"id": 100, "body": "<!-- productbuilding-orchestrator -->\nPreview ready", "user": map[string]string{"login": "bot", "type": "Bot"}},
+				{"id": 200, "body": "Nice work!", "user": map[string]string{"login": "alice", "type": "User"}},
+				{"id": 300, "body": "<!-- productbuilding-orchestrator -->\nPreview failed", "user": map[string]string{"login": "bot", "type": "Bot"}},
+			})
+
+		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/issues/comments/"):
+			deleteCount.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+
+		default:
+			t.Errorf("Unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	client := &Client{httpClient: &http.Client{}, baseURL: server.URL}
+
+	err := client.DeleteAllBotComments(context.Background(), "acme", "widgets", 10, "ghp_test123")
+	if err != nil {
+		t.Fatalf("DeleteAllBotComments() error = %v", err)
+	}
+
+	// Should delete exactly 2 comments (the ones with the marker)
+	if deleteCount.Load() != 2 {
+		t.Errorf("Expected 2 delete calls, got %d", deleteCount.Load())
 	}
 }

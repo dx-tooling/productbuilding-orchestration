@@ -30,6 +30,12 @@ func NewRegistry(channelPrefix string) *Registry {
 	return &Registry{targets: make(map[string]TargetConfig), channelPrefix: channelPrefix}
 }
 
+// Register adds a target configuration to the registry programmatically.
+func (r *Registry) Register(tc TargetConfig) {
+	key := tc.RepoOwner + "/" + tc.RepoName
+	r.targets[key] = tc
+}
+
 // Get returns the config for a target repo, if registered.
 func (r *Registry) Get(repoOwner, repoName string) (TargetConfig, bool) {
 	key := repoOwner + "/" + repoName

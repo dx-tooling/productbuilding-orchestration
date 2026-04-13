@@ -11,27 +11,53 @@ import (
 
 // HealthChecker polls endpoints until they respond successfully.
 type HealthChecker struct {
-	httpClient *http.Client
-	// tlsClient uses the default TLS config (validates certificates).
-	tlsClient *http.Client
+	httpClient   *http.Client
+	tlsClient    *http.Client
+	pollInterval time.Duration
 }
 
-func NewHealthChecker() *HealthChecker {
-	return &HealthChecker{
-		httpClient: &http.Client{Timeout: 5 * time.Second},
+// HealthCheckerOption configures optional HealthChecker settings.
+type HealthCheckerOption func(*HealthChecker)
+
+// WithPollInterval overrides the default 3-second poll interval.
+func WithPollInterval(d time.Duration) HealthCheckerOption {
+	return func(h *HealthChecker) { h.pollInterval = d }
+}
+
+// WithHTTPClient overrides the default HTTP client used for health checks.
+func WithHTTPClient(c *http.Client) HealthCheckerOption {
+	return func(h *HealthChecker) { h.httpClient = c }
+}
+
+// WithTLSClient overrides the default TLS client used for certificate checks.
+func WithTLSClient(c *http.Client) HealthCheckerOption {
+	return func(h *HealthChecker) { h.tlsClient = c }
+}
+
+func NewHealthChecker(opts ...HealthCheckerOption) *HealthChecker {
+	h := &HealthChecker{
+		httpClient:   &http.Client{Timeout: 5 * time.Second},
+		pollInterval: 3 * time.Second,
 		tlsClient: &http.Client{
 			Timeout: 5 * time.Second,
-			// Default transport validates TLS certificates.
-			// A TLS handshake failure (self-signed/not-yet-provisioned)
-			// surfaces as an error from client.Get.
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{},
+			},
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // WaitForHealthy polls the given URL until it returns 2xx/3xx or the timeout expires.
 func (h *HealthChecker) WaitForHealthy(ctx context.Context, url string, timeout time.Duration) error {
 	deadline := time.After(timeout)
-	ticker := time.NewTicker(3 * time.Second)
+	ticker := time.NewTicker(h.pollInterval)
 	defer ticker.Stop()
 
 	slog.Info("waiting for health check", "url", url, "timeout", timeout)
@@ -63,7 +89,7 @@ func (h *HealthChecker) WaitForHealthy(ctx context.Context, url string, timeout 
 // self-signed cert while the Let's Encrypt DNS-01 challenge is still in progress.
 func (h *HealthChecker) WaitForTLS(ctx context.Context, url string, timeout time.Duration) error {
 	deadline := time.After(timeout)
-	ticker := time.NewTicker(3 * time.Second)
+	ticker := time.NewTicker(h.pollInterval)
 	defer ticker.Stop()
 
 	slog.Info("waiting for valid TLS certificate", "url", url, "timeout", timeout)
@@ -75,7 +101,7 @@ func (h *HealthChecker) WaitForTLS(ctx context.Context, url string, timeout time
 		case <-deadline:
 			return fmt.Errorf("TLS readiness timed out after %s", timeout)
 		case <-ticker.C:
-			if err := checkTLS(url); err != nil {
+			if err := h.checkTLS(url); err != nil {
 				slog.Debug("TLS not ready", "url", url, "error", err)
 				continue
 			}
@@ -87,20 +113,8 @@ func (h *HealthChecker) WaitForTLS(ctx context.Context, url string, timeout time
 
 // checkTLS does a TLS handshake against the URL and verifies the certificate
 // chain is valid (not self-signed, not expired).
-func checkTLS(url string) error {
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				// Use default verification — rejects self-signed certs.
-			},
-		},
-		// Don't follow redirects; we only care about the TLS handshake.
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	resp, err := client.Get(url)
+func (h *HealthChecker) checkTLS(url string) error {
+	resp, err := h.tlsClient.Get(url)
 	if err != nil {
 		return err
 	}

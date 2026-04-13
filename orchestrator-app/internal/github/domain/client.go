@@ -29,7 +29,7 @@ func NewClient() *Client {
 
 // DownloadSource downloads a repo tarball from GitHub and extracts it to destDir.
 func (c *Client) DownloadSource(ctx context.Context, owner, repo, sha, pat, destDir string) (string, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/tarball/%s", owner, repo, sha)
+	url := fmt.Sprintf("%s/repos/%s/%s/tarball/%s", c.apiURL(), owner, repo, sha)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -125,7 +125,7 @@ type commentResponse struct {
 
 // CreateComment posts a new comment on a PR and returns the comment ID.
 func (c *Client) CreateComment(ctx context.Context, owner, repo string, prNumber int, body, pat string) (int64, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/%d/comments", owner, repo, prNumber)
+	url := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments", c.apiURL(), owner, repo, prNumber)
 
 	payload, _ := json.Marshal(commentPayload{Body: body})
 
@@ -158,7 +158,7 @@ func (c *Client) CreateComment(ctx context.Context, owner, repo string, prNumber
 
 // UpdateComment edits an existing PR comment.
 func (c *Client) UpdateComment(ctx context.Context, owner, repo string, commentID int64, body, pat string) error {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/comments/%d", owner, repo, commentID)
+	url := fmt.Sprintf("%s/repos/%s/%s/issues/comments/%d", c.apiURL(), owner, repo, commentID)
 
 	payload, _ := json.Marshal(commentPayload{Body: body})
 
@@ -924,7 +924,7 @@ func (c *Client) GetCheckRunsForRef(ctx context.Context, owner, repo, ref, pat s
 
 // DeleteComment removes a PR comment.
 func (c *Client) DeleteComment(ctx context.Context, owner, repo string, commentID int64, pat string) error {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/comments/%d", owner, repo, commentID)
+	url := fmt.Sprintf("%s/repos/%s/%s/issues/comments/%d", c.apiURL(), owner, repo, commentID)
 
 	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
 	if err != nil {
@@ -962,7 +962,7 @@ const orchestratorMarker = "<!-- productbuilding-orchestrator -->"
 
 // DeleteAllBotComments removes all our bot comments from a PR (identified by unique marker)
 func (c *Client) DeleteAllBotComments(ctx context.Context, owner, repo string, prNumber int, pat string) error {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/%d/comments", owner, repo, prNumber)
+	url := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments", c.apiURL(), owner, repo, prNumber)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
