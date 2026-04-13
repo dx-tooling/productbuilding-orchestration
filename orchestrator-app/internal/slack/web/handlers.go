@@ -17,6 +17,7 @@ import (
 	"time"
 
 	agent "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/agent/domain"
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/featurecontext"
 	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
 	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/domain"
 )
@@ -76,6 +77,12 @@ type TraceSaver interface {
 	SaveTrace(ctx context.Context, record TraceSaveRequest) error
 }
 
+// FeatureContextAssembler fetches aggregated feature context for enriching agent requests.
+type FeatureContextAssembler interface {
+	ForPR(ctx context.Context, owner, repo, pat string, prNumber, linkedIssue int) (*featurecontext.FeatureSnapshot, error)
+	ForIssue(ctx context.Context, owner, repo, pat string, number int) (*featurecontext.FeatureSnapshot, error)
+}
+
 // Handler handles Slack Events API callbacks.
 type Handler struct {
 	agent                AgentRunner
@@ -85,6 +92,7 @@ type Handler struct {
 	slackClient          SlackClient
 	registry             TargetRegistry
 	traceSaver           TraceSaver
+	featureAssembler     FeatureContextAssembler
 	signingSecret        string
 	slackWorkspace       string
 	agentTimeout         time.Duration
@@ -122,6 +130,11 @@ func (h *Handler) SetAgentTimeout(d time.Duration) {
 // SetTraceSaver sets the trace persistence backend.
 func (h *Handler) SetTraceSaver(ts TraceSaver) {
 	h.traceSaver = ts
+}
+
+// SetFeatureAssembler sets the feature context assembler for enriching agent requests.
+func (h *Handler) SetFeatureAssembler(fa FeatureContextAssembler) {
+	h.featureAssembler = fa
 }
 
 // slackEnvelope represents the outer Slack Events API payload.
@@ -245,16 +258,33 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 		}
 	}
 
+	// Assemble feature context for enriching agent with current state
+	var featureSummary string
+	if h.featureAssembler != nil && threadTs != "" {
+		if thread, err := h.threadFinder.FindThreadBySlackTs(ctx, threadTs); err == nil && thread != nil {
+			var snap *featurecontext.FeatureSnapshot
+			if thread.GithubPRID > 0 {
+				snap, _ = h.featureAssembler.ForPR(ctx, target.RepoOwner, target.RepoName, target.GitHubPAT, thread.GithubPRID, thread.GithubIssueID)
+			} else if thread.GithubIssueID > 0 {
+				snap, _ = h.featureAssembler.ForIssue(ctx, target.RepoOwner, target.RepoName, target.GitHubPAT, thread.GithubIssueID)
+			}
+			if snap != nil {
+				featureSummary = FormatFeatureSummary(snap)
+			}
+		}
+	}
+
 	// Build agent request
 	req := agent.RunRequest{
-		ChannelID:   event.Channel,
-		ThreadTs:    threadTs,
-		MessageTs:   event.Ts,
-		UserText:    text,
-		UserName:    displayName,
-		BotUserID:   botUserID,
-		Target:      target,
-		LinkedIssue: linkedIssue,
+		ChannelID:      event.Channel,
+		ThreadTs:       threadTs,
+		MessageTs:      event.Ts,
+		UserText:       text,
+		UserName:       displayName,
+		BotUserID:      botUserID,
+		Target:         target,
+		LinkedIssue:    linkedIssue,
+		FeatureSummary: featureSummary,
 	}
 
 	// Attach trace to context for recording

@@ -61,6 +61,8 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		h.handleIssue(w, r, body)
 	case "issue_comment":
 		h.handleIssueComment(w, r, body)
+	case "check_run":
+		h.handleCheckRun(w, r, body)
 	default:
 		slog.Debug("ignoring webhook event", "event", eventType)
 		w.WriteHeader(http.StatusOK)
@@ -232,6 +234,89 @@ func (h *Handler) handleIssueComment(w http.ResponseWriter, r *http.Request, bod
 	}
 
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) handleCheckRun(w http.ResponseWriter, r *http.Request, body []byte) {
+	event, err := domain.ParseCheckRunEvent(body)
+	if err != nil {
+		slog.Error("failed to parse check_run event", "error", err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	// Only handle completed check runs
+	if event.Action != "completed" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Only notify for PR-linked checks
+	if len(event.CheckRun.PullRequests) == 0 {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Look up target config
+	target, ok := h.registry.Get(event.Repository.Owner.Login, event.Repository.Name)
+	if !ok {
+		slog.Warn("webhook from unknown repo", "repo", event.Repository.Owner.Login+"/"+event.Repository.Name)
+		http.Error(w, "unknown repository", http.StatusNotFound)
+		return
+	}
+
+	// Validate webhook signature
+	sig := r.Header.Get("X-Hub-Signature-256")
+	if err := domain.ValidateSignature(body, sig, target.WebhookSecret); err != nil {
+		slog.Warn("webhook signature validation failed", "error", err)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	slog.Info("check_run webhook received",
+		"action", event.Action,
+		"name", event.CheckRun.Name,
+		"conclusion", event.CheckRun.Conclusion,
+		"repo", event.Repository.Owner.Login+"/"+event.Repository.Name,
+	)
+
+	if h.notifier != nil {
+		for _, pr := range event.CheckRun.PullRequests {
+			go h.notifySlackCheckRun(event, pr.Number, target)
+		}
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) notifySlackCheckRun(event *domain.CheckRunEvent, prNumber int, target targets.TargetConfig) {
+	if h.notifier == nil || target.SlackChannel == "" {
+		return
+	}
+
+	var eventType slackfacade.EventType
+	switch event.CheckRun.Conclusion {
+	case "success":
+		eventType = slackfacade.EventCIPassed
+	case "failure", "timed_out", "cancelled", "action_required":
+		eventType = slackfacade.EventCIFailed
+	default:
+		return
+	}
+
+	ctx := context.Background()
+	slackEvent := slackfacade.NotificationEvent{
+		Type:         eventType,
+		RepoOwner:    event.Repository.Owner.Login,
+		RepoName:     event.Repository.Name,
+		IssueNumber:  prNumber,
+		CheckRunName: event.CheckRun.Name,
+		WorkflowURL:  event.CheckRun.HTMLURL,
+		HeadSHA:      event.CheckRun.HeadSHA,
+	}
+
+	if err := h.notifier.Notify(ctx, slackEvent, target); err != nil {
+		slog.Warn("failed to send CI slack notification", "error", err)
+	}
 }
 
 func (h *Handler) notifySlackPR(eventType slackfacade.EventType, event *domain.PREvent, target targets.TargetConfig) {

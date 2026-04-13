@@ -33,6 +33,7 @@ func TestBuildContext_BasicAssembly(t *testing.T) {
 		"alice says: hello",
 		nil,
 		nil,
+		"",
 		budget,
 	)
 
@@ -61,6 +62,7 @@ func TestBuildContext_ThreadTruncation(t *testing.T) {
 		"user message",
 		thread,
 		nil,
+		"",
 		budget,
 	)
 
@@ -94,6 +96,7 @@ func TestBuildContext_ThreadKeepsMostRecent(t *testing.T) {
 		"current question",
 		thread,
 		nil,
+		"",
 		budget,
 	)
 
@@ -135,6 +138,7 @@ func TestBuildContext_IssueBodyTruncated(t *testing.T) {
 		"user msg",
 		nil,
 		issue,
+		"",
 		budget,
 	)
 
@@ -179,6 +183,7 @@ func TestBuildContext_PriorityUnderTightBudget(t *testing.T) {
 		"hi",
 		thread,
 		issue,
+		"",
 		budget,
 	)
 
@@ -207,6 +212,7 @@ func TestBuildContext_BotMessagesGetAssistantRole(t *testing.T) {
 		"current",
 		thread,
 		nil,
+		"",
 		budget,
 	)
 
@@ -220,6 +226,103 @@ func TestBuildContext_BotMessagesGetAssistantRole(t *testing.T) {
 
 	if !foundAssistant {
 		t.Error("expected bot thread message to have role 'assistant'")
+	}
+}
+
+func TestBuildContext_FeatureSummary_Included(t *testing.T) {
+	budget := TokenBudget{Total: 8000, IssueMaxTokens: 1000, ThreadMaxMessages: 20}
+
+	thread := []ThreadMessage{
+		{User: "U001", Text: "thread msg", Ts: "100.001"},
+	}
+
+	summary := "Issue: #42 Add dark mode (open)\nPR: #10 by alice — open, +50/-10 lines"
+
+	msgs := BuildContext(
+		"system",
+		"user question",
+		thread,
+		nil,
+		summary,
+		budget,
+	)
+
+	// Should contain a system message with "Feature status" between thread and user
+	foundFeature := false
+	featureIdx := -1
+	userIdx := -1
+	for i, m := range msgs {
+		if m.Role == "system" && strings.Contains(m.Content, "Feature status") && strings.Contains(m.Content, summary) {
+			foundFeature = true
+			featureIdx = i
+		}
+		if m.Role == "user" && m.Content == "user question" {
+			userIdx = i
+		}
+	}
+
+	if !foundFeature {
+		t.Error("expected feature summary system message")
+	}
+	if featureIdx >= userIdx {
+		t.Error("feature summary should appear before user message")
+	}
+}
+
+func TestBuildContext_FeatureSummary_Empty(t *testing.T) {
+	budget := TokenBudget{Total: 8000, IssueMaxTokens: 1000, ThreadMaxMessages: 20}
+
+	msgs := BuildContext(
+		"system",
+		"user question",
+		nil,
+		nil,
+		"",
+		budget,
+	)
+
+	// Should have exactly system + user, no feature summary
+	for _, m := range msgs {
+		if strings.Contains(m.Content, "Feature status") {
+			t.Error("expected no feature summary when empty string")
+		}
+	}
+	if len(msgs) != 2 {
+		t.Errorf("expected 2 messages (system + user), got %d", len(msgs))
+	}
+}
+
+func TestBuildContext_FeatureSummary_TokenBudget(t *testing.T) {
+	// Very tight budget: only enough for system prompt + user message
+	budget := TokenBudget{Total: 10, IssueMaxTokens: 5, ThreadMaxMessages: 20}
+
+	summary := strings.Repeat("long feature summary ", 100)
+
+	msgs := BuildContext(
+		"sys",
+		"hi",
+		nil,
+		nil,
+		summary,
+		budget,
+	)
+
+	// System and user must be present; feature summary should be dropped
+	if len(msgs) < 2 {
+		t.Fatalf("expected at least 2 messages, got %d", len(msgs))
+	}
+	if msgs[0].Role != "system" {
+		t.Error("expected system message first")
+	}
+	if msgs[len(msgs)-1].Role != "user" {
+		t.Error("expected user message last")
+	}
+
+	// Feature summary should have been dropped due to budget
+	for _, m := range msgs {
+		if strings.Contains(m.Content, "Feature status") {
+			t.Error("expected feature summary to be dropped under tight budget")
+		}
 	}
 }
 

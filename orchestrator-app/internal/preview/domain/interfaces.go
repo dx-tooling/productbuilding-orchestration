@@ -38,6 +38,11 @@ type PRCommenter interface {
 	DeleteAllBotComments(ctx context.Context, owner, repo string, prNumber int, pat string) error
 }
 
+// SlackThreadChecker checks whether a Slack thread is tracking a given PR.
+type SlackThreadChecker interface {
+	HasThread(ctx context.Context, repoOwner, repoName string, prNumber int) bool
+}
+
 // DeployRequest is the input for deploying or updating a preview.
 type DeployRequest struct {
 	RepoOwner string

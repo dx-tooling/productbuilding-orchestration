@@ -41,15 +41,16 @@ var stepLabels = [numSteps]string{
 }
 
 type Service struct {
-	repo           Repository
-	downloader     SourceDownloader
-	compose        ComposeManager
-	healthChecker  HealthChecker
-	commenter      PRCommenter
-	notifier       SlackNotifier
-	targetRegistry *targets.Registry
-	previewDomain  string
-	workspaceDir   string
+	repo               Repository
+	downloader         SourceDownloader
+	compose            ComposeManager
+	healthChecker      HealthChecker
+	commenter          PRCommenter
+	notifier           SlackNotifier
+	targetRegistry     *targets.Registry
+	slackThreadChecker SlackThreadChecker
+	previewDomain      string
+	workspaceDir       string
 
 	// Per-PR mutex to prevent concurrent operations on the same preview.
 	locksMu sync.Mutex
@@ -58,6 +59,14 @@ type Service struct {
 	// Track ongoing deployments to allow cancellation
 	deploymentsMu sync.Mutex
 	deployments   map[string]context.CancelFunc
+}
+
+// ServiceOption configures optional Service dependencies.
+type ServiceOption func(*Service)
+
+// WithSlackThreadChecker enables minimal PR comments when Slack is tracking the feature.
+func WithSlackThreadChecker(checker SlackThreadChecker) ServiceOption {
+	return func(s *Service) { s.slackThreadChecker = checker }
 }
 
 func NewService(
@@ -70,8 +79,9 @@ func NewService(
 	targetRegistry *targets.Registry,
 	previewDomain string,
 	workspaceDir string,
+	opts ...ServiceOption,
 ) *Service {
-	return &Service{
+	s := &Service{
 		repo:           repo,
 		downloader:     downloader,
 		compose:        compose,
@@ -84,6 +94,10 @@ func NewService(
 		locks:          make(map[string]*sync.Mutex),
 		deployments:    make(map[string]context.CancelFunc),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func (s *Service) getLock(key string) *sync.Mutex {
@@ -191,13 +205,21 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 		AnimationURL: "https://raw.githubusercontent.com/dx-tooling/assets/refs/heads/main/productbuilding/crane-building-animation-128x128.gif",
 	}
 
+	// Check if Slack is tracking this PR — use minimal comments to reduce noise
+	slackTracking := s.slackThreadChecker != nil && s.slackThreadChecker.HasThread(ctx, req.RepoOwner, req.RepoName, req.PRNumber)
+
 	// 1. Delete ALL previous bot comments and post new acknowledgment (before acquiring mutex)
 	// This keeps the PR clean by removing old/aborted preview comments
 	if err := s.commenter.DeleteAllBotComments(ctx, req.RepoOwner, req.RepoName, req.PRNumber, pat); err != nil {
 		log.Warn("failed to clean up old bot comments", "error", err)
 	}
 
-	ackBody := progressComment("Preview deploying", meta, 0, "Queued, waiting to start...")
+	var ackBody string
+	if slackTracking {
+		ackBody = "<!-- productbuilding-orchestrator -->\nPreview deploying — status tracked in Slack."
+	} else {
+		ackBody = progressComment("Preview deploying", meta, 0, "Queued, waiting to start...")
+	}
 	commentID, err := s.commenter.CreateComment(ctx, req.RepoOwner, req.RepoName, req.PRNumber, ackBody, pat)
 	if err != nil {
 		log.Warn("failed to post ack comment", "error", err)
@@ -244,9 +266,11 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 
 	// 3. Download source (status: building)
 	s.setStatus(deployCtx, &preview, StatusBuilding, log)
-	s.updateComment(deployCtx, &preview,
-		progressComment("Preview deploying", meta, 0, "Downloading source..."),
-		pat, log)
+	if !slackTracking {
+		s.updateComment(deployCtx, &preview,
+			progressComment("Preview deploying", meta, 0, "Downloading source..."),
+			pat, log)
+	}
 
 	workDir := filepath.Join(s.workspaceDir, preview.ComposeProject)
 	_ = os.RemoveAll(workDir)
@@ -284,9 +308,11 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 
 	// 6. Docker compose up (status: deploying)
 	s.setStatus(deployCtx, &preview, StatusDeploying, log)
-	s.updateComment(deployCtx, &preview,
-		progressComment("Preview deploying", meta, stepDownload+1, "Building and starting containers..."),
-		pat, log)
+	if !slackTracking {
+		s.updateComment(deployCtx, &preview,
+			progressComment("Preview deploying", meta, stepDownload+1, "Building and starting containers..."),
+			pat, log)
+	}
 
 	// Expose the PAT as GITHUB_TOKEN so repo contracts can use it for authenticated
 	// operations (e.g. composer, npm, go modules). The contract decides how to use it.
@@ -302,9 +328,11 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 
 	// 7. Run database migrations (if configured)
 	if contract.Database != nil && contract.Database.MigrateCommand != "" {
-		s.updateComment(deployCtx, &preview,
-			progressComment("Preview deploying", meta, stepContainers+1, "Running database migrations..."),
-			pat, log)
+		if !slackTracking {
+			s.updateComment(deployCtx, &preview,
+				progressComment("Preview deploying", meta, stepContainers+1, "Running database migrations..."),
+				pat, log)
+		}
 
 		migrateCmd := []string{"sh", "-c", contract.Database.MigrateCommand}
 		if err := s.compose.Exec(deployCtx, preview.ComposeProject, contract.Compose.Service, workDir, migrateCmd); err != nil {
@@ -314,9 +342,11 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	}
 
 	// 8. Health check
-	s.updateComment(deployCtx, &preview,
-		progressComment("Preview deploying", meta, stepMigrations+1, "Running health check..."),
-		pat, log)
+	if !slackTracking {
+		s.updateComment(deployCtx, &preview,
+			progressComment("Preview deploying", meta, stepMigrations+1, "Running health check..."),
+			pat, log)
+	}
 
 	containerName := fmt.Sprintf("%s-%s-1", preview.ComposeProject, contract.Compose.Service)
 	healthURL := fmt.Sprintf("http://%s:%d%s", containerName, contract.Runtime.InternalPort, contract.Runtime.HealthcheckPath)
@@ -328,9 +358,11 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	}
 
 	// 8. TLS certificate readiness (wait for Traefik to provision via Let's Encrypt)
-	s.updateComment(deployCtx, &preview,
-		progressComment("Preview deploying", meta, stepHealth+1, "Waiting for TLS certificate..."),
-		pat, log)
+	if !slackTracking {
+		s.updateComment(deployCtx, &preview,
+			progressComment("Preview deploying", meta, stepHealth+1, "Waiting for TLS certificate..."),
+			pat, log)
+	}
 
 	tlsTimeout := 120 * time.Second
 	if err := s.healthChecker.WaitForTLS(deployCtx, meta.PreviewURL, tlsTimeout); err != nil {
@@ -340,9 +372,11 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 
 	// 9. Run post-deploy commands (if configured)
 	if len(contract.PostDeployCommands) > 0 {
-		s.updateComment(deployCtx, &preview,
-			progressComment("Preview deploying", meta, stepTLS+1, "Running post-deploy commands..."),
-			pat, log)
+		if !slackTracking {
+			s.updateComment(deployCtx, &preview,
+				progressComment("Preview deploying", meta, stepTLS+1, "Running post-deploy commands..."),
+				pat, log)
+		}
 
 		for _, cmd := range contract.PostDeployCommands {
 			service := cmd.Service
@@ -372,9 +406,15 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 	preview.ErrorMessage = ""
 	_ = s.repo.Update(deployCtx, preview)
 
-	s.updateComment(deployCtx, &preview,
-		progressComment("Preview ready", meta, numSteps, fmt.Sprintf("**[%s](%s)**  •  %s", meta.PreviewURL, meta.PreviewURL, meta.logsLink())),
-		pat, log)
+	if slackTracking {
+		s.updateComment(deployCtx, &preview,
+			fmt.Sprintf("<!-- productbuilding-orchestrator -->\nPreview: %s", meta.PreviewURL),
+			pat, log)
+	} else {
+		s.updateComment(deployCtx, &preview,
+			progressComment("Preview ready", meta, numSteps, fmt.Sprintf("**[%s](%s)**  •  %s", meta.PreviewURL, meta.PreviewURL, meta.logsLink())),
+			pat, log)
+	}
 
 	// Notify Slack that preview is ready
 	if target, ok := s.targetRegistry.Get(preview.RepoOwner, preview.RepoName); ok {

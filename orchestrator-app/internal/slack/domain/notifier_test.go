@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/featurecontext"
 	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
 	slackfacade "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/facade"
 )
@@ -183,11 +184,47 @@ func (m *mockDebouncer) executeAll() {
 	}
 }
 
+type mockAssembler struct {
+	snapshot *featurecontext.FeatureSnapshot
+	err      error
+	// Track calls for assertions
+	forPRCalls    []mockForPRCall
+	forIssueCalls []mockForIssueCall
+	mu            sync.Mutex
+}
+
+type mockForPRCall struct {
+	Owner       string
+	Repo        string
+	PRNumber    int
+	LinkedIssue int
+}
+
+type mockForIssueCall struct {
+	Owner  string
+	Repo   string
+	Number int
+}
+
+func (m *mockAssembler) ForPR(ctx context.Context, owner, repo, pat string, prNumber, linkedIssue int) (*featurecontext.FeatureSnapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.forPRCalls = append(m.forPRCalls, mockForPRCall{Owner: owner, Repo: repo, PRNumber: prNumber, LinkedIssue: linkedIssue})
+	return m.snapshot, m.err
+}
+
+func (m *mockAssembler) ForIssue(ctx context.Context, owner, repo, pat string, number int) (*featurecontext.FeatureSnapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.forIssueCalls = append(m.forIssueCalls, mockForIssueCall{Owner: owner, Repo: repo, Number: number})
+	return m.snapshot, m.err
+}
+
 func TestNotifier_Notify_NewThread(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 
 	target := targets.TargetConfig{
 		RepoOwner:     "example-org",
@@ -232,7 +269,7 @@ func TestNotifier_Notify_ExistingThread(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 
 	target := targets.TargetConfig{
 		RepoOwner:     "example-org",
@@ -291,7 +328,7 @@ func TestNotifier_Notify_NoSlackConfig(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 
 	// Target without Slack config
 	target := targets.TargetConfig{
@@ -322,7 +359,7 @@ func TestNotifier_Notify_EmojiReaction(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 
 	target := targets.TargetConfig{
 		RepoOwner:     "example-org",
@@ -386,7 +423,7 @@ func TestNotifier_Notify_Debouncing(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 
 	target := targets.TargetConfig{
 		RepoOwner:     "example-org",
@@ -425,7 +462,7 @@ func TestNotifier_PRLinksToIssueThread_CreatesNewMapping(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 
 	target := targets.TargetConfig{
 		RepoOwner:     "example-org",
@@ -494,7 +531,7 @@ func TestNotifier_MultiplePRsPerIssue_AllLinkToSameThread(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 
 	target := targets.TargetConfig{
 		RepoOwner:     "example-org",
@@ -556,7 +593,7 @@ func TestNotifier_Flush_RetriesForNewIssue_FindsThreadMapping(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 
 	target := targets.TargetConfig{
 		RepoOwner:     "example-org",
@@ -606,9 +643,9 @@ func TestNotifier_Flush_RetriesForNewIssue_FindsThreadMapping(t *testing.T) {
 		t.Errorf("Expected thread reply to agent-thread-ts, got messages: %+v", client.postedMessages)
 	}
 
-	// Should NOT have created a new channel-level message
+	// Should NOT have created a new channel-level parent message
 	for _, msg := range client.postedMessages {
-		if msg.Thread == "" && strings.Contains(msg.Text, "#50") {
+		if msg.Thread == "" && strings.Contains(msg.Text, "Forgot Password") {
 			t.Errorf("Should not have created a new channel message, got: %+v", msg)
 		}
 	}
@@ -620,7 +657,7 @@ func TestNotifier_CommentOnUnknownIssue_NoNewThread(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 	notifier.retryWait = 10 * time.Millisecond
 
 	target := targets.TargetConfig{
@@ -652,7 +689,7 @@ func TestNotifier_CommentOnKnownIssue_PostsToThread(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 
 	target := targets.TargetConfig{
 		RepoOwner:     "example-org",
@@ -697,7 +734,7 @@ func TestNotifier_PRWithLinkedIssue_FindsThreadWithoutRetrySleep(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 
 	target := targets.TargetConfig{
 		RepoOwner:     "example-org",
@@ -813,7 +850,8 @@ func TestSanitizeForCodeBlock(t *testing.T) {
 	}
 }
 
-func TestFormatParentMessage_BodyInCodeBlock(t *testing.T) {
+func TestMessageGenerator_ParentMessage_BodyInBlockquote(t *testing.T) {
+	g := NewMessageGenerator()
 	event := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventIssueOpened,
 		RepoOwner:   "example-org",
@@ -825,9 +863,9 @@ func TestFormatParentMessage_BodyInCodeBlock(t *testing.T) {
 		URL:         "https://github.com/example-org/test-repo/issues/10",
 	}
 
-	msg := formatParentMessage(event)
-	if !strings.Contains(msg.Text, "```") {
-		t.Errorf("Expected parent message body to be wrapped in code block, got:\n%s", msg.Text)
+	msg := g.ParentMessage(event, nil)
+	if !strings.Contains(msg.Text, "> ") {
+		t.Errorf("Expected parent message body in blockquote, got:\n%s", msg.Text)
 	}
 	if strings.Contains(msg.Text, "**body**") {
 		t.Error("Expected bold markers to be stripped from body")
@@ -842,7 +880,7 @@ func TestNotifier_TwoComments_PreservedInOrder(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 
 	target := targets.TargetConfig{
 		RepoOwner:     "example-org",
@@ -891,6 +929,12 @@ func TestNotifier_TwoComments_PreservedInOrder(t *testing.T) {
 	if !strings.Contains(client.postedMessages[1].Text, "second comment") {
 		t.Errorf("Second message should contain 'second comment', got: %s", client.postedMessages[1].Text)
 	}
+	// Verify new format: blockquote instead of code block
+	for _, msg := range client.postedMessages {
+		if strings.Contains(msg.Text, "```") {
+			t.Errorf("Comments should use blockquote, not code block, got: %s", msg.Text)
+		}
+	}
 	if client.postedMessages[0].Thread != "thread-ts-42" || client.postedMessages[1].Thread != "thread-ts-42" {
 		t.Errorf("Both comments should be in thread thread-ts-42")
 	}
@@ -902,7 +946,7 @@ func TestNotifier_PROpenedPlusComment_SameBatch(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 	notifier.retryWait = 10 * time.Millisecond
 
 	target := targets.TargetConfig{
@@ -956,7 +1000,7 @@ func TestNotifier_CommentBeforeLifecycle_SameBatch(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 	notifier.retryWait = 10 * time.Millisecond
 
 	target := targets.TargetConfig{
@@ -1006,7 +1050,7 @@ func TestNotifier_StatusDedup_StillWorks(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 	notifier.retryWait = 10 * time.Millisecond
 
 	target := targets.TargetConfig{
@@ -1041,8 +1085,8 @@ func TestNotifier_StatusDedup_StillWorks(t *testing.T) {
 	if len(client.postedMessages) != 1 {
 		t.Fatalf("Expected 1 message (status dedup), got %d: %+v", len(client.postedMessages), client.postedMessages)
 	}
-	if !strings.Contains(client.postedMessages[0].Text, "*Pull Request #42*") {
-		t.Errorf("Expected parent message, got: %s", client.postedMessages[0].Text)
+	if !strings.Contains(client.postedMessages[0].Text, "#42") {
+		t.Errorf("Expected parent message with #42, got: %s", client.postedMessages[0].Text)
 	}
 }
 
@@ -1051,7 +1095,7 @@ func TestNotifier_OrphanComment_RetriesGivesUp(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 	notifier.retryWait = 10 * time.Millisecond
 
 	target := targets.TargetConfig{
@@ -1083,7 +1127,7 @@ func TestNotifier_OrphanComment_RetriesFindsThread(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 	notifier.retryWait = 200 * time.Millisecond
 
 	target := targets.TargetConfig{
@@ -1133,7 +1177,7 @@ func TestNotifier_FlushIdempotent(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 
 	target := targets.TargetConfig{
 		RepoOwner:     "example-org",
@@ -1177,7 +1221,7 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 
 	target := targets.TargetConfig{
 		RepoOwner:     "example-org",
@@ -1202,7 +1246,7 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 				PreviewURL:  "https://preview.example.com",
 				UserNote:    "Test with admin/admin",
 			},
-			contains: "*Pull Request #42* — Add feature",
+			contains: "#42",
 		},
 		{
 			name: "Preview failed",
@@ -1213,7 +1257,7 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 				IssueNumber: 42,
 				Status:      "compose_up",
 			},
-			contains: "─────\n*Preview failed*",
+			contains: "failed during",
 		},
 		{
 			name: "Comment with link",
@@ -1226,7 +1270,7 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 				Body:        "This is a long comment that should be truncated",
 				CommentID:   123456,
 			},
-			contains: "─────\n*@alice* commented:",
+			contains: "@alice commented on GitHub:",
 		},
 	}
 
@@ -1250,5 +1294,224 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 				t.Errorf("Expected message to contain %q, got:\n%s", tt.contains, msg)
 			}
 		})
+	}
+}
+
+func TestNotifier_NewThread_UsesMessageGenerator(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	assembler := &mockAssembler{
+		snapshot: &featurecontext.FeatureSnapshot{
+			Issue: &featurecontext.IssueState{Number: 42, Title: "Add dark mode", Body: "Please add dark mode.", State: "open"},
+		},
+	}
+	notifier := NewNotifier(client, repo, debouncer, assembler)
+
+	target := targets.TargetConfig{
+		RepoOwner:     "example-org",
+		RepoName:      "test-repo",
+		SlackChannel:  "#productbuilding-test",
+		SlackBotToken: "xoxb-test",
+		GitHubPAT:     "ghp_test",
+	}
+
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventIssueOpened,
+		RepoOwner:   "example-org",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+		Title:       "Add dark mode",
+		Body:        "Please add dark mode.",
+		Author:      "alice",
+	}
+
+	notifier.Notify(context.Background(), event, target)
+	debouncer.executeAll()
+
+	if len(client.postedMessages) != 1 {
+		t.Fatalf("Expected 1 message, got %d", len(client.postedMessages))
+	}
+
+	msg := client.postedMessages[0].Text
+	// New conversational format: blockquote body, no separators, no code blocks
+	if strings.Contains(msg, "─────") {
+		t.Errorf("New format should not have separators, got: %s", msg)
+	}
+	if strings.Contains(msg, "```") {
+		t.Errorf("New format should use blockquote not code block, got: %s", msg)
+	}
+	if !strings.Contains(msg, "> ") {
+		t.Errorf("Expected blockquote in message, got: %s", msg)
+	}
+}
+
+func TestNotifier_ExistingThread_UsesMessageGenerator(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
+
+	target := targets.TargetConfig{
+		RepoOwner:     "example-org",
+		RepoName:      "test-repo",
+		SlackChannel:  "#productbuilding-test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	repo.SaveThread(context.Background(), &SlackThread{
+		ID:            "existing-id",
+		RepoOwner:     "example-org",
+		RepoName:      "test-repo",
+		GithubIssueID: 42,
+		SlackChannel:  "#productbuilding-test",
+		SlackThreadTs: "parent-ts-123",
+		ThreadType:    "issue",
+	})
+
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventCommentAdded,
+		RepoOwner:   "example-org",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+		Author:      "bob",
+		Body:        "Great idea!",
+		CommentID:   123,
+	}
+
+	notifier.Notify(context.Background(), event, target)
+	debouncer.executeAll()
+
+	if len(client.postedMessages) != 1 {
+		t.Fatalf("Expected 1 message, got %d", len(client.postedMessages))
+	}
+
+	msg := client.postedMessages[0].Text
+	// New format: "@bob commented on GitHub:" with blockquote
+	if !strings.Contains(msg, "@bob commented on GitHub:") {
+		t.Errorf("Expected new comment format, got: %s", msg)
+	}
+	if !strings.Contains(msg, "> Great idea!") {
+		t.Errorf("Expected body in blockquote, got: %s", msg)
+	}
+}
+
+func TestNotifier_AssemblerError_FallsBackGracefully(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	assembler := &mockAssembler{
+		err: fmt.Errorf("assembler error"),
+	}
+	notifier := NewNotifier(client, repo, debouncer, assembler)
+
+	target := targets.TargetConfig{
+		RepoOwner:     "example-org",
+		RepoName:      "test-repo",
+		SlackChannel:  "#productbuilding-test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventIssueOpened,
+		RepoOwner:   "example-org",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+		Title:       "Add dark mode",
+		Author:      "alice",
+	}
+
+	notifier.Notify(context.Background(), event, target)
+	debouncer.executeAll()
+
+	// Should still post (nil snapshot triggers fallback in MessageGenerator)
+	if len(client.postedMessages) != 1 {
+		t.Fatalf("Expected 1 message even with assembler error, got %d", len(client.postedMessages))
+	}
+	if client.postedMessages[0].Text == "" {
+		t.Error("Message should have non-empty text even with assembler error")
+	}
+}
+
+func TestNotifier_PREvent_PassesLinkedIssueToAssembler(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	assembler := &mockAssembler{}
+	notifier := NewNotifier(client, repo, debouncer, assembler)
+
+	target := targets.TargetConfig{
+		RepoOwner:     "example-org",
+		RepoName:      "test-repo",
+		SlackChannel:  "#productbuilding-test",
+		SlackBotToken: "xoxb-test",
+		GitHubPAT:     "ghp_test",
+	}
+
+	event := slackfacade.NotificationEvent{
+		Type:              slackfacade.EventPROpened,
+		RepoOwner:         "example-org",
+		RepoName:          "test-repo",
+		IssueNumber:       10,
+		Title:             "Fix bug",
+		Author:            "alice",
+		LinkedIssueNumber: 51,
+	}
+
+	notifier.Notify(context.Background(), event, target)
+	debouncer.executeAll()
+
+	assembler.mu.Lock()
+	defer assembler.mu.Unlock()
+	if len(assembler.forPRCalls) == 0 {
+		t.Fatal("Expected ForPR to be called")
+	}
+	call := assembler.forPRCalls[0]
+	if call.LinkedIssue != 51 {
+		t.Errorf("Expected ForPR linkedIssue=51, got %d", call.LinkedIssue)
+	}
+	if call.PRNumber != 10 {
+		t.Errorf("Expected ForPR prNumber=10, got %d", call.PRNumber)
+	}
+}
+
+func TestNotifier_IssueEvent_CallsForIssue(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	assembler := &mockAssembler{}
+	notifier := NewNotifier(client, repo, debouncer, assembler)
+
+	target := targets.TargetConfig{
+		RepoOwner:     "example-org",
+		RepoName:      "test-repo",
+		SlackChannel:  "#productbuilding-test",
+		SlackBotToken: "xoxb-test",
+		GitHubPAT:     "ghp_test",
+	}
+
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventIssueOpened,
+		RepoOwner:   "example-org",
+		RepoName:    "test-repo",
+		IssueNumber: 42,
+		Title:       "Bug report",
+		Author:      "alice",
+	}
+
+	notifier.Notify(context.Background(), event, target)
+	debouncer.executeAll()
+
+	assembler.mu.Lock()
+	defer assembler.mu.Unlock()
+	if len(assembler.forIssueCalls) == 0 {
+		t.Fatal("Expected ForIssue to be called")
+	}
+	if len(assembler.forPRCalls) != 0 {
+		t.Error("ForPR should not be called for issue events")
+	}
+	call := assembler.forIssueCalls[0]
+	if call.Number != 42 {
+		t.Errorf("Expected ForIssue number=42, got %d", call.Number)
 	}
 }

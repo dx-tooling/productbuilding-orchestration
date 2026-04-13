@@ -154,3 +154,80 @@ func TestExtractLinkedIssue(t *testing.T) {
 		})
 	}
 }
+
+func TestParseCheckRunEvent_Failure(t *testing.T) {
+	payload := []byte(`{
+		"action": "completed",
+		"check_run": {
+			"id": 1001,
+			"name": "build",
+			"status": "completed",
+			"conclusion": "failure",
+			"html_url": "https://github.com/acme/widgets/runs/1001",
+			"head_sha": "abc123",
+			"pull_requests": [{"number": 10}]
+		},
+		"repository": {
+			"owner": {"login": "acme"},
+			"name": "widgets"
+		}
+	}`)
+
+	event, err := ParseCheckRunEvent(payload)
+	if err != nil {
+		t.Fatalf("ParseCheckRunEvent() error = %v", err)
+	}
+
+	if event.Action != "completed" {
+		t.Errorf("Action = %q, want %q", event.Action, "completed")
+	}
+	if event.CheckRun.Name != "build" {
+		t.Errorf("Name = %q, want %q", event.CheckRun.Name, "build")
+	}
+	if event.CheckRun.Conclusion != "failure" {
+		t.Errorf("Conclusion = %q, want %q", event.CheckRun.Conclusion, "failure")
+	}
+	if event.CheckRun.HeadSHA != "abc123" {
+		t.Errorf("HeadSHA = %q, want %q", event.CheckRun.HeadSHA, "abc123")
+	}
+	if len(event.CheckRun.PullRequests) != 1 {
+		t.Fatalf("PullRequests len = %d, want 1", len(event.CheckRun.PullRequests))
+	}
+	if event.CheckRun.PullRequests[0].Number != 10 {
+		t.Errorf("PR number = %d, want 10", event.CheckRun.PullRequests[0].Number)
+	}
+	if event.Repository.Owner.Login != "acme" {
+		t.Errorf("Owner = %q, want %q", event.Repository.Owner.Login, "acme")
+	}
+}
+
+func TestParseCheckRunEvent_Success(t *testing.T) {
+	payload := []byte(`{
+		"action": "completed",
+		"check_run": {
+			"id": 1002,
+			"name": "lint",
+			"status": "completed",
+			"conclusion": "success",
+			"html_url": "https://github.com/acme/widgets/runs/1002",
+			"head_sha": "def456",
+			"pull_requests": [{"number": 10}]
+		},
+		"repository": {
+			"owner": {"login": "acme"},
+			"name": "widgets"
+		}
+	}`)
+
+	event, err := ParseCheckRunEvent(payload)
+	if err != nil {
+		t.Fatalf("ParseCheckRunEvent() error = %v", err)
+	}
+
+	if event.CheckRun.Conclusion != "success" {
+		t.Errorf("Conclusion = %q, want %q", event.CheckRun.Conclusion, "success")
+	}
+	if event.CheckRun.HTMLURL != "https://github.com/acme/widgets/runs/1002" {
+		t.Errorf("HTMLURL = %q", event.CheckRun.HTMLURL)
+	}
+}

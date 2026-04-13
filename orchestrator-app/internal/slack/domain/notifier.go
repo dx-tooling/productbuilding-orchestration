@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/featurecontext"
 	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
 	slackfacade "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/facade"
 	"github.com/google/uuid"
@@ -36,6 +37,12 @@ type Debouncer interface {
 	Debounce(key string, wait time.Duration, fn func())
 }
 
+// FeatureContextAssembler fetches aggregated feature context for enriching notifications.
+type FeatureContextAssembler interface {
+	ForPR(ctx context.Context, owner, repo, pat string, prNumber, linkedIssue int) (*featurecontext.FeatureSnapshot, error)
+	ForIssue(ctx context.Context, owner, repo, pat string, number int) (*featurecontext.FeatureSnapshot, error)
+}
+
 // pendingFlush separates status events (deduped by overwrite) from comments (queued).
 type pendingFlush struct {
 	status   *slackfacade.NotificationEvent   // latest lifecycle/status event (overwrite)
@@ -47,6 +54,8 @@ type Notifier struct {
 	client     SlackClient
 	repository ThreadRepository
 	debouncer  Debouncer
+	assembler  FeatureContextAssembler  // enriches notifications with feature context
+	messages   *MessageGenerator        // produces conversational messages
 	pending    map[string]*pendingFlush // key: channel#issue -> two-lane buffer
 	reactions  map[string]string        // threadTs -> current emoji
 	retryWait  time.Duration            // wait before retry lookups (default 5s)
@@ -54,11 +63,13 @@ type Notifier struct {
 }
 
 // NewNotifier creates a new Slack notifier with the given dependencies
-func NewNotifier(client SlackClient, repository ThreadRepository, debouncer Debouncer) *Notifier {
+func NewNotifier(client SlackClient, repository ThreadRepository, debouncer Debouncer, assembler FeatureContextAssembler) *Notifier {
 	return &Notifier{
 		client:     client,
 		repository: repository,
 		debouncer:  debouncer,
+		assembler:  assembler,
+		messages:   NewMessageGenerator(),
 		pending:    make(map[string]*pendingFlush),
 		reactions:  make(map[string]string),
 		retryWait:  5 * time.Second,
@@ -119,6 +130,25 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 
 	var thread *SlackThread
 
+	// Assemble feature context for enriching messages
+	var snap *featurecontext.FeatureSnapshot
+	if n.assembler != nil {
+		// Use the first available event to determine what to assemble
+		var refEvent *slackfacade.NotificationEvent
+		if p.status != nil {
+			refEvent = p.status
+		} else if len(p.comments) > 0 {
+			refEvent = p.comments[0]
+		}
+		if refEvent != nil {
+			if refEvent.IsPR() {
+				snap, _ = n.assembler.ForPR(ctx, refEvent.RepoOwner, refEvent.RepoName, target.GitHubPAT, refEvent.IssueNumber, refEvent.LinkedIssueNumber)
+			} else {
+				snap, _ = n.assembler.ForIssue(ctx, refEvent.RepoOwner, refEvent.RepoName, target.GitHubPAT, refEvent.IssueNumber)
+			}
+		}
+	}
+
 	// Phase 1: process status event (creates/finds thread)
 	if p.status != nil {
 		event := p.status
@@ -177,7 +207,7 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 		newThread := false
 		if thread == nil {
 			newThread = true
-			parentMsg := formatParentMessage(*event)
+			parentMsg := n.messages.ParentMessage(*event, snap)
 			parentTs, err := n.client.PostMessage(ctx, target.SlackBotToken, target.SlackChannel, parentMsg)
 			if err != nil {
 				slog.Warn("failed to create slack thread",
@@ -227,7 +257,7 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 
 		// Post status update to thread (only if not the first message creating the thread)
 		if !newThread {
-			updateMsg := formatEventMessage(*event)
+			updateMsg := n.messages.EventMessage(*event, snap)
 			if err := n.client.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, updateMsg); err != nil {
 				slog.Warn("failed to post to slack thread",
 					"error", err,
@@ -269,7 +299,7 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 		}
 
 		for _, comment := range p.comments {
-			updateMsg := formatEventMessage(*comment)
+			updateMsg := n.messages.EventMessage(*comment, snap)
 			if err := n.client.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, updateMsg); err != nil {
 				slog.Warn("failed to post comment to slack thread",
 					"error", err,
@@ -279,77 +309,6 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 			}
 		}
 	}
-}
-
-// formatParentMessage creates the initial thread message
-func formatParentMessage(event slackfacade.NotificationEvent) MessageBlock {
-	lines := []string{
-		fmt.Sprintf("*%s #%d* — %s", event.IssueOrPR(), event.IssueNumber, event.Title),
-		fmt.Sprintf("by @%s", event.Author),
-	}
-
-	// Add body/description if present (sanitized + truncated in code block)
-	if event.Body != "" {
-		bodyPreview := truncate(sanitizeForCodeBlock(event.Body), 300)
-		lines = append(lines, "", fmt.Sprintf("```\n%s\n```", bodyPreview))
-	}
-
-	// Add link to GitHub
-	lines = append(lines, "", fmt.Sprintf("<%s|View on GitHub>", event.GitHubURL()))
-
-	return MessageBlock{Text: strings.Join(lines, "\n")}
-}
-
-const threadSeparator = "─────"
-
-// formatEventMessage formats an update message for a thread
-func formatEventMessage(event slackfacade.NotificationEvent) MessageBlock {
-	var text string
-
-	switch event.Type {
-	case slackfacade.EventPRReady:
-		lines := []string{
-			threadSeparator,
-			"*Preview ready*",
-			fmt.Sprintf("<%s|Open Preview>", event.PreviewURL),
-		}
-		if event.LogsURL != "" {
-			lines = append(lines, fmt.Sprintf("<%s|View Logs>", event.LogsURL))
-		}
-		if event.UserNote != "" {
-			lines = append(lines, fmt.Sprintf("> *Note:* %s", event.UserNote))
-		}
-		text = strings.Join(lines, "\n")
-
-	case slackfacade.EventPRFailed:
-		text = fmt.Sprintf("%s\n*Preview failed*\n> Stage: `%s`", threadSeparator, event.Status)
-
-	case slackfacade.EventPROpened, slackfacade.EventIssueOpened:
-		text = fmt.Sprintf("%s\nOpened by @%s", threadSeparator, event.Author)
-
-	case slackfacade.EventCommentAdded:
-		preview := truncate(sanitizeForCodeBlock(event.Body), 300)
-		url := event.CommentURL()
-		if url != "" {
-			text = fmt.Sprintf("%s\n*@%s* commented:\n```\n%s\n```\n<%s|View on GitHub>", threadSeparator, event.Author, preview, url)
-		} else {
-			text = fmt.Sprintf("%s\n*@%s* commented:\n```\n%s\n```", threadSeparator, event.Author, preview)
-		}
-
-	case slackfacade.EventPRMerged:
-		text = fmt.Sprintf("%s\n*Merged* — Preview will be removed shortly", threadSeparator)
-
-	case slackfacade.EventIssueClosed:
-		text = fmt.Sprintf("%s\n*Closed*", threadSeparator)
-
-	case slackfacade.EventPRClosed:
-		text = fmt.Sprintf("%s\n*Closed* — Preview removed", threadSeparator)
-
-	default:
-		text = fmt.Sprintf("%s\nUpdate: %s", threadSeparator, event.Type)
-	}
-
-	return MessageBlock{Text: text}
 }
 
 // truncate limits text length with ellipsis

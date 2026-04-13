@@ -492,3 +492,236 @@ func TestHandleWebhook_UnsupportedEvent(t *testing.T) {
 		t.Error("Should not notify for unsupported events")
 	}
 }
+
+func TestHandleWebhook_CheckRun_Failure_NotifiesSlack(t *testing.T) {
+	previewSvc := &mockPreviewService{}
+	slackNotifier := &mockSlackNotifier{}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:     "acme",
+			RepoName:      "widgets",
+			GitHubPAT:     "ghp_test",
+			WebhookSecret: "secret123",
+			SlackChannel:  "#test",
+			SlackBotToken: "xoxb-test",
+		},
+		found: true,
+	}
+
+	handler := NewHandler(registry, previewSvc, slackNotifier)
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"action": "completed",
+		"check_run": map[string]interface{}{
+			"id":         1001,
+			"name":       "build",
+			"status":     "completed",
+			"conclusion": "failure",
+			"html_url":   "https://github.com/acme/widgets/runs/1001",
+			"head_sha":   "abc123",
+			"pull_requests": []map[string]interface{}{
+				{"number": 10},
+			},
+		},
+		"repository": map[string]interface{}{
+			"owner": map[string]string{"login": "acme"},
+			"name":  "widgets",
+		},
+	})
+
+	sig := generateSignature(payload, "secret123")
+	req := httptest.NewRequest("POST", "/webhooks/github", bytes.NewReader(payload))
+	req.Header.Set("X-GitHub-Event", "check_run")
+	req.Header.Set("X-Hub-Signature-256", sig)
+	rec := httptest.NewRecorder()
+
+	handler.HandleWebhook(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("Expected status 202, got %d", rec.Code)
+	}
+
+	// Wait for async goroutine
+	time.Sleep(100 * time.Millisecond)
+
+	slackNotifier.mu.Lock()
+	defer slackNotifier.mu.Unlock()
+
+	if !slackNotifier.notifyCalled {
+		t.Fatal("Expected Slack notification for check_run failure")
+	}
+	if len(slackNotifier.events) == 0 {
+		t.Fatal("Expected at least one event")
+	}
+	ev := slackNotifier.events[0]
+	if ev.Type != facade.EventCIFailed {
+		t.Errorf("Expected EventCIFailed, got %s", ev.Type)
+	}
+	if ev.CheckRunName != "build" {
+		t.Errorf("Expected CheckRunName=build, got %s", ev.CheckRunName)
+	}
+	if ev.IssueNumber != 10 {
+		t.Errorf("Expected IssueNumber=10, got %d", ev.IssueNumber)
+	}
+}
+
+func TestHandleWebhook_CheckRun_Success_NotifiesSlack(t *testing.T) {
+	previewSvc := &mockPreviewService{}
+	slackNotifier := &mockSlackNotifier{}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:     "acme",
+			RepoName:      "widgets",
+			GitHubPAT:     "ghp_test",
+			WebhookSecret: "secret123",
+			SlackChannel:  "#test",
+			SlackBotToken: "xoxb-test",
+		},
+		found: true,
+	}
+
+	handler := NewHandler(registry, previewSvc, slackNotifier)
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"action": "completed",
+		"check_run": map[string]interface{}{
+			"id":         1002,
+			"name":       "lint",
+			"status":     "completed",
+			"conclusion": "success",
+			"html_url":   "https://github.com/acme/widgets/runs/1002",
+			"head_sha":   "abc123",
+			"pull_requests": []map[string]interface{}{
+				{"number": 10},
+			},
+		},
+		"repository": map[string]interface{}{
+			"owner": map[string]string{"login": "acme"},
+			"name":  "widgets",
+		},
+	})
+
+	sig := generateSignature(payload, "secret123")
+	req := httptest.NewRequest("POST", "/webhooks/github", bytes.NewReader(payload))
+	req.Header.Set("X-GitHub-Event", "check_run")
+	req.Header.Set("X-Hub-Signature-256", sig)
+	rec := httptest.NewRecorder()
+
+	handler.HandleWebhook(rec, req)
+
+	time.Sleep(100 * time.Millisecond)
+
+	slackNotifier.mu.Lock()
+	defer slackNotifier.mu.Unlock()
+
+	if !slackNotifier.notifyCalled {
+		t.Fatal("Expected Slack notification for check_run success")
+	}
+	ev := slackNotifier.events[0]
+	if ev.Type != facade.EventCIPassed {
+		t.Errorf("Expected EventCIPassed, got %s", ev.Type)
+	}
+}
+
+func TestHandleWebhook_CheckRun_InProgress_Ignored(t *testing.T) {
+	previewSvc := &mockPreviewService{}
+	slackNotifier := &mockSlackNotifier{}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:     "acme",
+			RepoName:      "widgets",
+			WebhookSecret: "secret123",
+		},
+		found: true,
+	}
+
+	handler := NewHandler(registry, previewSvc, slackNotifier)
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"action": "created",
+		"check_run": map[string]interface{}{
+			"id":     1003,
+			"name":   "build",
+			"status": "in_progress",
+			"pull_requests": []map[string]interface{}{
+				{"number": 10},
+			},
+		},
+		"repository": map[string]interface{}{
+			"owner": map[string]string{"login": "acme"},
+			"name":  "widgets",
+		},
+	})
+
+	sig := generateSignature(payload, "secret123")
+	req := httptest.NewRequest("POST", "/webhooks/github", bytes.NewReader(payload))
+	req.Header.Set("X-GitHub-Event", "check_run")
+	req.Header.Set("X-Hub-Signature-256", sig)
+	rec := httptest.NewRecorder()
+
+	handler.HandleWebhook(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200 for in_progress, got %d", rec.Code)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	slackNotifier.mu.Lock()
+	defer slackNotifier.mu.Unlock()
+
+	if slackNotifier.notifyCalled {
+		t.Error("Should not notify for in_progress check runs")
+	}
+}
+
+func TestHandleWebhook_CheckRun_NoPR_Ignored(t *testing.T) {
+	previewSvc := &mockPreviewService{}
+	slackNotifier := &mockSlackNotifier{}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:     "acme",
+			RepoName:      "widgets",
+			WebhookSecret: "secret123",
+		},
+		found: true,
+	}
+
+	handler := NewHandler(registry, previewSvc, slackNotifier)
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"action": "completed",
+		"check_run": map[string]interface{}{
+			"id":            1004,
+			"name":          "build",
+			"status":        "completed",
+			"conclusion":    "failure",
+			"pull_requests": []map[string]interface{}{},
+		},
+		"repository": map[string]interface{}{
+			"owner": map[string]string{"login": "acme"},
+			"name":  "widgets",
+		},
+	})
+
+	sig := generateSignature(payload, "secret123")
+	req := httptest.NewRequest("POST", "/webhooks/github", bytes.NewReader(payload))
+	req.Header.Set("X-GitHub-Event", "check_run")
+	req.Header.Set("X-Hub-Signature-256", sig)
+	rec := httptest.NewRecorder()
+
+	handler.HandleWebhook(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200 for no-PR check run, got %d", rec.Code)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	slackNotifier.mu.Lock()
+	defer slackNotifier.mu.Unlock()
+
+	if slackNotifier.notifyCalled {
+		t.Error("Should not notify for check runs without linked PRs")
+	}
+}

@@ -26,7 +26,7 @@ func TestNotifier_UsesCorrectBotTokenFromTarget(t *testing.T) {
 
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(mockClient, repo, debouncer)
+	notifier := NewNotifier(mockClient, repo, debouncer, &mockAssembler{})
 
 	// Target config with a specific bot token
 	target := targets.TargetConfig{
@@ -72,7 +72,7 @@ func TestNotifier_SkipsWhenNoSlackConfig(t *testing.T) {
 	mockClient := &tokenRecordingClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(mockClient, repo, debouncer)
+	notifier := NewNotifier(mockClient, repo, debouncer, &mockAssembler{})
 
 	// Target without Slack config
 	target := targets.TargetConfig{
@@ -215,7 +215,7 @@ func TestIntegration_FullSlackNotificationFlow(t *testing.T) {
 
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(mockClient, repo, debouncer)
+	notifier := NewNotifier(mockClient, repo, debouncer, &mockAssembler{})
 
 	target := targets.TargetConfig{
 		RepoOwner:     "example-org",
@@ -327,7 +327,7 @@ func TestNotifier_PRFromIssue_UsesSameThread(t *testing.T) {
 
 	client := &tokenRecordingClient{}
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, trackingRepo, debouncer)
+	notifier := NewNotifier(client, trackingRepo, debouncer, &mockAssembler{})
 
 	target := targets.TargetConfig{
 		RepoOwner:     "test-owner",
@@ -486,7 +486,7 @@ func TestNotifier_HandlesThreadNotFoundError(t *testing.T) {
 
 	client := &mockClient{}
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, notFoundRepo, debouncer)
+	notifier := NewNotifier(client, notFoundRepo, debouncer, &mockAssembler{})
 
 	target := targets.TargetConfig{
 		RepoOwner:     "test-owner",
@@ -581,7 +581,7 @@ func TestNotifier_PRWithDifferentNumber_ThreadsToLinkedIssue(t *testing.T) {
 	client := &mockClient{}
 	repo := newMockRepository()
 	debouncer := newMockDebouncer()
-	notifier := NewNotifier(client, repo, debouncer)
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
 
 	target := targets.TargetConfig{
 		RepoOwner:     "example-org",

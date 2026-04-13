@@ -221,6 +221,40 @@ func ParseIssueCommentEvent(payload []byte) (*IssueCommentEvent, error) {
 	}, nil
 }
 
+// CheckRunEvent represents a parsed GitHub check_run webhook event.
+type CheckRunEvent struct {
+	Action     string          `json:"action"`
+	CheckRun   CheckRunPayload `json:"check_run"`
+	Repository struct {
+		Owner struct {
+			Login string `json:"login"`
+		} `json:"owner"`
+		Name string `json:"name"`
+	} `json:"repository"`
+}
+
+// CheckRunPayload represents the check_run payload within a webhook event.
+type CheckRunPayload struct {
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	Status       string `json:"status"`
+	Conclusion   string `json:"conclusion"`
+	HTMLURL      string `json:"html_url"`
+	HeadSHA      string `json:"head_sha"`
+	PullRequests []struct {
+		Number int `json:"number"`
+	} `json:"pull_requests"`
+}
+
+// ParseCheckRunEvent extracts a CheckRunEvent from a raw webhook payload.
+func ParseCheckRunEvent(payload []byte) (*CheckRunEvent, error) {
+	var event CheckRunEvent
+	if err := json.Unmarshal(payload, &event); err != nil {
+		return nil, fmt.Errorf("unmarshal check_run payload: %w", err)
+	}
+	return &event, nil
+}
+
 // closingKeywordRe matches GitHub closing keywords: Fixes #N, Closes #N, Resolves #N (and variants)
 var closingKeywordRe = regexp.MustCompile(`(?i)\b(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?)\s+#(\d+)\b`)
 

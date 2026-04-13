@@ -21,6 +21,8 @@ const (
 	EventPRClosed      EventType = "pr_closed"
 	EventCommentAdded  EventType = "comment_added"
 	EventCommentEdited EventType = "comment_edited"
+	EventCIFailed      EventType = "ci_failed"
+	EventCIPassed      EventType = "ci_passed"
 )
 
 // NotificationEvent represents a notification to be sent to Slack
@@ -41,6 +43,10 @@ type NotificationEvent struct {
 	ThreadTs          string // For emoji reactions
 	Emoji             string // Emoji to add as reaction
 	LinkedIssueNumber int    // Issue number linked from PR body (e.g. "Fixes #16")
+	CheckRunName      string // CI check run name (e.g. "build", "lint")
+	FailureSummary    string // Extracted error text from CI
+	WorkflowURL       string // Link to the check run
+	HeadSHA           string // Commit that triggered the check
 }
 
 // IsPR returns true if the event is related to a pull request

@@ -1,6 +1,9 @@
 package domain
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestValidateTransition(t *testing.T) {
 	tests := []struct {
@@ -34,5 +37,32 @@ func TestValidateTransition(t *testing.T) {
 				t.Errorf("ValidateTransition(%q, %q) error = %v, wantErr %v", tt.from, tt.to, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// --- SlackThreadChecker tests ---
+
+type mockSlackThreadChecker struct {
+	hasThread bool
+}
+
+func (m *mockSlackThreadChecker) HasThread(ctx context.Context, repoOwner, repoName string, prNumber int) bool {
+	return m.hasThread
+}
+
+func TestWithSlackThreadChecker_SetsField(t *testing.T) {
+	checker := &mockSlackThreadChecker{hasThread: true}
+	svc := NewService(nil, nil, nil, nil, nil, nil, nil, "", "", WithSlackThreadChecker(checker))
+
+	if svc.slackThreadChecker == nil {
+		t.Fatal("expected slackThreadChecker to be set")
+	}
+}
+
+func TestWithSlackThreadChecker_NilByDefault(t *testing.T) {
+	svc := NewService(nil, nil, nil, nil, nil, nil, nil, "", "")
+
+	if svc.slackThreadChecker != nil {
+		t.Fatal("expected slackThreadChecker to be nil by default")
 	}
 }

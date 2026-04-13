@@ -783,6 +783,145 @@ func (c *Client) GetJobLogs(ctx context.Context, owner, repo string, jobID int64
 	return string(body), nil
 }
 
+// PRDetail represents full details of a GitHub pull request.
+type PRDetail struct {
+	Number    int
+	Title     string
+	Body      string
+	State     string // "open", "closed"
+	Merged    bool
+	HeadSHA   string
+	HeadRef   string
+	BaseRef   string
+	URL       string
+	User      string
+	Additions int
+	Deletions int
+}
+
+type prDetailResponse struct {
+	Number    int    `json:"number"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	State     string `json:"state"`
+	Merged    bool   `json:"merged"`
+	HTMLURL   string `json:"html_url"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Head      struct {
+		SHA string `json:"sha"`
+		Ref string `json:"ref"`
+	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+	User struct {
+		Login string `json:"login"`
+	} `json:"user"`
+}
+
+// GetPR retrieves details of a specific pull request.
+func (c *Client) GetPR(ctx context.Context, owner, repo string, number int, pat string) (*PRDetail, error) {
+	u := fmt.Sprintf("%s/repos/%s/%s/pulls/%d", c.apiURL(), owner, repo, number)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get pr: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("get pr: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	var result prDetailResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("parse pr response: %w", err)
+	}
+
+	return &PRDetail{
+		Number:    result.Number,
+		Title:     result.Title,
+		Body:      result.Body,
+		State:     result.State,
+		Merged:    result.Merged,
+		HeadSHA:   result.Head.SHA,
+		HeadRef:   result.Head.Ref,
+		BaseRef:   result.Base.Ref,
+		URL:       result.HTMLURL,
+		User:      result.User.Login,
+		Additions: result.Additions,
+		Deletions: result.Deletions,
+	}, nil
+}
+
+// CheckRun represents a GitHub check run status.
+type CheckRun struct {
+	ID         int64
+	Name       string
+	Status     string // "queued", "in_progress", "completed"
+	Conclusion string // "success", "failure", "neutral", etc.
+	HTMLURL    string
+}
+
+type checkRunsResponse struct {
+	CheckRuns []struct {
+		ID         int64  `json:"id"`
+		Name       string `json:"name"`
+		Status     string `json:"status"`
+		Conclusion string `json:"conclusion"`
+		HTMLURL    string `json:"html_url"`
+	} `json:"check_runs"`
+}
+
+// GetCheckRunsForRef retrieves check runs for a given git ref (SHA, branch, or tag).
+func (c *Client) GetCheckRunsForRef(ctx context.Context, owner, repo, ref, pat string) ([]CheckRun, error) {
+	u := fmt.Sprintf("%s/repos/%s/%s/commits/%s/check-runs", c.apiURL(), owner, repo, ref)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get check runs: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("get check runs: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	var result checkRunsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("parse check runs response: %w", err)
+	}
+
+	runs := make([]CheckRun, len(result.CheckRuns))
+	for i, cr := range result.CheckRuns {
+		runs[i] = CheckRun{
+			ID:         cr.ID,
+			Name:       cr.Name,
+			Status:     cr.Status,
+			Conclusion: cr.Conclusion,
+			HTMLURL:    cr.HTMLURL,
+		}
+	}
+	return runs, nil
+}
+
 // DeleteComment removes a PR comment.
 func (c *Client) DeleteComment(ctx context.Context, owner, repo string, commentID int64, pat string) error {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/comments/%d", owner, repo, commentID)

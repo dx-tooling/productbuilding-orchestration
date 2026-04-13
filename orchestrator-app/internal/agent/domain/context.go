@@ -24,12 +24,13 @@ func EstimateTokens(text string) int {
 }
 
 // BuildContext assembles the LLM message list with token-aware truncation.
-// Priority: system prompt (always) → user message (always) → thread history (most recent first) → linked issue (truncated).
+// Priority: system prompt (always) → user message (always) → thread history (most recent first) → feature summary → linked issue (truncated).
 func BuildContext(
 	systemPrompt string,
 	userMessage string,
 	threadMessages []ThreadMessage,
 	linkedIssue *IssueContext,
+	featureSummary string,
 	budget TokenBudget,
 ) []Message {
 	var messages []Message
@@ -97,11 +98,27 @@ func BuildContext(
 		}
 	}
 
-	// Assemble: system → thread → issue → user
+	// 5. Feature summary (injected if available and budget allows)
+	var featureMsg *Message
+	if featureSummary != "" {
+		content := "[Feature status]\n" + featureSummary
+		featureTokens := EstimateTokens(content)
+		if usedTokens+featureTokens <= budget.Total {
+			msg := Message{Role: "system", Content: content}
+			featureMsg = &msg
+			usedTokens += featureTokens
+		}
+	}
+
+	// Assemble: system → thread → issue → feature summary → user
 	messages = append(messages, threadMsgs...)
 
 	if issueMsg != nil {
 		messages = append(messages, *issueMsg)
+	}
+
+	if featureMsg != nil {
+		messages = append(messages, *featureMsg)
 	}
 
 	messages = append(messages, Message{Role: "user", Content: userMessage})

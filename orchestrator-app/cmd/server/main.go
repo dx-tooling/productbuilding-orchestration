@@ -23,6 +23,9 @@ import (
 	previewinfra "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/preview/infra"
 	previewweb "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/preview/web"
 
+	// Feature context
+	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/featurecontext"
+
 	// Slack vertical
 	slackdomain "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/domain"
 	slackinfra "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/infra"
@@ -104,6 +107,16 @@ func (a *slackTraceAdapter) SaveTrace(ctx context.Context, req slackweb.TraceSav
 	})
 }
 
+// slackThreadCheckerAdapter adapts slackinfra.SQLiteRepository to previewdomain.SlackThreadChecker.
+type slackThreadCheckerAdapter struct {
+	repo *slackinfra.SQLiteRepository
+}
+
+func (a *slackThreadCheckerAdapter) HasThread(ctx context.Context, owner, repo string, prNumber int) bool {
+	thread, err := a.repo.FindThreadByPR(ctx, owner, repo, prNumber)
+	return err == nil && thread != nil
+}
+
 func main() {
 	// Load configuration
 	cfg, err := config.Load()
@@ -148,7 +161,16 @@ func main() {
 	slackRepo := slackinfra.NewSQLiteRepository(db)
 	slackDebouncer := slackinfra.NewDebouncer()
 	slackClient := slackdomain.NewClient()
-	slackNotifier := slackdomain.NewNotifier(slackClient, slackRepo, slackDebouncer)
+
+	// Build feature context assembler for enriching notifications
+	featureAssembler := featurecontext.NewAssembler(
+		featurecontext.NewGitHubIssueAdapter(githubClient),
+		featurecontext.NewGitHubPRAdapter(githubClient),
+		featurecontext.NewGitHubCheckRunAdapter(githubClient),
+		featurecontext.NewPreviewAdapter(previewRepo),
+	)
+
+	slackNotifier := slackdomain.NewNotifier(slackClient, slackRepo, slackDebouncer, featureAssembler)
 
 	// ── Build Preview Vertical ─────────────────────────────────────────
 	previewService := previewdomain.NewService(
@@ -161,6 +183,7 @@ func main() {
 		registry,      // TargetRegistry
 		cfg.PreviewDomain,
 		cfg.WorkspaceDir,
+		previewdomain.WithSlackThreadChecker(&slackThreadCheckerAdapter{slackRepo}),
 	)
 
 	// ── Build Agent ────────────────────────────────────────────────────
@@ -196,6 +219,7 @@ func main() {
 	slackHandler := slackweb.NewHandler(agentRunner, slackRepo, slackRepo, convRepo, slackClient, registry, cfg.SlackSigningSecret, cfg.SlackWorkspace)
 	slackHandler.SetAgentTimeout(time.Duration(cfg.AgentRunTimeout) * time.Second)
 	slackHandler.SetTraceSaver(newSlackTraceAdapter(traceRepo))
+	slackHandler.SetFeatureAssembler(featureAssembler)
 	slackweb.RegisterRoutes(mux, slackHandler)
 
 	// ── Health Endpoints (outside application middleware) ───────────────
