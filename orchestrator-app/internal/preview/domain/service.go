@@ -500,8 +500,10 @@ func (s *Service) updateComment(ctx context.Context, p *Preview, body, pat strin
 	}
 }
 
-// notifySlack sends a Slack notification for preview status updates
-func (s *Service) notifySlack(ctx context.Context, p *Preview, eventType slackfacade.EventType, status string, target targets.TargetConfig, userNote string) {
+// notifySlack sends a Slack notification for preview status updates.
+// It uses a detached context because the notifier debounces and runs DB
+// queries after the caller's context (deploy) may have been canceled.
+func (s *Service) notifySlack(_ context.Context, p *Preview, eventType slackfacade.EventType, status string, target targets.TargetConfig, userNote string) {
 	if s.notifier == nil {
 		return
 	}
@@ -527,7 +529,7 @@ func (s *Service) notifySlack(ctx context.Context, p *Preview, eventType slackfa
 		UserNote:          userNote,
 	}
 
-	if err := s.notifier.Notify(ctx, event, target); err != nil {
+	if err := s.notifier.Notify(context.Background(), event, target); err != nil {
 		slog.Warn("failed to send slack notification", "error", err, "repo", p.RepoOwner+"/"+p.RepoName, "pr", p.PRNumber)
 	}
 }

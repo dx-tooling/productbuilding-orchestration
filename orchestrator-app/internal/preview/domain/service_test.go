@@ -437,11 +437,13 @@ type notifyCall struct {
 	LinkedIssueNumber int
 	Status            string
 	UserNote          string
+	CtxCanceled       bool // true if context was already canceled when Notify was called
 }
 
 type mockSlackNotifier struct {
 	mu    sync.Mutex
 	calls []notifyCall
+	ctxs  []context.Context // saved contexts for post-call inspection
 	err   error
 }
 
@@ -456,7 +458,9 @@ func (m *mockSlackNotifier) Notify(ctx context.Context, event slackfacade.Notifi
 		LinkedIssueNumber: event.LinkedIssueNumber,
 		Status:            event.Status,
 		UserNote:          event.UserNote,
+		CtxCanceled:       ctx.Err() != nil,
 	})
+	m.ctxs = append(m.ctxs, ctx)
 	return m.err
 }
 
@@ -970,5 +974,32 @@ func TestDeployPreview_PassesLinkedIssueNumber(t *testing.T) {
 	}
 	if readyCall.LinkedIssueNumber != 101 {
 		t.Errorf("Expected LinkedIssueNumber 101, got %d", readyCall.LinkedIssueNumber)
+	}
+}
+
+func TestDeployPreview_NotificationContextNotCanceled(t *testing.T) {
+	// The deploy method uses a cancellable context (defer cancel()) but
+	// the notifier debounces and runs DB queries after the function returns.
+	// The contexts passed to Notify must still be valid after DeployPreview exits.
+	d := setupTestService(t)
+	req := testDeployRequest()
+
+	d.svc.DeployPreview(context.Background(), req, "ghp_test")
+	// At this point, DeployPreview has returned and defer cancel() has fired.
+
+	d.notifier.mu.Lock()
+	defer d.notifier.mu.Unlock()
+
+	if len(d.notifier.ctxs) == 0 {
+		t.Fatal("Expected at least one notification, got none")
+	}
+
+	// Check contexts AFTER DeployPreview returned — simulates the debounce delay.
+	for i, ctx := range d.notifier.ctxs {
+		if ctx.Err() != nil {
+			t.Errorf("Notification %d (%s) context is canceled after deploy returned: %v — "+
+				"debounced DB queries will fail with 'context canceled'",
+				i, d.notifier.calls[i].EventType, ctx.Err())
+		}
 	}
 }
