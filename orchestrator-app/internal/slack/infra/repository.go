@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/database"
@@ -69,6 +70,9 @@ func (r *SQLiteRepository) SaveThread(ctx context.Context, thread *domain.SlackT
 		thread.UpdatedAt,
 	)
 	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return nil // benign duplicate — first mapping wins
+		}
 		return fmt.Errorf("save slack thread: %w", err)
 	}
 	return nil

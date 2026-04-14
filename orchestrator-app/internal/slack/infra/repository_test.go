@@ -197,8 +197,17 @@ func TestRepository_DuplicatePrevention(t *testing.T) {
 	}
 
 	err := repo.SaveThread(ctx, thread2)
-	if err == nil {
-		t.Error("SaveThread() expected error for duplicate, got nil")
+	if err != nil {
+		t.Errorf("SaveThread() duplicate should be silently ignored, got error: %v", err)
+	}
+
+	// First mapping should be preserved
+	found, findErr := repo.FindThread(ctx, "example-org", "test-repo", 42)
+	if findErr != nil {
+		t.Fatalf("FindThread() error = %v", findErr)
+	}
+	if found.SlackThreadTs != "1234567890.123456" {
+		t.Errorf("expected first mapping's thread_ts, got %s", found.SlackThreadTs)
 	}
 }
 
