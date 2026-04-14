@@ -617,3 +617,56 @@ func TestSpecialist_PassesOnIssueCreatedToTools(t *testing.T) {
 		t.Error("Expected OnIssueCreated callback to be passed to tools and fired")
 	}
 }
+
+func TestDelegatorPrompt_FeedbackRelayMentionsExistingBranch(t *testing.T) {
+	// The delegator prompt must tell the LLM to push to the existing branch/PR
+	// when relaying feedback, so OpenCode doesn't create a duplicate PR.
+	var buf strings.Builder
+	err := delegatorPromptTmpl.Execute(&buf, PromptData{RepoOwner: "acme", RepoName: "widgets"})
+	if err != nil {
+		t.Fatalf("failed to render delegator prompt: %v", err)
+	}
+	prompt := buf.String()
+
+	if !strings.Contains(prompt, "existing branch") {
+		t.Error("delegator prompt must mention 'existing branch' to prevent duplicate PRs during feedback relay")
+	}
+}
+
+func TestSpecialist_IncludesWorkstreamPhaseInContext(t *testing.T) {
+	llm := &mockLLMClient{
+		responses: []ChatResponse{
+			{Content: "Got it, I'll relay the feedback.", FinishReason: "stop"},
+		},
+	}
+	tools := &mockToolExecutor{}
+	s := newTestSpecialist(llm, tools)
+
+	_, err := s.Run(context.Background(), RunRequest{
+		ChannelID:       "C123",
+		MessageTs:       "123.456",
+		UserText:        "the sidebar is too wide",
+		UserName:        "alice",
+		Target:          agentTarget,
+		WorkstreamPhase: "review",
+	}, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(llm.requests) == 0 {
+		t.Fatal("expected at least 1 LLM request")
+	}
+
+	found := false
+	for _, msg := range llm.requests[0].Messages {
+		if strings.Contains(msg.Content, "[Workstream phase: review]") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected workstream phase in specialist LLM messages")
+	}
+}

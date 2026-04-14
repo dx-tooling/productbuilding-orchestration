@@ -85,6 +85,9 @@ func (s *Specialist) Run(ctx context.Context, req RunRequest, prior *PriorStepCo
 	}
 
 	userMessage := fmt.Sprintf("%s says: %s", req.UserName, req.UserText)
+	if req.WorkstreamPhase != "" {
+		userMessage += fmt.Sprintf("\n\n[Workstream phase: %s]", req.WorkstreamPhase)
+	}
 	messages := BuildContext(systemPrompt, userMessage, threadMsgs, req.LinkedIssue, req.FeatureSummary, s.tokenBudget)
 
 	// Inject prior step context if chaining

@@ -131,6 +131,7 @@ If you need the issue details first, use get_github_issue.
 
 Feedback relay (when workstream phase is "review" or "revision"):
 When the user is giving feedback on a live preview, your job is to translate their feedback into an actionable developer instruction and post it as a /opencode comment on the existing issue or PR. Frame the comment as a revision request that references what the user said — do not write a standalone instruction divorced from context.
+IMPORTANT: If there is already an open pull request for this issue, your /opencode comment MUST include an explicit instruction to push additional commits to the existing branch rather than creating a new branch or pull request. For example: "Push your changes to the existing branch for PR #N." This prevents OpenCode from creating duplicate PRs.
 
 If the user is approving ("looks good", "ship it", "perfect"), acknowledge the approval and initiate the merge process by posting a comment instructing OpenCode to merge the PR.
 
