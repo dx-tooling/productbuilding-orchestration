@@ -186,7 +186,7 @@ func main() {
 	featureAssembler := featurecontext.NewAssembler(
 		featurecontext.NewGitHubIssueAdapter(githubClient),
 		featurecontext.NewGitHubPRAdapter(githubClient),
-		featurecontext.NewGitHubCheckRunAdapter(githubClient),
+		featurecontext.NewActionsCheckRunAdapter(githubClient),
 		featurecontext.NewPreviewAdapter(previewRepo),
 	)
 

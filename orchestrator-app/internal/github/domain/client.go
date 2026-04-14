@@ -700,6 +700,37 @@ func (c *Client) ListWorkflowRuns(ctx context.Context, owner, repo, branch, pat 
 	return result.WorkflowRuns, nil
 }
 
+// ListWorkflowRunsForSHA lists workflow runs for a specific commit SHA.
+// Uses the Actions API (requires Actions: Read permission, available on fine-grained PATs).
+func (c *Client) ListWorkflowRunsForSHA(ctx context.Context, owner, repo, sha, pat string) ([]WorkflowRun, error) {
+	u := fmt.Sprintf("%s/repos/%s/%s/actions/runs?head_sha=%s&per_page=20", c.apiURL(), owner, repo, url.QueryEscape(sha))
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list workflow runs for SHA: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("list workflow runs for SHA: status %d: %s", resp.StatusCode, respBody)
+	}
+
+	var result listWorkflowRunsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("parse workflow runs response: %w", err)
+	}
+
+	return result.WorkflowRuns, nil
+}
+
 // WorkflowRunJob represents a job within a workflow run.
 type WorkflowRunJob struct {
 	ID         int64             `json:"id"`
@@ -861,71 +892,6 @@ func (c *Client) GetPR(ctx context.Context, owner, repo string, number int, pat 
 		Additions: result.Additions,
 		Deletions: result.Deletions,
 	}, nil
-}
-
-// CheckRun represents a GitHub check run status.
-type CheckRun struct {
-	ID         int64
-	Name       string
-	Status     string // "queued", "in_progress", "completed"
-	Conclusion string // "success", "failure", "neutral", etc.
-	HTMLURL    string
-}
-
-type checkRunsResponse struct {
-	CheckRuns []struct {
-		ID         int64  `json:"id"`
-		Name       string `json:"name"`
-		Status     string `json:"status"`
-		Conclusion string `json:"conclusion"`
-		HTMLURL    string `json:"html_url"`
-	} `json:"check_runs"`
-}
-
-// GetCheckRunsForRef retrieves check runs for a given git ref (SHA, branch, or tag).
-func (c *Client) GetCheckRunsForRef(ctx context.Context, owner, repo, ref, pat string) ([]CheckRun, error) {
-	u := fmt.Sprintf("%s/repos/%s/%s/commits/%s/check-runs", c.apiURL(), owner, repo, ref)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+pat)
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("get check runs: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusForbidden {
-		// Fine-grained PATs don't support the Checks permission —
-		// return empty results instead of propagating a noisy error.
-		slog.Debug("check runs API returned 403 (token likely lacks Checks permission)", "ref", ref)
-		return nil, nil
-	}
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("get check runs: status %d: %s", resp.StatusCode, respBody)
-	}
-
-	var result checkRunsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("parse check runs response: %w", err)
-	}
-
-	runs := make([]CheckRun, len(result.CheckRuns))
-	for i, cr := range result.CheckRuns {
-		runs[i] = CheckRun{
-			ID:         cr.ID,
-			Name:       cr.Name,
-			Status:     cr.Status,
-			Conclusion: cr.Conclusion,
-			HTMLURL:    cr.HTMLURL,
-		}
-	}
-	return runs, nil
 }
 
 // DeleteComment removes a PR comment.

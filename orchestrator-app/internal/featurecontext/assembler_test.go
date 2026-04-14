@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	githubdomain "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/github/domain"
 )
 
 // --- Mock implementations ---
@@ -248,6 +250,72 @@ func TestAssembler_CIStatus_Pending(t *testing.T) {
 
 	if snap.CIStatus != CIPending {
 		t.Errorf("CIStatus = %q, want %q", snap.CIStatus, CIPending)
+	}
+}
+
+// --- ActionsCheckRunAdapter tests ---
+
+type mockActionsClient struct {
+	runs []githubdomain.WorkflowRun
+	err  error
+	// capture call args
+	calledOwner string
+	calledRepo  string
+	calledSHA   string
+	calledPAT   string
+}
+
+func (m *mockActionsClient) ListWorkflowRunsForSHA(ctx context.Context, owner, repo, sha, pat string) ([]githubdomain.WorkflowRun, error) {
+	m.calledOwner = owner
+	m.calledRepo = repo
+	m.calledSHA = sha
+	m.calledPAT = pat
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.runs, nil
+}
+
+func TestActionsCheckRunAdapter_MapsWorkflowRuns(t *testing.T) {
+	mock := &mockActionsClient{
+		runs: []githubdomain.WorkflowRun{
+			{ID: 1, Name: "CI", Status: "completed", Conclusion: "success", HTMLURL: "https://github.com/acme/widgets/actions/runs/1"},
+			{ID: 2, Name: "Deploy", Status: "completed", Conclusion: "failure", HTMLURL: "https://github.com/acme/widgets/actions/runs/2"},
+			{ID: 3, Name: "Lint", Status: "in_progress", Conclusion: "", HTMLURL: "https://github.com/acme/widgets/actions/runs/3"},
+		},
+	}
+
+	adapter := NewActionsCheckRunAdapter(mock)
+	checks, err := adapter.GetCheckRunsForRef(context.Background(), "acme", "widgets", "abc123", "ghp_test")
+	if err != nil {
+		t.Fatalf("GetCheckRunsForRef() error = %v", err)
+	}
+
+	if mock.calledSHA != "abc123" {
+		t.Errorf("expected SHA abc123, got %s", mock.calledSHA)
+	}
+
+	if len(checks) != 3 {
+		t.Fatalf("len(checks) = %d, want 3", len(checks))
+	}
+
+	if checks[0].Name != "CI" || checks[0].Conclusion != "success" || checks[0].URL != "https://github.com/acme/widgets/actions/runs/1" {
+		t.Errorf("checks[0] = %+v, want CI/success", checks[0])
+	}
+	if checks[1].Name != "Deploy" || checks[1].Conclusion != "failure" {
+		t.Errorf("checks[1] = %+v, want Deploy/failure", checks[1])
+	}
+	if checks[2].Name != "Lint" || checks[2].Conclusion != "" {
+		t.Errorf("checks[2] = %+v, want Lint/empty-conclusion", checks[2])
+	}
+}
+
+func TestActionsCheckRunAdapter_Error(t *testing.T) {
+	mock := &mockActionsClient{err: errors.New("api error")}
+	adapter := NewActionsCheckRunAdapter(mock)
+	_, err := adapter.GetCheckRunsForRef(context.Background(), "acme", "widgets", "abc123", "ghp_test")
+	if err == nil {
+		t.Fatal("expected error, got nil")
 	}
 }
 

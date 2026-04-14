@@ -11,7 +11,6 @@ import (
 type githubClient interface {
 	GetIssue(ctx context.Context, owner, repo string, number int, pat string) (*githubdomain.IssueDetail, error)
 	GetPR(ctx context.Context, owner, repo string, number int, pat string) (*githubdomain.PRDetail, error)
-	GetCheckRunsForRef(ctx context.Context, owner, repo, ref, pat string) ([]githubdomain.CheckRun, error)
 }
 
 // previewRepository defines the preview repo method used by the adapter.
@@ -69,17 +68,23 @@ func (a *GitHubPRAdapter) GetPR(ctx context.Context, owner, repo string, number 
 	}, nil
 }
 
-// GitHubCheckRunAdapter adapts the GitHub client to the CheckRunGetter interface.
-type GitHubCheckRunAdapter struct {
-	client githubClient
+// actionsClient defines the GitHub client method used by the Actions-based adapter.
+type actionsClient interface {
+	ListWorkflowRunsForSHA(ctx context.Context, owner, repo, sha, pat string) ([]githubdomain.WorkflowRun, error)
 }
 
-func NewGitHubCheckRunAdapter(client githubClient) *GitHubCheckRunAdapter {
-	return &GitHubCheckRunAdapter{client: client}
+// ActionsCheckRunAdapter implements CheckRunGetter using the GitHub Actions API
+// instead of the Checks API. This works with fine-grained PATs (Actions: Read).
+type ActionsCheckRunAdapter struct {
+	client actionsClient
 }
 
-func (a *GitHubCheckRunAdapter) GetCheckRunsForRef(ctx context.Context, owner, repo, ref, pat string) ([]CheckRunState, error) {
-	runs, err := a.client.GetCheckRunsForRef(ctx, owner, repo, ref, pat)
+func NewActionsCheckRunAdapter(client actionsClient) *ActionsCheckRunAdapter {
+	return &ActionsCheckRunAdapter{client: client}
+}
+
+func (a *ActionsCheckRunAdapter) GetCheckRunsForRef(ctx context.Context, owner, repo, ref, pat string) ([]CheckRunState, error) {
+	runs, err := a.client.ListWorkflowRunsForSHA(ctx, owner, repo, ref, pat)
 	if err != nil {
 		return nil, err
 	}

@@ -191,13 +191,19 @@ func TestClient_GetPR_NotFound(t *testing.T) {
 	}
 }
 
-func TestClient_GetCheckRunsForRef_Success(t *testing.T) {
+func TestClient_ListWorkflowRunsForSHA_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
 			t.Errorf("Expected GET, got %s", r.Method)
 		}
-		if r.URL.Path != "/repos/acme/widgets/commits/abc123/check-runs" {
-			t.Errorf("Expected path /repos/acme/widgets/commits/abc123/check-runs, got %s", r.URL.Path)
+		if r.URL.Path != "/repos/acme/widgets/actions/runs" {
+			t.Errorf("Expected path /repos/acme/widgets/actions/runs, got %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("head_sha") != "abc123" {
+			t.Errorf("Expected head_sha=abc123, got %s", r.URL.Query().Get("head_sha"))
+		}
+		if r.URL.Query().Get("per_page") != "20" {
+			t.Errorf("Expected per_page=20, got %s", r.URL.Query().Get("per_page"))
 		}
 
 		auth := r.Header.Get("Authorization")
@@ -208,20 +214,28 @@ func TestClient_GetCheckRunsForRef_Success(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"check_runs": []map[string]interface{}{
+			"workflow_runs": []map[string]interface{}{
 				{
-					"id":         int64(1001),
-					"name":       "build",
-					"status":     "completed",
-					"conclusion": "success",
-					"html_url":   "https://github.com/acme/widgets/runs/1001",
+					"id":          int64(5001),
+					"name":        "CI",
+					"status":      "completed",
+					"conclusion":  "success",
+					"html_url":    "https://github.com/acme/widgets/actions/runs/5001",
+					"head_branch": "feature-x",
+					"event":       "push",
+					"created_at":  "2025-01-01T00:00:00Z",
+					"updated_at":  "2025-01-01T00:01:00Z",
 				},
 				{
-					"id":         int64(1002),
-					"name":       "lint",
-					"status":     "completed",
-					"conclusion": "failure",
-					"html_url":   "https://github.com/acme/widgets/runs/1002",
+					"id":          int64(5002),
+					"name":        "Deploy",
+					"status":      "completed",
+					"conclusion":  "failure",
+					"html_url":    "https://github.com/acme/widgets/actions/runs/5002",
+					"head_branch": "feature-x",
+					"event":       "push",
+					"created_at":  "2025-01-01T00:00:00Z",
+					"updated_at":  "2025-01-01T00:02:00Z",
 				},
 			},
 		})
@@ -230,77 +244,32 @@ func TestClient_GetCheckRunsForRef_Success(t *testing.T) {
 
 	client := &Client{httpClient: &http.Client{}, baseURL: server.URL}
 
-	runs, err := client.GetCheckRunsForRef(context.Background(), "acme", "widgets", "abc123", "ghp_test123")
+	runs, err := client.ListWorkflowRunsForSHA(context.Background(), "acme", "widgets", "abc123", "ghp_test123")
 	if err != nil {
-		t.Fatalf("GetCheckRunsForRef() error = %v", err)
+		t.Fatalf("ListWorkflowRunsForSHA() error = %v", err)
 	}
 	if len(runs) != 2 {
 		t.Fatalf("len(runs) = %d, want 2", len(runs))
 	}
 
-	if runs[0].ID != 1001 {
-		t.Errorf("runs[0].ID = %d, want 1001", runs[0].ID)
+	if runs[0].ID != 5001 {
+		t.Errorf("runs[0].ID = %d, want 5001", runs[0].ID)
 	}
-	if runs[0].Name != "build" {
-		t.Errorf("runs[0].Name = %q, want %q", runs[0].Name, "build")
-	}
-	if runs[0].Status != "completed" {
-		t.Errorf("runs[0].Status = %q, want %q", runs[0].Status, "completed")
+	if runs[0].Name != "CI" {
+		t.Errorf("runs[0].Name = %q, want %q", runs[0].Name, "CI")
 	}
 	if runs[0].Conclusion != "success" {
 		t.Errorf("runs[0].Conclusion = %q, want %q", runs[0].Conclusion, "success")
 	}
-	if runs[0].HTMLURL != "https://github.com/acme/widgets/runs/1001" {
-		t.Errorf("runs[0].HTMLURL = %q, want %q", runs[0].HTMLURL, "https://github.com/acme/widgets/runs/1001")
+	if runs[0].HTMLURL != "https://github.com/acme/widgets/actions/runs/5001" {
+		t.Errorf("runs[0].HTMLURL = %q, want %q", runs[0].HTMLURL, "https://github.com/acme/widgets/actions/runs/5001")
 	}
 
-	if runs[1].ID != 1002 {
-		t.Errorf("runs[1].ID = %d, want 1002", runs[1].ID)
-	}
-	if runs[1].Name != "lint" {
-		t.Errorf("runs[1].Name = %q, want %q", runs[1].Name, "lint")
+	if runs[1].ID != 5002 {
+		t.Errorf("runs[1].ID = %d, want 5002", runs[1].ID)
 	}
 	if runs[1].Conclusion != "failure" {
 		t.Errorf("runs[1].Conclusion = %q, want %q", runs[1].Conclusion, "failure")
-	}
-}
-
-func TestClient_GetCheckRunsForRef_Empty(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"check_runs": []map[string]interface{}{},
-		})
-	}))
-	defer server.Close()
-
-	client := &Client{httpClient: &http.Client{}, baseURL: server.URL}
-
-	runs, err := client.GetCheckRunsForRef(context.Background(), "acme", "widgets", "abc123", "ghp_test123")
-	if err != nil {
-		t.Fatalf("GetCheckRunsForRef() error = %v", err)
-	}
-	if len(runs) != 0 {
-		t.Errorf("len(runs) = %d, want 0", len(runs))
-	}
-}
-
-func TestClient_GetCheckRunsForRef_403_ReturnsEmptySlice(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"message":"Resource not accessible by personal access token"}`))
-	}))
-	defer server.Close()
-
-	client := &Client{httpClient: &http.Client{}, baseURL: server.URL}
-
-	runs, err := client.GetCheckRunsForRef(context.Background(), "acme", "widgets", "abc123", "ghp_test123")
-	if err != nil {
-		t.Fatalf("GetCheckRunsForRef() should return nil error on 403, got: %v", err)
-	}
-	if len(runs) != 0 {
-		t.Errorf("len(runs) = %d, want 0 on 403", len(runs))
 	}
 }
 
