@@ -592,3 +592,32 @@ func TestRepository_UpdateThread(t *testing.T) {
 		t.Errorf("SlackThreadTs = %v, want original value", found.SlackThreadTs)
 	}
 }
+
+func TestRepository_UpdateWorkstreamPhase_NoThread_ReturnsNil(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewSQLiteRepository(db)
+	ctx := context.Background()
+
+	// Updating phase for a non-existent thread should be a no-op, not an error.
+	// This happens when the agent responds to a new top-level message that has
+	// no thread mapping yet.
+	err := repo.UpdateWorkstreamPhase(ctx, "9999999999.999999", domain.PhaseIntake)
+	if err != nil {
+		t.Errorf("UpdateWorkstreamPhase() for missing thread should return nil, got: %v", err)
+	}
+}
+
+func TestRepository_SetFeedbackRelayed_NoThread_ReturnsNil(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewSQLiteRepository(db)
+	ctx := context.Background()
+
+	err := repo.SetFeedbackRelayed(ctx, "9999999999.999999", true)
+	if err != nil {
+		t.Errorf("SetFeedbackRelayed() for missing thread should return nil, got: %v", err)
+	}
+}

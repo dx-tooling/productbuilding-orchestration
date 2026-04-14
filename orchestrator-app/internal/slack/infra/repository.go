@@ -142,18 +142,15 @@ func (r *SQLiteRepository) FindThreadBySlackTs(ctx context.Context, threadTs str
 }
 
 // UpdateWorkstreamPhase updates only the workstream phase for a thread identified by Slack timestamp.
+// Returns nil if no matching thread exists (no-op for unmapped threads).
 func (r *SQLiteRepository) UpdateWorkstreamPhase(ctx context.Context, threadTs string, phase domain.WorkstreamPhase) error {
-	res, err := r.db.ExecContext(ctx, `
+	_, err := r.db.ExecContext(ctx, `
 		UPDATE slack_threads SET workstream_phase = ?, updated_at = ?
 		WHERE slack_thread_ts = ?`,
 		string(phase), time.Now(), threadTs,
 	)
 	if err != nil {
 		return fmt.Errorf("update workstream phase: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("thread not found for ts %s", threadTs)
 	}
 	return nil
 }
@@ -176,18 +173,15 @@ func (r *SQLiteRepository) SetPreviewNotified(ctx context.Context, threadTs stri
 }
 
 // SetFeedbackRelayed updates the feedback_relayed flag for a thread.
+// Returns nil if no matching thread exists (no-op for unmapped threads).
 func (r *SQLiteRepository) SetFeedbackRelayed(ctx context.Context, threadTs string, relayed bool) error {
-	res, err := r.db.ExecContext(ctx, `
+	_, err := r.db.ExecContext(ctx, `
 		UPDATE slack_threads SET feedback_relayed = ?, updated_at = ?
 		WHERE slack_thread_ts = ?`,
 		relayed, time.Now(), threadTs,
 	)
 	if err != nil {
 		return fmt.Errorf("set feedback relayed: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("thread not found for ts %s", threadTs)
 	}
 	return nil
 }
