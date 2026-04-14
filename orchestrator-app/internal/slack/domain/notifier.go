@@ -328,14 +328,17 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 			return
 		}
 
-		for _, comment := range p.comments {
-			updateMsg := n.messages.EventMessage(*comment, snap, thread.WorkstreamPhase)
-			if err := n.client.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, updateMsg); err != nil {
-				slog.Warn("failed to post comment to slack thread",
-					"error", err,
-					"channel", thread.SlackChannel,
-					"thread", thread.SlackThreadTs,
-				)
+		// Skip template messages when agent invoker handles the event type
+		if !shouldSkipMessage(p.comments[0].Type) {
+			for _, comment := range p.comments {
+				updateMsg := n.messages.EventMessage(*comment, snap, thread.WorkstreamPhase)
+				if err := n.client.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, updateMsg); err != nil {
+					slog.Warn("failed to post comment to slack thread",
+						"error", err,
+						"channel", thread.SlackChannel,
+						"thread", thread.SlackThreadTs,
+					)
+				}
 			}
 		}
 	}
@@ -396,6 +399,8 @@ func shouldSkipMessage(eventType slackfacade.EventType) bool {
 	case slackfacade.EventCIFailed: // agent invoker handles this
 		return true
 	case slackfacade.EventPRMerged: // agent invoker handles this
+		return true
+	case slackfacade.EventCommentAdded: // agent invoker handles this
 		return true
 	default:
 		return false

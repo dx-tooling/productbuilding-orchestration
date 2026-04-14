@@ -535,29 +535,19 @@ func TestNotifier_HandlesThreadNotFoundError(t *testing.T) {
 	}
 	debouncer.executeAll()
 
-	// CRITICAL: Should NOT create a new parent message
-	// The bug would cause 3 messages (2 parents + 1 reply)
-	// Fixed: Should be 2 messages (1 parent + 1 reply)
-	if len(client.postedMessages) != 2 {
-		t.Errorf("BUG REGRESSION: Expected 2 messages total (1 parent + 1 reply), got %d\n"+
-			"If >2, the comment created a new thread instead of replying to existing.", len(client.postedMessages))
-	}
-
-	// Verify the second message is a reply (has thread field set)
-	if len(client.postedMessages) >= 2 {
-		reply := client.postedMessages[1]
-		// Reply should have Thread field set (indicating it's a reply, not parent)
-		if reply.Thread == "" {
-			t.Errorf("Comment appears to be a new parent message (Thread=''), not a reply\n" +
-				"The comment should have been threaded under the parent.")
-		}
+	// CRITICAL: Should NOT create a new parent message.
+	// Comment template messages are now suppressed (agent invoker handles narration).
+	// Only the parent message from issue creation should exist.
+	if len(client.postedMessages) != 1 {
+		t.Errorf("BUG REGRESSION: Expected 1 message total (1 parent, comment suppressed), got %d\n"+
+			"If >1, the comment template was not suppressed.", len(client.postedMessages))
 	}
 
 	t.Log("✅ PASS: 'thread not found' error handled correctly")
 	t.Log("   - Issue created parent message")
 	t.Log("   - Repository returned 'not found' error on comment lookup")
 	t.Log("   - Code correctly ignored error and found existing thread")
-	t.Log("   - Comment posted as reply (no duplicate thread)")
+	t.Log("   - Comment template suppressed (agent handles narration)")
 }
 
 // TestNotifier_PRWithDifferentNumber_ThreadsToLinkedIssue verifies that when
@@ -665,21 +655,9 @@ func TestNotifier_PRWithDifferentNumber_ThreadsToLinkedIssue(t *testing.T) {
 	}
 	debouncer.executeAll()
 
-	// Should be 3 messages total: 1 parent + 2 replies
-	if len(client.postedMessages) != 3 {
-		t.Errorf("Expected 3 messages total, got %d", len(client.postedMessages))
-	}
-
-	// All replies should be in the same thread
-	if len(client.postedMessages) >= 3 {
-		commentMsg := client.postedMessages[2]
-		if commentMsg.Thread == "" {
-			t.Error("Comment on PR #17 should be threaded, but was posted as parent")
-		}
-		if commentMsg.Thread != prMsg.Thread {
-			t.Errorf("Comment and PR should be in the same thread: PR thread=%q, comment thread=%q",
-				prMsg.Thread, commentMsg.Thread)
-		}
+	// Should be 2 messages total: 1 parent + 1 PR reply. Comment is suppressed (agent handles).
+	if len(client.postedMessages) != 2 {
+		t.Errorf("Expected 2 messages total (parent + PR, comment suppressed), got %d", len(client.postedMessages))
 	}
 }
 

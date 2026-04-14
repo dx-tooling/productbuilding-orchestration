@@ -334,14 +334,9 @@ func TestNotifier_Notify_ExistingThread(t *testing.T) {
 	notifier.Notify(context.Background(), event2, target)
 	debouncer.executeAll()
 
-	// Should have 1 message: only the comment reply (EventIssueOpened reply is suppressed)
-	if len(client.postedMessages) != 1 {
-		t.Errorf("Expected 1 posted message (comment only), got %d", len(client.postedMessages))
-	}
-
-	// Comment should be in thread
-	if len(client.postedMessages) > 0 && client.postedMessages[0].Thread != "parent-ts-123" {
-		t.Errorf("Expected thread reply to parent-ts-123, got %s", client.postedMessages[0].Thread)
+	// Both EventIssueOpened and EventCommentAdded are agent-handled — no template messages
+	if len(client.postedMessages) != 0 {
+		t.Errorf("Expected 0 posted messages (both events agent-handled), got %d", len(client.postedMessages))
 	}
 }
 
@@ -729,11 +724,9 @@ func TestNotifier_CommentOnKnownIssue_PostsToThread(t *testing.T) {
 	notifier.Notify(context.Background(), event, target)
 	debouncer.executeAll()
 
-	if len(client.postedMessages) != 1 {
-		t.Fatalf("Expected 1 message, got %d", len(client.postedMessages))
-	}
-	if client.postedMessages[0].Thread != "existing-thread-ts" {
-		t.Errorf("Expected reply in existing thread, got thread=%q", client.postedMessages[0].Thread)
+	// Comment template messages are suppressed — agent invoker handles narration
+	if len(client.postedMessages) != 0 {
+		t.Fatalf("Expected 0 messages (comment suppressed, agent handles), got %d", len(client.postedMessages))
 	}
 }
 
@@ -1141,23 +1134,9 @@ func TestNotifier_TwoComments_PreservedInOrder(t *testing.T) {
 	notifier.Notify(context.Background(), comment2, target)
 	debouncer.executeAll()
 
-	if len(client.postedMessages) != 2 {
-		t.Fatalf("Expected 2 posted messages, got %d", len(client.postedMessages))
-	}
-	if !strings.Contains(client.postedMessages[0].Text, "first comment") {
-		t.Errorf("First message should contain 'first comment', got: %s", client.postedMessages[0].Text)
-	}
-	if !strings.Contains(client.postedMessages[1].Text, "second comment") {
-		t.Errorf("Second message should contain 'second comment', got: %s", client.postedMessages[1].Text)
-	}
-	// Verify new format: blockquote instead of code block
-	for _, msg := range client.postedMessages {
-		if strings.Contains(msg.Text, "```") {
-			t.Errorf("Comments should use blockquote, not code block, got: %s", msg.Text)
-		}
-	}
-	if client.postedMessages[0].Thread != "thread-ts-42" || client.postedMessages[1].Thread != "thread-ts-42" {
-		t.Errorf("Both comments should be in thread thread-ts-42")
+	// Comment template messages are suppressed — agent invoker handles narration
+	if len(client.postedMessages) != 0 {
+		t.Fatalf("Expected 0 posted messages (comments suppressed, agent handles), got %d", len(client.postedMessages))
 	}
 }
 
@@ -1198,20 +1177,13 @@ func TestNotifier_PROpenedPlusComment_SameBatch(t *testing.T) {
 	notifier.Notify(context.Background(), commentEvent, target)
 	debouncer.executeAll()
 
-	// Should have 2 messages: parent (from PR) + thread reply (from comment)
-	if len(client.postedMessages) != 2 {
-		t.Fatalf("Expected 2 posted messages, got %d: %+v", len(client.postedMessages), client.postedMessages)
+	// Should have 1 message: parent (from PR). Comment is suppressed (agent handles).
+	if len(client.postedMessages) != 1 {
+		t.Fatalf("Expected 1 posted message (parent only, comment suppressed), got %d: %+v", len(client.postedMessages), client.postedMessages)
 	}
-	// First message is the parent (PostMessage, no thread)
+	// The only message is the parent (PostMessage, no thread)
 	if client.postedMessages[0].Thread != "" {
 		t.Errorf("First message should be a parent (no thread), got thread=%q", client.postedMessages[0].Thread)
-	}
-	// Second message is the comment (PostToThread)
-	if client.postedMessages[1].Thread == "" {
-		t.Error("Second message should be a thread reply")
-	}
-	if !strings.Contains(client.postedMessages[1].Text, "Deploy started") {
-		t.Errorf("Thread reply should contain comment body, got: %s", client.postedMessages[1].Text)
 	}
 }
 
@@ -1254,15 +1226,12 @@ func TestNotifier_CommentBeforeLifecycle_SameBatch(t *testing.T) {
 	notifier.Notify(context.Background(), prEvent, target)
 	debouncer.executeAll()
 
-	// Should have 2 messages: parent (from PR, processed first) + thread reply (comment)
-	if len(client.postedMessages) != 2 {
-		t.Fatalf("Expected 2 posted messages, got %d: %+v", len(client.postedMessages), client.postedMessages)
+	// Should have 1 message: parent (from PR, processed first). Comment is suppressed (agent handles).
+	if len(client.postedMessages) != 1 {
+		t.Fatalf("Expected 1 posted message (parent only, comment suppressed), got %d: %+v", len(client.postedMessages), client.postedMessages)
 	}
 	if client.postedMessages[0].Thread != "" {
 		t.Errorf("First message should be a parent, got thread=%q", client.postedMessages[0].Thread)
-	}
-	if client.postedMessages[1].Thread == "" {
-		t.Error("Second message should be a thread reply")
 	}
 }
 
@@ -1385,11 +1354,10 @@ func TestNotifier_OrphanComment_RetriesFindsThread(t *testing.T) {
 
 	debouncer.executeAll()
 
-	if len(client.postedMessages) != 1 {
-		t.Fatalf("Expected 1 message after retry found thread, got %d", len(client.postedMessages))
-	}
-	if client.postedMessages[0].Thread != "late-thread-ts" {
-		t.Errorf("Expected reply in late-thread-ts, got thread=%q", client.postedMessages[0].Thread)
+	// Comment template messages are suppressed — agent invoker handles narration
+	// (thread lookup still succeeds, but no message is posted)
+	if len(client.postedMessages) != 0 {
+		t.Fatalf("Expected 0 messages (comment suppressed, agent handles), got %d", len(client.postedMessages))
 	}
 }
 
@@ -1433,8 +1401,9 @@ func TestNotifier_FlushIdempotent(t *testing.T) {
 	notifier.flush(context.Background(), key, target)
 	notifier.flush(context.Background(), key, target)
 
-	if len(client.postedMessages) != 1 {
-		t.Errorf("Expected 1 message after double flush, got %d", len(client.postedMessages))
+	// Comment template messages are suppressed — agent invoker handles narration
+	if len(client.postedMessages) != 0 {
+		t.Errorf("Expected 0 messages after double flush (comment suppressed), got %d", len(client.postedMessages))
 	}
 }
 
@@ -1500,48 +1469,25 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 		}
 	})
 
-	// Events that are NOT delegated should still produce messages.
-	tests := []struct {
-		name     string
-		event    slackfacade.NotificationEvent
-		contains string
-	}{
-		{
-			name: "Comment with link",
-			event: slackfacade.NotificationEvent{
-				Type:        slackfacade.EventCommentAdded,
-				RepoOwner:   "example-org",
-				RepoName:    "test-repo",
-				IssueNumber: 42,
-				Author:      "alice",
-				Body:        "This is a long comment that should be truncated",
-				CommentID:   123456,
-			},
-			contains: "@alice commented on GitHub:",
-		},
-	}
+	// Comments are now agent-handled — verify template message is suppressed
+	t.Run("Comment suppressed (agent handles)", func(t *testing.T) {
+		client.postedMessages = nil
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Clear previous messages
-			client.postedMessages = nil
+		notifier.Notify(context.Background(), slackfacade.NotificationEvent{
+			Type:        slackfacade.EventCommentAdded,
+			RepoOwner:   "example-org",
+			RepoName:    "test-repo",
+			IssueNumber: 42,
+			Author:      "alice",
+			Body:        "This is a long comment that should be truncated",
+			CommentID:   123456,
+		}, target)
+		debouncer.executeAll()
 
-			notifier.Notify(context.Background(), tt.event, target)
-			debouncer.executeAll()
-
-			if len(client.postedMessages) == 0 {
-				t.Fatal("Expected at least 1 message")
-			}
-
-			msg := client.postedMessages[len(client.postedMessages)-1].Text
-			if msg == "" {
-				t.Error("Message text should not be empty")
-			}
-			if !strings.Contains(msg, tt.contains) {
-				t.Errorf("Expected message to contain %q, got:\n%s", tt.contains, msg)
-			}
-		})
-	}
+		if len(client.postedMessages) != 0 {
+			t.Fatalf("Expected 0 messages (comment suppressed, agent handles), got %d", len(client.postedMessages))
+		}
+	})
 }
 
 func TestNotifier_NewThread_UsesMessageGenerator(t *testing.T) {
@@ -1629,17 +1575,9 @@ func TestNotifier_ExistingThread_UsesMessageGenerator(t *testing.T) {
 	notifier.Notify(context.Background(), event, target)
 	debouncer.executeAll()
 
-	if len(client.postedMessages) != 1 {
-		t.Fatalf("Expected 1 message, got %d", len(client.postedMessages))
-	}
-
-	msg := client.postedMessages[0].Text
-	// New format: "@bob commented on GitHub:" with blockquote
-	if !strings.Contains(msg, "@bob commented on GitHub:") {
-		t.Errorf("Expected new comment format, got: %s", msg)
-	}
-	if !strings.Contains(msg, "> Great idea!") {
-		t.Errorf("Expected body in blockquote, got: %s", msg)
+	// Comment template messages are suppressed — agent invoker handles narration
+	if len(client.postedMessages) != 0 {
+		t.Fatalf("Expected 0 messages (comment suppressed, agent handles), got %d", len(client.postedMessages))
 	}
 }
 
@@ -1778,7 +1716,7 @@ func TestShouldSkipMessage(t *testing.T) {
 		{"EventPRMerged is skipped (agent handles)", slackfacade.EventPRMerged, true},
 		{"EventIssueClosed is skipped", slackfacade.EventIssueClosed, true},
 		{"EventPRClosed is skipped", slackfacade.EventPRClosed, true},
-		{"EventCommentAdded is NOT skipped", slackfacade.EventCommentAdded, false},
+		{"EventCommentAdded is skipped (agent handles)", slackfacade.EventCommentAdded, true},
 		{"EventPROpened is NOT skipped (has PhaseOpen logic)", slackfacade.EventPROpened, false},
 	}
 
