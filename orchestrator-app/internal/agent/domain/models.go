@@ -121,7 +121,7 @@ type RoutingDecision struct {
 // RoutingStep identifies a specialist to invoke with optional parameters.
 type RoutingStep struct {
 	Specialist string            `json:"specialist"`
-	Params     map[string]string `json:"params"`
+	Params     map[string]any `json:"params"`
 	Reasoning  string            `json:"reasoning"`
 }
 

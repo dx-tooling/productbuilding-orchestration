@@ -24,7 +24,7 @@ func NewRouter(llm LLMClient) *Router {
 
 // researcherFallback is the default when routing fails.
 var researcherFallback = RoutingDecision{
-	Steps: []RoutingStep{{Specialist: "researcher", Params: map[string]string{}, Reasoning: "fallback"}},
+	Steps: []RoutingStep{{Specialist: "researcher", Params: map[string]any{}, Reasoning: "fallback"}},
 }
 
 // Route makes one LLM call and returns a RoutingDecision.

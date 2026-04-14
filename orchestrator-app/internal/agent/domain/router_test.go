@@ -254,6 +254,29 @@ func TestRouter_JSONInCodeFence(t *testing.T) {
 	}
 }
 
+func TestRouter_NumericParamsDoNotFallback(t *testing.T) {
+	llm := &mockLLMClient{
+		responses: []ChatResponse{
+			{Content: `{"steps":[{"specialist":"event_narrator","params":{"number":100},"reasoning":"narrate"}]}`, FinishReason: "stop"},
+		},
+	}
+	r := NewRouter(llm)
+
+	decision, err := r.Route(context.Background(), "narrate PR #100", targets.TargetConfig{
+		RepoOwner: "acme", RepoName: "widgets",
+	}, nil, nil, "")
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(decision.Steps) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(decision.Steps))
+	}
+	if decision.Steps[0].Specialist != "event_narrator" {
+		t.Errorf("expected event_narrator, got %s (numeric params caused fallback?)", decision.Steps[0].Specialist)
+	}
+}
+
 func TestRouter_ThreadHistoryIncludedInPrompt(t *testing.T) {
 	llm := &mockLLMClient{
 		responses: []ChatResponse{
