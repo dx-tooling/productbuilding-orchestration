@@ -899,6 +899,12 @@ func (c *Client) GetCheckRunsForRef(ctx context.Context, owner, repo, ref, pat s
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusForbidden {
+		// Fine-grained PATs don't support the Checks permission —
+		// return empty results instead of propagating a noisy error.
+		slog.Debug("check runs API returned 403 (token likely lacks Checks permission)", "ref", ref)
+		return nil, nil
+	}
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("get check runs: status %d: %s", resp.StatusCode, respBody)

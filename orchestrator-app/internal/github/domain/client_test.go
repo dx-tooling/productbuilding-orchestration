@@ -286,6 +286,24 @@ func TestClient_GetCheckRunsForRef_Empty(t *testing.T) {
 	}
 }
 
+func TestClient_GetCheckRunsForRef_403_ReturnsEmptySlice(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"message":"Resource not accessible by personal access token"}`))
+	}))
+	defer server.Close()
+
+	client := &Client{httpClient: &http.Client{}, baseURL: server.URL}
+
+	runs, err := client.GetCheckRunsForRef(context.Background(), "acme", "widgets", "abc123", "ghp_test123")
+	if err != nil {
+		t.Fatalf("GetCheckRunsForRef() should return nil error on 403, got: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Errorf("len(runs) = %d, want 0 on 403", len(runs))
+	}
+}
+
 func TestClient_CreateIssue_APIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
