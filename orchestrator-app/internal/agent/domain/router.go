@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
+	slackdomain "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/domain"
 )
 
 // Router classifies user intent via a single LLM call and returns a RoutingDecision.
@@ -27,10 +28,13 @@ var researcherFallback = RoutingDecision{
 }
 
 // Route makes one LLM call and returns a RoutingDecision.
-func (r *Router) Route(ctx context.Context, userText string, target targets.TargetConfig, linkedIssue *IssueContext, threadMessages []ThreadMessage) (RoutingDecision, error) {
+func (r *Router) Route(ctx context.Context, userText string, target targets.TargetConfig, linkedIssue *IssueContext, threadMessages []ThreadMessage, phase slackdomain.WorkstreamPhase) (RoutingDecision, error) {
 	systemPrompt := renderRouterPrompt(target.RepoOwner, target.RepoName)
 
 	userMsg := userText
+	if phase != "" {
+		userMsg += fmt.Sprintf("\n\n[Workstream phase: %s]", phase)
+	}
 	if linkedIssue != nil {
 		userMsg += fmt.Sprintf("\n\n[This Slack thread is linked to GitHub issue #%d: %q (state: %s)]",
 			linkedIssue.Number, linkedIssue.Title, linkedIssue.State)

@@ -19,7 +19,7 @@ func TestRouter_SingleStepResearch(t *testing.T) {
 
 	decision, err := r.Route(context.Background(), "what issues are open?", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, nil, nil)
+	}, nil, nil, "")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -42,7 +42,7 @@ func TestRouter_SingleStepIssueCreation(t *testing.T) {
 
 	decision, err := r.Route(context.Background(), "create an issue for dark mode", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, nil, nil)
+	}, nil, nil, "")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -65,7 +65,7 @@ func TestRouter_MultiStep_CreateAndDelegate(t *testing.T) {
 
 	decision, err := r.Route(context.Background(), "create an issue and delegate to OpenCode", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, nil, nil)
+	}, nil, nil, "")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -91,7 +91,7 @@ func TestRouter_MalformedJSON_FallsBackToResearcher(t *testing.T) {
 
 	decision, err := r.Route(context.Background(), "hello", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, nil, nil)
+	}, nil, nil, "")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -114,7 +114,7 @@ func TestRouter_EmptySteps_FallsBackToResearcher(t *testing.T) {
 
 	decision, err := r.Route(context.Background(), "hello", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, nil, nil)
+	}, nil, nil, "")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -135,7 +135,7 @@ func TestRouter_LLMError_PropagatesError(t *testing.T) {
 
 	_, err := r.Route(context.Background(), "hello", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, nil, nil)
+	}, nil, nil, "")
 
 	if err == nil {
 		t.Fatal("expected error")
@@ -155,7 +155,7 @@ func TestRouter_IncludesLinkedIssueInPrompt(t *testing.T) {
 
 	_, err := r.Route(context.Background(), "what's the status?", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, &IssueContext{Number: 42, Title: "Login bug"}, nil)
+	}, &IssueContext{Number: 42, Title: "Login bug"}, nil, "")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -187,7 +187,7 @@ func TestRouter_PromptContainsRepoInfo(t *testing.T) {
 
 	_, err := r.Route(context.Background(), "hello", targets.TargetConfig{
 		RepoOwner: "myorg", RepoName: "myrepo",
-	}, nil, nil)
+	}, nil, nil, "")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -218,7 +218,7 @@ func TestRouter_JSONWithTrailingText(t *testing.T) {
 
 	decision, err := r.Route(context.Background(), "close issue #7", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, nil, nil)
+	}, nil, nil, "")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -241,7 +241,7 @@ func TestRouter_JSONInCodeFence(t *testing.T) {
 
 	decision, err := r.Route(context.Background(), "close issue #7", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, nil, nil)
+	}, nil, nil, "")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -270,7 +270,7 @@ func TestRouter_ThreadHistoryIncludedInPrompt(t *testing.T) {
 
 	_, err := r.Route(context.Background(), "let's start fresh", targets.TargetConfig{
 		RepoOwner: "acme", RepoName: "widgets",
-	}, nil, threadMsgs)
+	}, nil, threadMsgs, "")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

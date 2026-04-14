@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/database"
 	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/domain"
@@ -17,6 +18,9 @@ type Repository interface {
 	FindThreadByPR(ctx context.Context, repoOwner, repoName string, prNumber int) (*domain.SlackThread, error)
 	FindThreadByNumber(ctx context.Context, repoOwner, repoName string, number int) (*domain.SlackThread, error)
 	FindThreadBySlackTs(ctx context.Context, threadTs string) (*domain.SlackThread, error)
+	UpdateWorkstreamPhase(ctx context.Context, threadTs string, phase domain.WorkstreamPhase) error
+	SetPreviewNotified(ctx context.Context, threadTs string) error
+	SetFeedbackRelayed(ctx context.Context, threadTs string, relayed bool) error
 }
 
 // SQLiteRepository implements Repository using SQLite
@@ -38,13 +42,17 @@ func (r *SQLiteRepository) SaveThread(ctx context.Context, thread *domain.SlackT
 		INSERT INTO slack_threads (
 			id, repo_owner, repo_name, github_issue_id, github_pr_id,
 			slack_channel, slack_thread_ts, slack_parent_ts, thread_type,
+			workstream_phase, preview_notified_at, feedback_relayed,
 			created_at, updated_at
-		) VALUES (?, ?, ?, NULLIF(?, 0), NULLIF(?, 0), ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, NULLIF(?, 0), NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			github_issue_id = NULLIF(excluded.github_issue_id, 0),
-			github_pr_id    = NULLIF(excluded.github_pr_id, 0),
-			thread_type     = excluded.thread_type,
-			updated_at      = excluded.updated_at`,
+			github_issue_id    = NULLIF(excluded.github_issue_id, 0),
+			github_pr_id       = NULLIF(excluded.github_pr_id, 0),
+			thread_type        = excluded.thread_type,
+			workstream_phase   = excluded.workstream_phase,
+			preview_notified_at = excluded.preview_notified_at,
+			feedback_relayed   = excluded.feedback_relayed,
+			updated_at         = excluded.updated_at`,
 		thread.ID,
 		thread.RepoOwner,
 		thread.RepoName,
@@ -54,6 +62,9 @@ func (r *SQLiteRepository) SaveThread(ctx context.Context, thread *domain.SlackT
 		thread.SlackThreadTs,
 		thread.SlackParentTs,
 		thread.ThreadType,
+		string(thread.WorkstreamPhase),
+		thread.PreviewNotifiedAt,
+		thread.FeedbackRelayed,
 		thread.CreatedAt,
 		thread.UpdatedAt,
 	)
@@ -68,6 +79,7 @@ func (r *SQLiteRepository) FindThread(ctx context.Context, repoOwner, repoName s
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, repo_owner, repo_name, github_issue_id, github_pr_id,
 		       slack_channel, slack_thread_ts, slack_parent_ts, thread_type,
+		       workstream_phase, preview_notified_at, feedback_relayed,
 		       created_at, updated_at
 		FROM slack_threads
 		WHERE repo_owner = ? AND repo_name = ? AND github_issue_id = ?`,
@@ -82,6 +94,7 @@ func (r *SQLiteRepository) FindThreadByPR(ctx context.Context, repoOwner, repoNa
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, repo_owner, repo_name, github_issue_id, github_pr_id,
 		       slack_channel, slack_thread_ts, slack_parent_ts, thread_type,
+		       workstream_phase, preview_notified_at, feedback_relayed,
 		       created_at, updated_at
 		FROM slack_threads
 		WHERE repo_owner = ? AND repo_name = ? AND github_pr_id = ?`,
@@ -97,6 +110,7 @@ func (r *SQLiteRepository) FindThreadByNumber(ctx context.Context, repoOwner, re
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, repo_owner, repo_name, github_issue_id, github_pr_id,
 		       slack_channel, slack_thread_ts, slack_parent_ts, thread_type,
+		       workstream_phase, preview_notified_at, feedback_relayed,
 		       created_at, updated_at
 		FROM slack_threads
 		WHERE repo_owner = ? AND repo_name = ? AND (github_issue_id = ? OR github_pr_id = ?)`,
@@ -111,6 +125,7 @@ func (r *SQLiteRepository) FindThreadBySlackTs(ctx context.Context, threadTs str
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, repo_owner, repo_name, github_issue_id, github_pr_id,
 		       slack_channel, slack_thread_ts, slack_parent_ts, thread_type,
+		       workstream_phase, preview_notified_at, feedback_relayed,
 		       created_at, updated_at
 		FROM slack_threads
 		WHERE slack_thread_ts = ?
@@ -122,10 +137,63 @@ func (r *SQLiteRepository) FindThreadBySlackTs(ctx context.Context, threadTs str
 	return scanThread(row)
 }
 
+// UpdateWorkstreamPhase updates only the workstream phase for a thread identified by Slack timestamp.
+func (r *SQLiteRepository) UpdateWorkstreamPhase(ctx context.Context, threadTs string, phase domain.WorkstreamPhase) error {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE slack_threads SET workstream_phase = ?, updated_at = ?
+		WHERE slack_thread_ts = ?`,
+		string(phase), time.Now(), threadTs,
+	)
+	if err != nil {
+		return fmt.Errorf("update workstream phase: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("thread not found for ts %s", threadTs)
+	}
+	return nil
+}
+
+// SetPreviewNotified marks that a preview-ready notification was posted.
+func (r *SQLiteRepository) SetPreviewNotified(ctx context.Context, threadTs string) error {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE slack_threads SET preview_notified_at = ?, updated_at = ?
+		WHERE slack_thread_ts = ?`,
+		time.Now(), time.Now(), threadTs,
+	)
+	if err != nil {
+		return fmt.Errorf("set preview notified: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("thread not found for ts %s", threadTs)
+	}
+	return nil
+}
+
+// SetFeedbackRelayed updates the feedback_relayed flag for a thread.
+func (r *SQLiteRepository) SetFeedbackRelayed(ctx context.Context, threadTs string, relayed bool) error {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE slack_threads SET feedback_relayed = ?, updated_at = ?
+		WHERE slack_thread_ts = ?`,
+		relayed, time.Now(), threadTs,
+	)
+	if err != nil {
+		return fmt.Errorf("set feedback relayed: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("thread not found for ts %s", threadTs)
+	}
+	return nil
+}
+
 // scanThread scans a database row into a SlackThread
 func scanThread(row *sql.Row) (*domain.SlackThread, error) {
 	var thread domain.SlackThread
 	var issueID, prID sql.NullInt64
+	var phase string
+	var previewNotified sql.NullTime
 	err := row.Scan(
 		&thread.ID,
 		&thread.RepoOwner,
@@ -136,6 +204,9 @@ func scanThread(row *sql.Row) (*domain.SlackThread, error) {
 		&thread.SlackThreadTs,
 		&thread.SlackParentTs,
 		&thread.ThreadType,
+		&phase,
+		&previewNotified,
+		&thread.FeedbackRelayed,
 		&thread.CreatedAt,
 		&thread.UpdatedAt,
 	)
@@ -147,6 +218,10 @@ func scanThread(row *sql.Row) (*domain.SlackThread, error) {
 	}
 	thread.GithubIssueID = int(issueID.Int64)
 	thread.GithubPRID = int(prID.Int64)
+	thread.WorkstreamPhase = domain.WorkstreamPhase(phase)
+	if previewNotified.Valid {
+		thread.PreviewNotifiedAt = &previewNotified.Time
+	}
 	return &thread, nil
 }
 

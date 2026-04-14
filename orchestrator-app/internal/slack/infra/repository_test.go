@@ -310,6 +310,240 @@ func TestRepository_FindThreadBySlackTs_ReturnsNewestMapping(t *testing.T) {
 	}
 }
 
+func TestRepository_SaveThread_RoundTripsWorkstreamPhase(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewSQLiteRepository(db)
+	ctx := context.Background()
+
+	now := time.Now()
+	thread := &domain.SlackThread{
+		ID:                "test-ws-1",
+		RepoOwner:         "example-org",
+		RepoName:          "test-repo",
+		GithubIssueID:     50,
+		SlackChannel:      "#productbuilding-test",
+		SlackThreadTs:     "1234567890.500000",
+		ThreadType:        "issue",
+		WorkstreamPhase:   domain.PhaseReview,
+		PreviewNotifiedAt: &now,
+		FeedbackRelayed:   true,
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}
+
+	if err := repo.SaveThread(ctx, thread); err != nil {
+		t.Fatalf("SaveThread() error = %v", err)
+	}
+
+	found, err := repo.FindThread(ctx, "example-org", "test-repo", 50)
+	if err != nil {
+		t.Fatalf("FindThread() error = %v", err)
+	}
+
+	if found.WorkstreamPhase != domain.PhaseReview {
+		t.Errorf("WorkstreamPhase = %q, want %q", found.WorkstreamPhase, domain.PhaseReview)
+	}
+	if found.PreviewNotifiedAt == nil {
+		t.Error("PreviewNotifiedAt should not be nil")
+	}
+	if !found.FeedbackRelayed {
+		t.Error("FeedbackRelayed should be true")
+	}
+}
+
+func TestRepository_SaveThread_NilPreviewNotifiedAt(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewSQLiteRepository(db)
+	ctx := context.Background()
+
+	thread := &domain.SlackThread{
+		ID:              "test-ws-2",
+		RepoOwner:       "example-org",
+		RepoName:        "test-repo",
+		GithubIssueID:   51,
+		SlackChannel:    "#productbuilding-test",
+		SlackThreadTs:   "1234567890.510000",
+		ThreadType:      "issue",
+		WorkstreamPhase: domain.PhaseOpen,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+	}
+
+	if err := repo.SaveThread(ctx, thread); err != nil {
+		t.Fatalf("SaveThread() error = %v", err)
+	}
+
+	found, err := repo.FindThread(ctx, "example-org", "test-repo", 51)
+	if err != nil {
+		t.Fatalf("FindThread() error = %v", err)
+	}
+
+	if found.WorkstreamPhase != domain.PhaseOpen {
+		t.Errorf("WorkstreamPhase = %q, want %q", found.WorkstreamPhase, domain.PhaseOpen)
+	}
+	if found.PreviewNotifiedAt != nil {
+		t.Error("PreviewNotifiedAt should be nil")
+	}
+	if found.FeedbackRelayed {
+		t.Error("FeedbackRelayed should be false")
+	}
+}
+
+func TestRepository_UpdateWorkstreamPhase(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewSQLiteRepository(db)
+	ctx := context.Background()
+
+	thread := &domain.SlackThread{
+		ID:              "test-ws-3",
+		RepoOwner:       "example-org",
+		RepoName:        "test-repo",
+		GithubIssueID:   52,
+		SlackChannel:    "#productbuilding-test",
+		SlackThreadTs:   "1234567890.520000",
+		ThreadType:      "issue",
+		WorkstreamPhase: domain.PhaseOpen,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+	}
+
+	if err := repo.SaveThread(ctx, thread); err != nil {
+		t.Fatalf("SaveThread() error = %v", err)
+	}
+
+	// Update phase
+	if err := repo.UpdateWorkstreamPhase(ctx, "1234567890.520000", domain.PhaseInProgress); err != nil {
+		t.Fatalf("UpdateWorkstreamPhase() error = %v", err)
+	}
+
+	found, err := repo.FindThread(ctx, "example-org", "test-repo", 52)
+	if err != nil {
+		t.Fatalf("FindThread() error = %v", err)
+	}
+	if found.WorkstreamPhase != domain.PhaseInProgress {
+		t.Errorf("WorkstreamPhase = %q, want %q", found.WorkstreamPhase, domain.PhaseInProgress)
+	}
+}
+
+func TestRepository_SetPreviewNotified(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewSQLiteRepository(db)
+	ctx := context.Background()
+
+	thread := &domain.SlackThread{
+		ID:              "test-ws-4",
+		RepoOwner:       "example-org",
+		RepoName:        "test-repo",
+		GithubIssueID:   53,
+		SlackChannel:    "#productbuilding-test",
+		SlackThreadTs:   "1234567890.530000",
+		ThreadType:      "issue",
+		WorkstreamPhase: domain.PhaseInProgress,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+	}
+
+	if err := repo.SaveThread(ctx, thread); err != nil {
+		t.Fatalf("SaveThread() error = %v", err)
+	}
+
+	if err := repo.SetPreviewNotified(ctx, "1234567890.530000"); err != nil {
+		t.Fatalf("SetPreviewNotified() error = %v", err)
+	}
+
+	found, err := repo.FindThread(ctx, "example-org", "test-repo", 53)
+	if err != nil {
+		t.Fatalf("FindThread() error = %v", err)
+	}
+	if found.PreviewNotifiedAt == nil {
+		t.Error("PreviewNotifiedAt should be set after SetPreviewNotified")
+	}
+}
+
+func TestRepository_SetFeedbackRelayed(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewSQLiteRepository(db)
+	ctx := context.Background()
+
+	thread := &domain.SlackThread{
+		ID:              "test-ws-5",
+		RepoOwner:       "example-org",
+		RepoName:        "test-repo",
+		GithubIssueID:   54,
+		SlackChannel:    "#productbuilding-test",
+		SlackThreadTs:   "1234567890.540000",
+		ThreadType:      "issue",
+		WorkstreamPhase: domain.PhaseReview,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+	}
+
+	if err := repo.SaveThread(ctx, thread); err != nil {
+		t.Fatalf("SaveThread() error = %v", err)
+	}
+
+	if err := repo.SetFeedbackRelayed(ctx, "1234567890.540000", true); err != nil {
+		t.Fatalf("SetFeedbackRelayed() error = %v", err)
+	}
+
+	found, err := repo.FindThread(ctx, "example-org", "test-repo", 54)
+	if err != nil {
+		t.Fatalf("FindThread() error = %v", err)
+	}
+	if !found.FeedbackRelayed {
+		t.Error("FeedbackRelayed should be true after SetFeedbackRelayed")
+	}
+}
+
+func TestRepository_ResetFeedbackRelayed(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewSQLiteRepository(db)
+	ctx := context.Background()
+
+	thread := &domain.SlackThread{
+		ID:              "test-ws-6",
+		RepoOwner:       "example-org",
+		RepoName:        "test-repo",
+		GithubIssueID:   55,
+		SlackChannel:    "#productbuilding-test",
+		SlackThreadTs:   "1234567890.550000",
+		ThreadType:      "issue",
+		WorkstreamPhase: domain.PhaseRevision,
+		FeedbackRelayed: true,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+	}
+
+	if err := repo.SaveThread(ctx, thread); err != nil {
+		t.Fatalf("SaveThread() error = %v", err)
+	}
+
+	// Reset feedback relayed when new preview goes live
+	if err := repo.SetFeedbackRelayed(ctx, "1234567890.550000", false); err != nil {
+		t.Fatalf("SetFeedbackRelayed(false) error = %v", err)
+	}
+
+	found, err := repo.FindThread(ctx, "example-org", "test-repo", 55)
+	if err != nil {
+		t.Fatalf("FindThread() error = %v", err)
+	}
+	if found.FeedbackRelayed {
+		t.Error("FeedbackRelayed should be false after reset")
+	}
+}
+
 func TestRepository_UpdateThread(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()

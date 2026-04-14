@@ -10,17 +10,20 @@ import (
 
 // SlackThread represents a mapping between a GitHub issue/PR and a Slack thread
 type SlackThread struct {
-	ID            string
-	RepoOwner     string
-	RepoName      string
-	GithubIssueID int
-	GithubPRID    int
-	SlackChannel  string
-	SlackThreadTs string
-	SlackParentTs string
-	ThreadType    string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID                string
+	RepoOwner         string
+	RepoName          string
+	GithubIssueID     int
+	GithubPRID        int
+	SlackChannel      string
+	SlackThreadTs     string
+	SlackParentTs     string
+	ThreadType        string
+	WorkstreamPhase   WorkstreamPhase
+	PreviewNotifiedAt *time.Time
+	FeedbackRelayed   bool
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 // NewSlackThread creates a new SlackThread with validation

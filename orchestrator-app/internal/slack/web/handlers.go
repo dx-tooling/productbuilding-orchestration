@@ -83,6 +83,12 @@ type FeatureContextAssembler interface {
 	ForIssue(ctx context.Context, owner, repo, pat string, number int) (*featurecontext.FeatureSnapshot, error)
 }
 
+// PhaseUpdater updates workstream phase and related flags on thread records.
+type PhaseUpdater interface {
+	UpdateWorkstreamPhase(ctx context.Context, threadTs string, phase domain.WorkstreamPhase) error
+	SetFeedbackRelayed(ctx context.Context, threadTs string, relayed bool) error
+}
+
 // Handler handles Slack Events API callbacks.
 type Handler struct {
 	agent                AgentRunner
@@ -93,6 +99,7 @@ type Handler struct {
 	registry             TargetRegistry
 	traceSaver           TraceSaver
 	featureAssembler     FeatureContextAssembler
+	phaseUpdater         PhaseUpdater
 	signingSecret        string
 	slackWorkspace       string
 	agentTimeout         time.Duration
@@ -135,6 +142,11 @@ func (h *Handler) SetTraceSaver(ts TraceSaver) {
 // SetFeatureAssembler sets the feature context assembler for enriching agent requests.
 func (h *Handler) SetFeatureAssembler(fa FeatureContextAssembler) {
 	h.featureAssembler = fa
+}
+
+// SetPhaseUpdater sets the workstream phase updater.
+func (h *Handler) SetPhaseUpdater(pu PhaseUpdater) {
+	h.phaseUpdater = pu
 }
 
 // slackEnvelope represents the outer Slack Events API payload.
@@ -249,8 +261,9 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 		thread, _ = h.threadFinder.FindThreadBySlackTs(ctx, threadTs)
 	}
 
-	// Use thread for linked issue
+	// Use thread for linked issue and workstream phase
 	var linkedIssue *agent.IssueContext
+	var workstreamPhase domain.WorkstreamPhase
 	if thread != nil {
 		linkedIssue = &agent.IssueContext{
 			Number: thread.GithubIssueID,
@@ -260,6 +273,7 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 		if thread.GithubPRID > 0 {
 			linkedIssue.Number = thread.GithubPRID
 		}
+		workstreamPhase = thread.WorkstreamPhase
 	}
 
 	// Use same thread for feature context
@@ -284,15 +298,16 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 
 	// Build agent request
 	req := agent.RunRequest{
-		ChannelID:      event.Channel,
-		ThreadTs:       threadTs,
-		MessageTs:      event.Ts,
-		UserText:       text,
-		UserName:       displayName,
-		BotUserID:      botUserID,
-		Target:         target,
-		LinkedIssue:    linkedIssue,
-		FeatureSummary: featureSummary,
+		ChannelID:       event.Channel,
+		ThreadTs:        threadTs,
+		MessageTs:       event.Ts,
+		UserText:        text,
+		UserName:        displayName,
+		BotUserID:       botUserID,
+		Target:          target,
+		LinkedIssue:     linkedIssue,
+		FeatureSummary:  featureSummary,
+		WorkstreamPhase: workstreamPhase,
 		OnIssueCreated: func(owner, repo string, number int, title string) {
 			thread, err := domain.NewSlackThread(owner, repo, number, 0, event.Channel, replyTs)
 			if err != nil {
@@ -437,6 +452,11 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 		}
 	}
 
+	// Update workstream phase based on what happened
+	if h.phaseUpdater != nil {
+		h.updatePhaseAfterAgentRun(ctx, replyTs, workstreamPhase, resp)
+	}
+
 	// Record conversation for list_conversations support
 	if h.conversationRecorder != nil {
 		conv := agent.Conversation{
@@ -501,6 +521,36 @@ func (h *Handler) verifySignature(r *http.Request, body []byte) error {
 	}
 
 	return nil
+}
+
+// updatePhaseAfterAgentRun transitions the workstream phase based on agent side effects.
+func (h *Handler) updatePhaseAfterAgentRun(ctx context.Context, threadTs string, currentPhase domain.WorkstreamPhase, resp agent.RunResponse) {
+	effects := resp.SideEffects
+	var newPhase domain.WorkstreamPhase
+
+	switch {
+	case len(effects.CreatedIssues) > 0:
+		// Issue was created → open
+		newPhase = domain.PhaseOpen
+	case currentPhase == domain.PhaseReview && len(effects.DelegatedIssues) > 0:
+		// User gave feedback on preview and it was relayed → revision
+		newPhase = domain.PhaseRevision
+	case currentPhase == "" && resp.Text != "" && len(effects.CreatedIssues) == 0 && len(effects.DelegatedIssues) == 0:
+		// New request where agent responded with text but didn't create an issue
+		// → likely asked clarifying questions → intake
+		newPhase = domain.PhaseIntake
+	}
+
+	if newPhase != "" && newPhase != currentPhase {
+		if err := h.phaseUpdater.UpdateWorkstreamPhase(ctx, threadTs, newPhase); err != nil {
+			slog.Warn("failed to update workstream phase", "error", err, "phase", newPhase)
+		}
+		if newPhase == domain.PhaseRevision {
+			if err := h.phaseUpdater.SetFeedbackRelayed(ctx, threadTs, true); err != nil {
+				slog.Warn("failed to set feedback relayed", "error", err)
+			}
+		}
+	}
 }
 
 func userFacingErrorMessage(err error) string {

@@ -88,20 +88,26 @@ func (g *MessageGenerator) parentMessagePR(event slackfacade.NotificationEvent, 
 }
 
 // EventMessage creates a thread reply message for an event update.
-func (g *MessageGenerator) EventMessage(event slackfacade.NotificationEvent, snap *featurecontext.FeatureSnapshot) MessageBlock {
+// The phase parameter enables PM-style framing based on the workstream lifecycle.
+func (g *MessageGenerator) EventMessage(event slackfacade.NotificationEvent, snap *featurecontext.FeatureSnapshot, phase ...WorkstreamPhase) MessageBlock {
+	var currentPhase WorkstreamPhase
+	if len(phase) > 0 {
+		currentPhase = phase[0]
+	}
+
 	var text string
 
 	switch event.Type {
 	case slackfacade.EventPROpened:
-		text = g.eventPROpened(event, snap)
+		text = g.eventPROpened(event, snap, currentPhase)
 	case slackfacade.EventPRReady:
-		text = g.eventPreviewReady(event)
+		text = g.eventPreviewReady(event, currentPhase)
 	case slackfacade.EventPRFailed:
 		text = g.eventPreviewFailed(event)
 	case slackfacade.EventCommentAdded, slackfacade.EventCommentEdited:
 		text = g.eventComment(event)
 	case slackfacade.EventPRMerged:
-		text = g.eventPRMerged(snap)
+		text = g.eventPRMerged(snap, currentPhase)
 	case slackfacade.EventIssueClosed:
 		text = g.eventIssueClosed(snap)
 	case slackfacade.EventPRClosed:
@@ -121,7 +127,12 @@ func (g *MessageGenerator) EventMessage(event slackfacade.NotificationEvent, sna
 	return MessageBlock{Text: text}
 }
 
-func (g *MessageGenerator) eventPROpened(event slackfacade.NotificationEvent, snap *featurecontext.FeatureSnapshot) string {
+func (g *MessageGenerator) eventPROpened(event slackfacade.NotificationEvent, snap *featurecontext.FeatureSnapshot, phase WorkstreamPhase) string {
+	// PM-style framing when phase is open (user's issue is being worked on)
+	if phase == PhaseOpen {
+		return "Work has started on your request. I'll let you know when there's something to look at."
+	}
+
 	author := event.Author
 	url := event.GitHubURL()
 	var lineInfo string
@@ -142,8 +153,18 @@ func (g *MessageGenerator) eventPROpened(event slackfacade.NotificationEvent, sn
 	return fmt.Sprintf("@%s opened a pull request%s.\n<%s|View PR>", author, lineInfo, url)
 }
 
-func (g *MessageGenerator) eventPreviewReady(event slackfacade.NotificationEvent) string {
-	lines := []string{"The preview is live — you can try it out here:"}
+func (g *MessageGenerator) eventPreviewReady(event slackfacade.NotificationEvent, phase WorkstreamPhase) string {
+	var heading string
+	switch phase {
+	case PhaseRevision:
+		heading = "Updated preview is live — this should address the feedback you gave."
+	case PhaseInProgress, PhaseOpen:
+		heading = "This is ready for you to try out. Let me know what you think."
+	default:
+		heading = "The preview is live — you can try it out here:"
+	}
+
+	lines := []string{heading}
 	links := fmt.Sprintf("<%s|Open Preview>", event.PreviewURL)
 	if event.LogsURL != "" {
 		links += fmt.Sprintf("  |  <%s|Logs>", event.LogsURL)
@@ -193,7 +214,12 @@ func (g *MessageGenerator) eventComment(event slackfacade.NotificationEvent) str
 	return strings.Join(lines, "\n")
 }
 
-func (g *MessageGenerator) eventPRMerged(snap *featurecontext.FeatureSnapshot) string {
+func (g *MessageGenerator) eventPRMerged(snap *featurecontext.FeatureSnapshot, phase WorkstreamPhase) string {
+	// PM-style confirmation when the user has been in a review cycle
+	if phase == PhaseReview || phase == PhaseRevision {
+		return "This is live now. Let me know if anything looks off in production."
+	}
+
 	text := "This PR has been merged."
 	if snap != nil && snap.CIStatus == featurecontext.CIPassing {
 		text += " CI was passing on the final commit."

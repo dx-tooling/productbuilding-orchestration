@@ -719,3 +719,15 @@ func (n *notFoundErrorRepository) FindThreadByNumber(ctx context.Context, repoOw
 	}
 	return thread, nil
 }
+
+func (n *notFoundErrorRepository) UpdateWorkstreamPhase(ctx context.Context, threadTs string, phase WorkstreamPhase) error {
+	return n.mockRepo.UpdateWorkstreamPhase(ctx, threadTs, phase)
+}
+
+func (n *notFoundErrorRepository) SetPreviewNotified(ctx context.Context, threadTs string) error {
+	return n.mockRepo.SetPreviewNotified(ctx, threadTs)
+}
+
+func (n *notFoundErrorRepository) SetFeedbackRelayed(ctx context.Context, threadTs string, relayed bool) error {
+	return n.mockRepo.SetFeedbackRelayed(ctx, threadTs, relayed)
+}

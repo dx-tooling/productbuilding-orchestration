@@ -29,6 +29,9 @@ type ThreadRepository interface {
 	FindThreadByPR(ctx context.Context, repoOwner, repoName string, prNumber int) (*SlackThread, error)
 	// FindThreadByNumber searches by either issue ID or PR ID (they share numbers in GitHub)
 	FindThreadByNumber(ctx context.Context, repoOwner, repoName string, number int) (*SlackThread, error)
+	UpdateWorkstreamPhase(ctx context.Context, threadTs string, phase WorkstreamPhase) error
+	SetPreviewNotified(ctx context.Context, threadTs string) error
+	SetFeedbackRelayed(ctx context.Context, threadTs string, relayed bool) error
 }
 
 // Debouncer batches rapid events
@@ -274,7 +277,7 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 
 			// Post status update to thread (only if not the first message creating the thread)
 			if !newThread {
-				updateMsg := n.messages.EventMessage(*event, snap)
+				updateMsg := n.messages.EventMessage(*event, snap, thread.WorkstreamPhase)
 				if err := n.client.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, updateMsg); err != nil {
 					slog.Warn("failed to post to slack thread",
 						"error", err,
@@ -283,6 +286,9 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 					)
 				}
 			}
+
+			// Update workstream phase based on event type
+			n.updatePhaseForEvent(ctx, thread, event.Type)
 		}
 	}
 
@@ -317,7 +323,7 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 		}
 
 		for _, comment := range p.comments {
-			updateMsg := n.messages.EventMessage(*comment, snap)
+			updateMsg := n.messages.EventMessage(*comment, snap, thread.WorkstreamPhase)
 			if err := n.client.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, updateMsg); err != nil {
 				slog.Warn("failed to post comment to slack thread",
 					"error", err,
@@ -325,6 +331,40 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 					"thread", thread.SlackThreadTs,
 				)
 			}
+		}
+	}
+}
+
+// updatePhaseForEvent transitions the workstream phase based on a GitHub event.
+func (n *Notifier) updatePhaseForEvent(ctx context.Context, thread *SlackThread, eventType slackfacade.EventType) {
+	if thread == nil {
+		return
+	}
+
+	var newPhase WorkstreamPhase
+
+	switch eventType {
+	case slackfacade.EventPROpened:
+		if thread.WorkstreamPhase == PhaseOpen || thread.WorkstreamPhase == "" {
+			newPhase = PhaseInProgress
+		}
+	case slackfacade.EventPRReady:
+		if thread.WorkstreamPhase == PhaseInProgress || thread.WorkstreamPhase == PhaseRevision {
+			newPhase = PhaseReview
+		}
+	case slackfacade.EventPRMerged:
+		newPhase = PhaseDone
+	}
+
+	if newPhase != "" {
+		if err := n.repository.UpdateWorkstreamPhase(ctx, thread.SlackThreadTs, newPhase); err != nil {
+			slog.Warn("failed to update workstream phase", "error", err, "phase", newPhase)
+		}
+
+		// On preview ready: set preview notified and reset feedback relayed
+		if eventType == slackfacade.EventPRReady {
+			n.repository.SetPreviewNotified(ctx, thread.SlackThreadTs)
+			n.repository.SetFeedbackRelayed(ctx, thread.SlackThreadTs, false)
 		}
 	}
 }

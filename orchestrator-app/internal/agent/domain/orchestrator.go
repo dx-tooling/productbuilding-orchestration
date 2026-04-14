@@ -123,7 +123,7 @@ func (o *Orchestrator) Run(ctx context.Context, req RunRequest) (RunResponse, er
 	}
 
 	// Route (now with thread context)
-	decision, err := o.router.Route(ctx, req.UserText, req.Target, req.LinkedIssue, req.ThreadMessages)
+	decision, err := o.router.Route(ctx, req.UserText, req.Target, req.LinkedIssue, req.ThreadMessages, req.WorkstreamPhase)
 	if err != nil {
 		return RunResponse{}, fmt.Errorf("orchestrator routing: %w", err)
 	}

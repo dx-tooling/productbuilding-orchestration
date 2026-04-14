@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
+	slackdomain "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/domain"
 )
 
 // SlackThreadFetcher retrieves thread history from Slack.
@@ -22,17 +23,18 @@ type ThreadMessage struct {
 
 // RunRequest contains the context for a single agent invocation.
 type RunRequest struct {
-	ChannelID      string
-	ThreadTs       string
-	MessageTs      string
-	UserText       string
-	UserName       string
-	BotUserID      string
-	Target         targets.TargetConfig
-	LinkedIssue    *IssueContext
-	ThreadMessages []ThreadMessage // Pre-fetched thread context; if set, specialist skips fetching
-	FeatureSummary string          // Pre-formatted feature context summary for LLM
-	OnIssueCreated func(owner, repo string, number int, title string)
+	ChannelID       string
+	ThreadTs        string
+	MessageTs       string
+	UserText        string
+	UserName        string
+	BotUserID       string
+	Target          targets.TargetConfig
+	LinkedIssue     *IssueContext
+	ThreadMessages  []ThreadMessage             // Pre-fetched thread context; if set, specialist skips fetching
+	FeatureSummary  string                      // Pre-formatted feature context summary for LLM
+	WorkstreamPhase slackdomain.WorkstreamPhase // Lifecycle phase of the workstream (e.g. review, revision)
+	OnIssueCreated  func(owner, repo string, number int, title string)
 }
 
 // RunResponse is returned after the agent completes.

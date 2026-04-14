@@ -1,0 +1,3 @@
+-- SQLite does not support DROP COLUMN before version 3.35.0.
+-- These columns are added by 005_add_workstream_phase.up.sql.
+-- To rollback, recreate the table without them.

@@ -141,6 +141,26 @@ func (m *mockRepository) FindThreadByNumber(ctx context.Context, repoOwner, repo
 	return nil, nil
 }
 
+func (m *mockRepository) UpdateWorkstreamPhase(ctx context.Context, threadTs string, phase WorkstreamPhase) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, thread := range m.threads {
+		if thread.SlackThreadTs == threadTs {
+			thread.WorkstreamPhase = phase
+			return nil
+		}
+	}
+	return nil
+}
+
+func (m *mockRepository) SetPreviewNotified(ctx context.Context, threadTs string) error {
+	return nil
+}
+
+func (m *mockRepository) SetFeedbackRelayed(ctx context.Context, threadTs string, relayed bool) error {
+	return nil
+}
+
 type mockDebouncer struct {
 	calls []struct {
 		key  string
