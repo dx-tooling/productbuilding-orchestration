@@ -75,7 +75,7 @@ func defaultSpecialistConfigs() map[string]SpecialistConfig {
 			Name:           "researcher",
 			PromptTemplate: researcherPromptTmpl,
 			ToolDefs:       ResearcherTools(),
-			MaxIterations:  5,
+			MaxIterations:  10,
 		},
 		"closer": {
 			Name:           "closer",

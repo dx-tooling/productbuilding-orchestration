@@ -4,6 +4,18 @@ import (
 	"testing"
 )
 
+func TestSpecialistConfigs_ResearcherHasEnoughIterations(t *testing.T) {
+	specs := defaultSpecialistConfigs()
+	researcher, ok := specs["researcher"]
+	if !ok {
+		t.Fatal("researcher specialist config not found")
+	}
+	if researcher.MaxIterations < 10 {
+		t.Errorf("researcher MaxIterations=%d, want >= 10 (code exploration needs multiple search+read cycles)",
+			researcher.MaxIterations)
+	}
+}
+
 func TestSpecialistConfigs_MaxIterationsAllowRecovery(t *testing.T) {
 	// All specialists should have at least 5 iterations to allow for:
 	// - Normal execution (2-3 iterations)
