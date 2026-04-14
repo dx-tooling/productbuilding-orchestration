@@ -124,7 +124,7 @@ func (h *Handler) handlePullRequest(w http.ResponseWriter, r *http.Request, body
 		HeadSHA:   event.HeadSHA,
 	}
 
-	isBot := target.BotGitHubLogin != "" && event.Sender == target.BotGitHubLogin
+	isBot := (target.BotGitHubLogin != "" && event.Sender == target.BotGitHubLogin) || strings.HasSuffix(event.Sender, "[bot]")
 
 	switch event.Action {
 	case "opened", "synchronize", "reopened":

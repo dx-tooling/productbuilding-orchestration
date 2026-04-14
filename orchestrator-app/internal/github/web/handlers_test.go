@@ -940,6 +940,66 @@ func TestHandleWebhook_IssueComment_OpenCodeBot_InvokesAgent(t *testing.T) {
 	}
 }
 
+func TestHandleWebhook_PROpened_BotSender_SkipsAgent(t *testing.T) {
+	previewSvc := &mockPreviewService{}
+	slackNotifier := &mockSlackNotifier{}
+	agentInvoker := &mockAgentInvoker{}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:      "example-org",
+			RepoName:       "playground",
+			GitHubPAT:      "github_pat_test",
+			WebhookSecret:  "secret123",
+			SlackChannel:   "#productbuilding",
+			SlackBotToken:  "xoxb-test",
+			BotGitHubLogin: "PrdctBldr",
+		},
+		found: true,
+	}
+
+	handler := NewHandler(registry, previewSvc, slackNotifier, agentInvoker)
+
+	// PR opened by opencode-agent[bot] — not the configured BotGitHubLogin
+	payload := map[string]interface{}{
+		"action": "opened",
+		"pull_request": map[string]interface{}{
+			"number": 99,
+			"title":  "Add dark mode support",
+			"body":   "Fixes #42",
+			"user":   map[string]string{"login": "opencode-agent[bot]"},
+			"head":   map[string]string{"sha": "abc123", "ref": "feature/dark-mode"},
+		},
+		"sender":     map[string]string{"login": "opencode-agent[bot]"},
+		"repository": map[string]interface{}{"owner": map[string]string{"login": "example-org"}, "name": "playground"},
+	}
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(body))
+	req.Header.Set("X-GitHub-Event", "pull_request")
+	req.Header.Set("X-Hub-Signature-256", generateSignature(body, "secret123"))
+
+	rec := httptest.NewRecorder()
+	handler.HandleWebhook(rec, req)
+
+	time.Sleep(100 * time.Millisecond)
+
+	agentInvoker.mu.Lock()
+	invoked := len(agentInvoker.calls)
+	agentInvoker.mu.Unlock()
+
+	if invoked > 0 {
+		t.Error("Should NOT invoke agent for PR opened by a [bot] sender")
+	}
+
+	slackNotifier.mu.Lock()
+	notified := slackNotifier.notifyCalled
+	slackNotifier.mu.Unlock()
+
+	if !notified {
+		t.Error("Should still send Slack notification for bot-opened PR")
+	}
+}
+
 func TestHandleWebhook_PRMerged_InvokesAgent(t *testing.T) {
 	previewSvc := &mockPreviewService{}
 	slackNotifier := &mockSlackNotifier{}
