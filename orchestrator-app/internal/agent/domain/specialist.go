@@ -229,13 +229,38 @@ func (s *Specialist) Run(ctx context.Context, req RunRequest, prior *PriorStepCo
 		}
 	}
 
-	// Max iterations reached
+	// Max iterations reached — salvage partial findings from the conversation
 	slog.Warn("specialist max iterations reached",
 		"specialist", s.config.Name,
 		"channel", req.ChannelID,
 	)
+
+	// Walk backwards: prefer the last assistant text, fall back to last tool result
+	var partial string
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "assistant" && strings.TrimSpace(messages[i].Content) != "" {
+			partial = messages[i].Content
+			break
+		}
+	}
+	if partial == "" {
+		for i := len(messages) - 1; i >= 0; i-- {
+			if messages[i].Role == "tool" && strings.TrimSpace(messages[i].Content) != "" {
+				partial = messages[i].Content
+				break
+			}
+		}
+	}
+
+	var text string
+	if partial != "" {
+		text = "I wasn't able to fully answer, but here's what I found:\n\n" + partial
+	} else {
+		text = "I ran out of steps before I could put together an answer. Could you try a more specific question?"
+	}
+
 	return SpecialistResult{
-		Text:        "I'm having trouble processing this request. Please try again or rephrase your question.",
+		Text:        text,
 		SideEffects: s.tools.Effects(),
 	}, nil
 }

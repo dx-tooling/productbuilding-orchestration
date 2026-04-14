@@ -125,8 +125,59 @@ func TestSpecialist_MaxIterations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result.Text, "having trouble") {
-		t.Errorf("expected max-iteration message, got: %s", result.Text)
+	if strings.Contains(result.Text, "having trouble") {
+		t.Error("should not return generic 'having trouble' message when tool results exist")
+	}
+	if !strings.Contains(result.Text, "I wasn't able to fully answer") {
+		t.Errorf("expected partial-findings disclaimer, got: %s", result.Text)
+	}
+}
+
+func TestSpecialist_MaxIterations_WithPartialAssistantText(t *testing.T) {
+	maxIter := 2
+	llm := &mockLLMClient{
+		responses: []ChatResponse{
+			{
+				Content: "Let me search for that file...",
+				ToolCalls: []ToolCall{
+					{ID: "call_0", Type: "function", Function: FunctionCall{
+						Name: "search_github_issues", Arguments: `{"query":"startpage"}`,
+					}},
+				},
+				FinishReason: "tool_calls",
+			},
+			{
+				Content: "I found the template in src/startpage.html, let me read it...",
+				ToolCalls: []ToolCall{
+					{ID: "call_1", Type: "function", Function: FunctionCall{
+						Name: "search_github_issues", Arguments: `{"query":"startpage template"}`,
+					}},
+				},
+				FinishReason: "tool_calls",
+			},
+		},
+	}
+
+	tools := &mockToolExecutor{results: map[string]string{"search_github_issues": "found: src/startpage.html"}}
+	s := newTestSpecialist(llm, tools)
+	s.config.MaxIterations = maxIter
+
+	result, err := s.Run(context.Background(), RunRequest{
+		ChannelID: "C123",
+		MessageTs: "123.456",
+		UserText:  "Show me the startpage template",
+		UserName:  "alice",
+		Target:    agentTarget,
+	}, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result.Text, "I wasn't able to fully answer") {
+		t.Errorf("expected partial-findings disclaimer, got: %s", result.Text)
+	}
+	if !strings.Contains(result.Text, "I found the template in src/startpage.html") {
+		t.Errorf("expected last assistant text in partial findings, got: %s", result.Text)
 	}
 }
 
