@@ -117,11 +117,12 @@ func (h *Handler) handlePullRequest(w http.ResponseWriter, r *http.Request, body
 	}
 
 	req := previewdomain.DeployRequest{
-		RepoOwner: event.RepoOwner,
-		RepoName:  event.RepoName,
-		PRNumber:  event.PRNumber,
-		Branch:    event.Branch,
-		HeadSHA:   event.HeadSHA,
+		RepoOwner:         event.RepoOwner,
+		RepoName:          event.RepoName,
+		PRNumber:          event.PRNumber,
+		Branch:            event.Branch,
+		HeadSHA:           event.HeadSHA,
+		LinkedIssueNumber: domain.ExtractLinkedIssue(event.Body),
 	}
 
 	isBot := (target.BotGitHubLogin != "" && event.Sender == target.BotGitHubLogin) || strings.HasSuffix(event.Sender, "[bot]")

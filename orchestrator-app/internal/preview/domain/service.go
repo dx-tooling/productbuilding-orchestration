@@ -255,6 +255,7 @@ func (s *Service) DeployPreview(ctx context.Context, req DeployRequest, pat stri
 
 	// Store the new comment ID on the preview
 	preview.GithubCommentID = commentID
+	preview.LinkedIssueNumber = req.LinkedIssueNumber
 
 	if err := s.repo.Upsert(deployCtx, preview); err != nil {
 		log.Error("failed to upsert preview", "error", err)
@@ -513,16 +514,17 @@ func (s *Service) notifySlack(ctx context.Context, p *Preview, eventType slackfa
 	logsURL := fmt.Sprintf("https://api.%s/previews/%s/%s/%d/logs", s.previewDomain, p.RepoOwner, p.RepoName, p.PRNumber)
 
 	event := slackfacade.NotificationEvent{
-		Type:        eventType,
-		RepoOwner:   p.RepoOwner,
-		RepoName:    p.RepoName,
-		IssueNumber: p.PRNumber,
-		Title:       fmt.Sprintf("Preview for %s", p.BranchName),
-		Status:      status,
-		PreviewURL:  p.PreviewURL,
-		LogsURL:     logsURL,
-		Author:      "ProductBuilder",
-		UserNote:    userNote,
+		Type:              eventType,
+		RepoOwner:         p.RepoOwner,
+		RepoName:          p.RepoName,
+		IssueNumber:       p.PRNumber,
+		LinkedIssueNumber: p.LinkedIssueNumber,
+		Title:             fmt.Sprintf("Preview for %s", p.BranchName),
+		Status:            status,
+		PreviewURL:        p.PreviewURL,
+		LogsURL:           logsURL,
+		Author:            "ProductBuilder",
+		UserNote:          userNote,
 	}
 
 	if err := s.notifier.Notify(ctx, event, target); err != nil {

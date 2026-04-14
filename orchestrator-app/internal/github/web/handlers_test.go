@@ -1155,3 +1155,56 @@ func TestHandleWebhook_CheckRun_NoPR_Ignored(t *testing.T) {
 		t.Error("Should not notify for check runs without linked PRs")
 	}
 }
+
+func TestHandleWebhook_PROpened_DeployRequestHasLinkedIssueNumber(t *testing.T) {
+	previewSvc := &mockPreviewService{}
+	slackNotifier := &mockSlackNotifier{}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:     "example-org",
+			RepoName:      "playground",
+			GitHubPAT:     "github_pat_test",
+			WebhookSecret: "secret123",
+			SlackChannel:  "#productbuilding",
+			SlackBotToken: "xoxb-test",
+		},
+		found: true,
+	}
+
+	handler := NewHandler(registry, previewSvc, slackNotifier)
+
+	payload := map[string]interface{}{
+		"action": "opened",
+		"pull_request": map[string]interface{}{
+			"number": 104,
+			"title":  "Add homepage section",
+			"body":   "Fixes #101\n\nAdded new section",
+			"user":   map[string]string{"login": "alice"},
+			"head": map[string]string{
+				"sha": "abc123def456",
+				"ref": "feature/homepage",
+			},
+		},
+		"repository": map[string]interface{}{
+			"owner": map[string]string{"login": "example-org"},
+			"name":  "playground",
+		},
+	}
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(body))
+	req.Header.Set("X-GitHub-Event", "pull_request")
+	req.Header.Set("X-Hub-Signature-256", generateSignature(body, "secret123"))
+
+	rec := httptest.NewRecorder()
+	handler.HandleWebhook(rec, req)
+
+	time.Sleep(100 * time.Millisecond)
+
+	if !previewSvc.deployCalled {
+		t.Fatal("Expected DeployPreview to be called")
+	}
+	if previewSvc.deployReq.LinkedIssueNumber != 101 {
+		t.Errorf("Expected DeployRequest.LinkedIssueNumber=101, got %d", previewSvc.deployReq.LinkedIssueNumber)
+	}
+}

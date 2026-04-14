@@ -45,9 +45,10 @@ type SlackThreadChecker interface {
 
 // DeployRequest is the input for deploying or updating a preview.
 type DeployRequest struct {
-	RepoOwner string
-	RepoName  string
-	PRNumber  int
-	Branch    string
-	HeadSHA   string
+	RepoOwner         string
+	RepoName          string
+	PRNumber          int
+	Branch            string
+	HeadSHA           string
+	LinkedIssueNumber int // Issue number linked from PR body (e.g. "Fixes #16")
 }

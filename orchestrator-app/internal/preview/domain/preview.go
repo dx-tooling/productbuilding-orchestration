@@ -34,6 +34,7 @@ type Preview struct {
 	ErrorStage        string
 	ErrorMessage      string
 	GithubCommentID   int64
+	LinkedIssueNumber int // transient — not persisted, carried from DeployRequest for notifications
 }
 
 func NewPreview(repoOwner, repoName string, prNumber int, branchName, headSHA, previewDomain string) Preview {

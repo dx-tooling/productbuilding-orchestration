@@ -430,12 +430,13 @@ func (m *mockPRCommenter) DeleteAllBotComments(ctx context.Context, owner, repo 
 // --- mockSlackNotifier ---
 
 type notifyCall struct {
-	EventType slackfacade.EventType
-	RepoOwner string
-	RepoName  string
-	PRNumber  int
-	Status    string
-	UserNote  string
+	EventType         slackfacade.EventType
+	RepoOwner         string
+	RepoName          string
+	PRNumber          int
+	LinkedIssueNumber int
+	Status            string
+	UserNote          string
 }
 
 type mockSlackNotifier struct {
@@ -448,12 +449,13 @@ func (m *mockSlackNotifier) Notify(ctx context.Context, event slackfacade.Notifi
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls = append(m.calls, notifyCall{
-		EventType: event.Type,
-		RepoOwner: event.RepoOwner,
-		RepoName:  event.RepoName,
-		PRNumber:  event.IssueNumber,
-		Status:    event.Status,
-		UserNote:  event.UserNote,
+		EventType:         event.Type,
+		RepoOwner:         event.RepoOwner,
+		RepoName:          event.RepoName,
+		PRNumber:          event.IssueNumber,
+		LinkedIssueNumber: event.LinkedIssueNumber,
+		Status:            event.Status,
+		UserNote:          event.UserNote,
 	})
 	return m.err
 }
@@ -942,5 +944,31 @@ func TestDeployPreview_FailedNotification_NoUserNote(t *testing.T) {
 	}
 	if failedCall.UserNote != "" {
 		t.Errorf("Expected empty UserNote on failure, got %q", failedCall.UserNote)
+	}
+}
+
+func TestDeployPreview_PassesLinkedIssueNumber(t *testing.T) {
+	d := setupTestService(t)
+	req := testDeployRequest()
+	req.LinkedIssueNumber = 101
+
+	d.svc.DeployPreview(context.Background(), req, "ghp_test")
+
+	d.notifier.mu.Lock()
+	defer d.notifier.mu.Unlock()
+
+	var readyCall *notifyCall
+	for i, call := range d.notifier.calls {
+		if call.EventType == slackfacade.EventPRReady {
+			readyCall = &d.notifier.calls[i]
+			break
+		}
+	}
+
+	if readyCall == nil {
+		t.Fatal("Expected EventPRReady notification")
+	}
+	if readyCall.LinkedIssueNumber != 101 {
+		t.Errorf("Expected LinkedIssueNumber 101, got %d", readyCall.LinkedIssueNumber)
 	}
 }
