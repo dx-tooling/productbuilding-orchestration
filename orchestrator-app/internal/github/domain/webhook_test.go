@@ -201,6 +201,9 @@ func TestExtractLinkedIssue(t *testing.T) {
 		{"bare ref in body", "Created from #42", 42},
 		{"closing keyword preferred over bare ref", "See #99 for context. Fixes #10", 10},
 		{"multiple - takes first", "Fixes #10 and Closes #20", 10},
+		{"closes issue #N (OpenCode format)", "This pull request closes issue #106.", 106},
+		{"fixes issue #N with word gap", "This fixes issue #42 as requested", 42},
+		{"resolves issue #N", "Resolves issue #7.", 7},
 	}
 
 	for _, tt := range tests {

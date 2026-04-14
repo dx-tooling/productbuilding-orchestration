@@ -167,6 +167,13 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 			thread = nil
 		}
 
+		slog.Info("notifier: thread lookup debug",
+			"event_type", event.Type,
+			"issue_number", event.IssueNumber,
+			"linked_issue", event.LinkedIssueNumber,
+			"thread_found", thread != nil,
+		)
+
 		// Check linked issue before retry sleep — this is the common path for
 		// agent-created PRs that reference a parent issue (e.g. "Fixes #16").
 		if thread == nil && event.LinkedIssueNumber > 0 && event.LinkedIssueNumber != event.IssueNumber {

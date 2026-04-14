@@ -553,6 +553,116 @@ func TestRepository_ResetFeedbackRelayed(t *testing.T) {
 	}
 }
 
+func TestRepository_PRMappingFoundAfterIssueMappingExists(t *testing.T) {
+	// Reproduces the pr_ready lookup failure: an issue thread exists,
+	// then a PR-only mapping is saved for the same Slack thread,
+	// and FindThreadByNumber(prNumber) must find it.
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewSQLiteRepository(db)
+	ctx := context.Background()
+
+	// Step 1: Save issue thread (issue #106)
+	issueThread := &domain.SlackThread{
+		ID:            "issue-thread-1",
+		RepoOwner:     "luminor-project",
+		RepoName:      "luminor-core-go-playground",
+		GithubIssueID: 106,
+		SlackChannel:  "#productbuilding",
+		SlackThreadTs: "1776190536.593119",
+		ThreadType:    "issue",
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+	if err := repo.SaveThread(ctx, issueThread); err != nil {
+		t.Fatalf("SaveThread(issue) error = %v", err)
+	}
+
+	// Step 2: Save PR-only mapping (PR #107 → same Slack thread)
+	// This is what the notifier does when it links a PR to an existing issue thread.
+	prThread := &domain.SlackThread{
+		ID:            "pr-thread-1",
+		RepoOwner:     "luminor-project",
+		RepoName:      "luminor-core-go-playground",
+		GithubPRID:    107,
+		SlackChannel:  "#productbuilding",
+		SlackThreadTs: "1776190536.593119",
+		ThreadType:    "pull_request",
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+	if err := repo.SaveThread(ctx, prThread); err != nil {
+		t.Fatalf("SaveThread(PR) error = %v", err)
+	}
+
+	// Step 3: FindThreadByNumber(107) must find the PR mapping
+	found, err := repo.FindThreadByNumber(ctx, "luminor-project", "luminor-core-go-playground", 107)
+	if err != nil {
+		t.Fatalf("FindThreadByNumber(107) error = %v", err)
+	}
+	if found == nil {
+		t.Fatal("FindThreadByNumber(107) returned nil — PR mapping not found")
+	}
+	if found.GithubPRID != 107 {
+		t.Errorf("GithubPRID = %d, want 107", found.GithubPRID)
+	}
+	if found.SlackThreadTs != "1776190536.593119" {
+		t.Errorf("SlackThreadTs = %s, want 1776190536.593119", found.SlackThreadTs)
+	}
+}
+
+func TestRepository_MultiplePRMappingsForDifferentRepos(t *testing.T) {
+	// Multiple PR-only mappings (GithubIssueID=0) must coexist without
+	// UNIQUE constraint violations when they belong to different repos.
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewSQLiteRepository(db)
+	ctx := context.Background()
+
+	pr1 := &domain.SlackThread{
+		ID:            "pr-a",
+		RepoOwner:     "org",
+		RepoName:      "repo-a",
+		GithubPRID:    10,
+		SlackChannel:  "#ch",
+		SlackThreadTs: "111.111",
+		ThreadType:    "pull_request",
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+	pr2 := &domain.SlackThread{
+		ID:            "pr-b",
+		RepoOwner:     "org",
+		RepoName:      "repo-b",
+		GithubPRID:    20,
+		SlackChannel:  "#ch",
+		SlackThreadTs: "222.222",
+		ThreadType:    "pull_request",
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+
+	if err := repo.SaveThread(ctx, pr1); err != nil {
+		t.Fatalf("SaveThread(pr1) error = %v", err)
+	}
+	if err := repo.SaveThread(ctx, pr2); err != nil {
+		t.Fatalf("SaveThread(pr2) error = %v", err)
+	}
+
+	found, err := repo.FindThreadByNumber(ctx, "org", "repo-b", 20)
+	if err != nil {
+		t.Fatalf("FindThreadByNumber(20) error = %v", err)
+	}
+	if found == nil {
+		t.Fatal("FindThreadByNumber(20) returned nil")
+	}
+	if found.GithubPRID != 20 {
+		t.Errorf("GithubPRID = %d, want 20", found.GithubPRID)
+	}
+}
+
 func TestRepository_UpdateThread(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
