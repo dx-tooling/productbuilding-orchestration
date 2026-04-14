@@ -107,6 +107,26 @@ func (a *slackTraceAdapter) SaveTrace(ctx context.Context, req slackweb.TraceSav
 	})
 }
 
+// eventAgentRunnerAdapter adapts agentdomain.Orchestrator to slackdomain.EventAgentRunner.
+type eventAgentRunnerAdapter struct {
+	runner *agentdomain.Orchestrator
+}
+
+func (a *eventAgentRunnerAdapter) RunForEvent(ctx context.Context, req slackdomain.EventRunRequest) (slackdomain.EventRunResponse, error) {
+	resp, err := a.runner.Run(ctx, agentdomain.RunRequest{
+		ChannelID:       req.ChannelID,
+		ThreadTs:        req.ThreadTs,
+		UserText:        req.UserText,
+		BotUserID:       req.BotUserID,
+		Target:          req.Target,
+		WorkstreamPhase: req.WorkstreamPhase,
+	})
+	if err != nil {
+		return slackdomain.EventRunResponse{}, err
+	}
+	return slackdomain.EventRunResponse{Text: resp.Text}, nil
+}
+
 // slackThreadCheckerAdapter adapts slackinfra.SQLiteRepository to previewdomain.SlackThreadChecker.
 type slackThreadCheckerAdapter struct {
 	repo *slackinfra.SQLiteRepository
@@ -204,6 +224,10 @@ func main() {
 		},
 	)
 
+	// ── Build Event Agent Invoker ────────────────────────────────────
+	eventAgentRunner := &eventAgentRunnerAdapter{runner: agentRunner}
+	eventInvoker := slackdomain.NewEventAgentInvoker(eventAgentRunner, slackRepo, slackClient, 5*time.Second)
+
 	// ── Build Trace Repository ────────────────────────────────────────
 	traceRepo := agentinfra.NewTraceRepository(db)
 
@@ -213,13 +237,14 @@ func main() {
 	// Register vertical routes
 	dashboardweb.RegisterRoutes(mux, previewService, newDashboardTraceAdapter(traceRepo))
 	previewweb.RegisterRoutes(mux, previewService)
-	githubweb.RegisterRoutes(mux, registry, previewService, slackNotifier)
+	githubweb.RegisterRoutes(mux, registry, previewService, slackNotifier, eventInvoker)
 
 	// Register Slack Events API routes (agent-driven @mention handling)
 	slackHandler := slackweb.NewHandler(agentRunner, slackRepo, slackRepo, convRepo, slackClient, registry, cfg.SlackSigningSecret, cfg.SlackWorkspace)
 	slackHandler.SetAgentTimeout(time.Duration(cfg.AgentRunTimeout) * time.Second)
 	slackHandler.SetTraceSaver(newSlackTraceAdapter(traceRepo))
 	slackHandler.SetFeatureAssembler(featureAssembler)
+	slackHandler.SetPhaseUpdater(slackRepo)
 	slackweb.RegisterRoutes(mux, slackHandler)
 
 	// ── Health Endpoints (outside application middleware) ───────────────

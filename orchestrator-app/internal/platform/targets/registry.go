@@ -18,6 +18,9 @@ type TargetConfig struct {
 	// Optional Slack integration
 	SlackChannel  string `json:"slack_channel,omitempty"`
 	SlackBotToken string `json:"slack_bot_token,omitempty"`
+
+	// Bot identity — used to distinguish bot-initiated events from human events
+	BotGitHubLogin string `json:"bot_github_login,omitempty"`
 }
 
 // Registry provides lookup of target repo configurations.

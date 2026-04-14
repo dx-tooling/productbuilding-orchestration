@@ -1,6 +1,9 @@
 package targets
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestRegistry_GetByChannelName(t *testing.T) {
 	r := NewRegistry("productbuilding-")
@@ -29,6 +32,40 @@ func TestRegistry_GetByChannelName_NotFound(t *testing.T) {
 	_, ok := r.GetByChannelName("productbuilding-unknown-repo")
 	if ok {
 		t.Error("expected not found for unregistered repo")
+	}
+}
+
+func TestTargetConfig_BotGitHubLogin(t *testing.T) {
+	tc := TargetConfig{
+		RepoOwner:      "acme",
+		RepoName:       "widgets",
+		BotGitHubLogin: "PrdctBldr",
+	}
+	if tc.BotGitHubLogin != "PrdctBldr" {
+		t.Errorf("BotGitHubLogin = %q, want %q", tc.BotGitHubLogin, "PrdctBldr")
+	}
+}
+
+func TestTargetConfig_BotGitHubLogin_LoadFromFile(t *testing.T) {
+	// Verify BotGitHubLogin is populated from JSON config
+	dir := t.TempDir()
+	path := dir + "/targets.json"
+	data := `[{"repo_owner":"acme","repo_name":"widgets","github_pat":"pat","webhook_secret":"sec","bot_github_login":"PrdctBldr"}]`
+	if err := os.WriteFile(path, []byte(data), 0644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	r := NewRegistry("productbuilding-")
+	if err := r.LoadFromFile(path); err != nil {
+		t.Fatalf("LoadFromFile: %v", err)
+	}
+
+	tc, ok := r.Get("acme", "widgets")
+	if !ok {
+		t.Fatal("expected to find target")
+	}
+	if tc.BotGitHubLogin != "PrdctBldr" {
+		t.Errorf("BotGitHubLogin = %q, want %q", tc.BotGitHubLogin, "PrdctBldr")
 	}
 }
 

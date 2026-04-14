@@ -440,6 +440,26 @@ func TestToolExecutor_CloseIssue(t *testing.T) {
 	}
 }
 
+func TestToolExecutor_CloseIssue_RecordsEffect(t *testing.T) {
+	gh := &mockGitHubClient{}
+	exec := NewToolExecutor(gh)
+
+	_, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "close_github_issue",
+			Arguments: `{"number":7}`,
+		},
+	}, testTarget)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	effects := exec.Effects()
+	if len(effects.ClosedIssues) != 1 || effects.ClosedIssues[0] != 7 {
+		t.Errorf("expected ClosedIssues=[7], got %v", effects.ClosedIssues)
+	}
+}
+
 func TestToolExecutor_ClosePR(t *testing.T) {
 	gh := &mockGitHubClient{}
 	exec := NewToolExecutor(gh)
@@ -459,6 +479,26 @@ func TestToolExecutor_ClosePR(t *testing.T) {
 	}
 	if !strings.Contains(result, "#35") {
 		t.Errorf("expected result to contain PR number, got: %s", result)
+	}
+}
+
+func TestToolExecutor_ClosePR_RecordsEffect(t *testing.T) {
+	gh := &mockGitHubClient{}
+	exec := NewToolExecutor(gh)
+
+	_, err := exec.Execute(context.Background(), ToolCall{
+		Function: FunctionCall{
+			Name:      "close_github_pr",
+			Arguments: `{"pr_number":35}`,
+		},
+	}, testTarget)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	effects := exec.Effects()
+	if len(effects.ClosedPRs) != 1 || effects.ClosedPRs[0] != 35 {
+		t.Errorf("expected ClosedPRs=[35], got %v", effects.ClosedPRs)
 	}
 }
 

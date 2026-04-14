@@ -276,7 +276,13 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 			}
 
 			// Post status update to thread (only if not the first message creating the thread)
-			if !newThread {
+			// Skip messages that are either bot self-narration or delegated to the agent invoker.
+			skipMsg := shouldSkipMessage(event.Type)
+			// Special case: EventPROpened in PhaseOpen is also skipped (agent will narrate)
+			if event.Type == slackfacade.EventPROpened && thread.WorkstreamPhase == PhaseOpen {
+				skipMsg = true
+			}
+			if !newThread && !skipMsg {
 				updateMsg := n.messages.EventMessage(*event, snap, thread.WorkstreamPhase)
 				if err := n.client.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, updateMsg); err != nil {
 					slog.Warn("failed to post to slack thread",
@@ -366,6 +372,33 @@ func (n *Notifier) updatePhaseForEvent(ctx context.Context, thread *SlackThread,
 			n.repository.SetPreviewNotified(ctx, thread.SlackThreadTs)
 			n.repository.SetFeedbackRelayed(ctx, thread.SlackThreadTs, false)
 		}
+	}
+}
+
+// shouldSkipMessage returns true for events where message generation
+// is either unnecessary (bot self-narration) or delegated to the agent invoker.
+func shouldSkipMessage(eventType slackfacade.EventType) bool {
+	switch eventType {
+	case slackfacade.EventIssueOpened: // reply only; parent message is still posted
+		return true
+	case slackfacade.EventIssueReopened:
+		return true
+	case slackfacade.EventIssueClosed: // usually bot-initiated; template removed
+		return true
+	case slackfacade.EventPRClosed: // usually bot-initiated; template removed
+		return true
+	case slackfacade.EventCIPassed:
+		return true
+	case slackfacade.EventPRReady: // agent invoker handles this
+		return true
+	case slackfacade.EventPRFailed: // agent invoker handles this
+		return true
+	case slackfacade.EventCIFailed: // agent invoker handles this
+		return true
+	case slackfacade.EventPRMerged: // agent invoker handles this
+		return true
+	default:
+		return false
 	}
 }
 

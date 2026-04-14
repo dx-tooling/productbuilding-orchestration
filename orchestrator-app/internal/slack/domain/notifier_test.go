@@ -310,7 +310,8 @@ func TestNotifier_Notify_ExistingThread(t *testing.T) {
 	}
 	repo.SaveThread(context.Background(), existingThread)
 
-	// First message creates parent
+	// EventIssueOpened with existing thread should not produce a reply
+	// (reply is suppressed — only parent creation happens when no thread exists)
 	event1 := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventIssueOpened,
 		RepoOwner:   "example-org",
@@ -321,7 +322,7 @@ func TestNotifier_Notify_ExistingThread(t *testing.T) {
 	notifier.Notify(context.Background(), event1, target)
 	debouncer.executeAll()
 
-	// Second message should post to existing thread
+	// Comment should post to existing thread
 	event2 := slackfacade.NotificationEvent{
 		Type:        slackfacade.EventCommentAdded,
 		RepoOwner:   "example-org",
@@ -333,14 +334,14 @@ func TestNotifier_Notify_ExistingThread(t *testing.T) {
 	notifier.Notify(context.Background(), event2, target)
 	debouncer.executeAll()
 
-	// Should have 2 messages: parent + reply
-	if len(client.postedMessages) != 2 {
-		t.Errorf("Expected 2 posted messages, got %d", len(client.postedMessages))
+	// Should have 1 message: only the comment reply (EventIssueOpened reply is suppressed)
+	if len(client.postedMessages) != 1 {
+		t.Errorf("Expected 1 posted message (comment only), got %d", len(client.postedMessages))
 	}
 
-	// Second message should be in thread
-	if client.postedMessages[1].Thread != "parent-ts-123" {
-		t.Errorf("Expected thread reply to parent-ts-123, got %s", client.postedMessages[1].Thread)
+	// Comment should be in thread
+	if len(client.postedMessages) > 0 && client.postedMessages[0].Thread != "parent-ts-123" {
+		t.Errorf("Expected thread reply to parent-ts-123, got %s", client.postedMessages[0].Thread)
 	}
 }
 
@@ -651,23 +652,11 @@ func TestNotifier_Flush_RetriesForNewIssue_FindsThreadMapping(t *testing.T) {
 	// Execute the debounced flush — it will retry and find the mapping
 	debouncer.executeAll()
 
-	// Should post to the existing thread, NOT create a new parent message
-	foundThreadReply := false
-	for _, msg := range client.postedMessages {
-		if msg.Thread == "agent-thread-ts" {
-			foundThreadReply = true
-			break
-		}
-	}
-	if !foundThreadReply {
-		t.Errorf("Expected thread reply to agent-thread-ts, got messages: %+v", client.postedMessages)
-	}
-
-	// Should NOT have created a new channel-level parent message
-	for _, msg := range client.postedMessages {
-		if msg.Thread == "" && strings.Contains(msg.Text, "Forgot Password") {
-			t.Errorf("Should not have created a new channel message, got: %+v", msg)
-		}
+	// EventIssueOpened is now handled by the agent invoker, so no reply
+	// message should be posted. The important thing is that the retry found
+	// the thread mapping (so no new parent message was created either).
+	if len(client.postedMessages) != 0 {
+		t.Errorf("Expected no messages (agent handles EventIssueOpened replies), got: %+v", client.postedMessages)
 	}
 }
 
@@ -903,20 +892,14 @@ func TestNotifier_IssueClosed_WithLinkedPR_MessageShowsPR(t *testing.T) {
 	notifier.Notify(context.Background(), event, target)
 	debouncer.executeAll()
 
-	// Should have posted a message mentioning the PR
-	found := false
-	for _, msg := range client.postedMessages {
-		if strings.Contains(msg.Text, "merged") || strings.Contains(msg.Text, "#52") {
-			found = true
-			break
+	// EventIssueClosed is now suppressed (agent handles) — no thread reply should be posted
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.postedMessages) != 0 {
+		t.Errorf("Expected 0 messages for suppressed EventIssueClosed, got %d", len(client.postedMessages))
+		for i, msg := range client.postedMessages {
+			t.Logf("  msg[%d]: channel=%q thread=%q text=%q", i, msg.Channel, msg.Thread, msg.Text)
 		}
-	}
-	if !found {
-		var texts []string
-		for _, msg := range client.postedMessages {
-			texts = append(texts, msg.Text)
-		}
-		t.Errorf("Expected message mentioning merged PR #52, got: %v", texts)
 	}
 }
 
@@ -1480,35 +1463,49 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 		ThreadType:    "pull_request",
 	})
 
+	// Events that are now delegated to the agent invoker should NOT post messages.
+	t.Run("PR ready posts to existing thread", func(t *testing.T) {
+		client.postedMessages = nil
+		notifier.Notify(context.Background(), slackfacade.NotificationEvent{
+			Type:        slackfacade.EventPRReady,
+			RepoOwner:   "example-org",
+			RepoName:    "test-repo",
+			IssueNumber: 42,
+			Title:       "Add feature",
+			PreviewURL:  "https://preview.example.com",
+			UserNote:    "Test with admin/admin",
+		}, target)
+		debouncer.executeAll()
+
+		if len(client.postedMessages) != 0 {
+			t.Errorf("Expected no message (agent handles EventPRReady), got %d: %+v",
+				len(client.postedMessages), client.postedMessages)
+		}
+	})
+
+	t.Run("Preview failed", func(t *testing.T) {
+		client.postedMessages = nil
+		notifier.Notify(context.Background(), slackfacade.NotificationEvent{
+			Type:        slackfacade.EventPRFailed,
+			RepoOwner:   "example-org",
+			RepoName:    "test-repo",
+			IssueNumber: 42,
+			Status:      "compose_up",
+		}, target)
+		debouncer.executeAll()
+
+		if len(client.postedMessages) != 0 {
+			t.Errorf("Expected no message (agent handles EventPRFailed), got %d: %+v",
+				len(client.postedMessages), client.postedMessages)
+		}
+	})
+
+	// Events that are NOT delegated should still produce messages.
 	tests := []struct {
 		name     string
 		event    slackfacade.NotificationEvent
 		contains string
 	}{
-		{
-			name: "PR ready posts to existing thread",
-			event: slackfacade.NotificationEvent{
-				Type:        slackfacade.EventPRReady,
-				RepoOwner:   "example-org",
-				RepoName:    "test-repo",
-				IssueNumber: 42,
-				Title:       "Add feature",
-				PreviewURL:  "https://preview.example.com",
-				UserNote:    "Test with admin/admin",
-			},
-			contains: "preview is live",
-		},
-		{
-			name: "Preview failed",
-			event: slackfacade.NotificationEvent{
-				Type:        slackfacade.EventPRFailed,
-				RepoOwner:   "example-org",
-				RepoName:    "test-repo",
-				IssueNumber: 42,
-				Status:      "compose_up",
-			},
-			contains: "failed during",
-		},
 		{
 			name: "Comment with link",
 			event: slackfacade.NotificationEvent{
@@ -1763,5 +1760,144 @@ func TestNotifier_IssueEvent_CallsForIssue(t *testing.T) {
 	call := assembler.forIssueCalls[0]
 	if call.Number != 42 {
 		t.Errorf("Expected ForIssue number=42, got %d", call.Number)
+	}
+}
+
+func TestShouldSkipMessage(t *testing.T) {
+	tests := []struct {
+		name     string
+		event    slackfacade.EventType
+		wantSkip bool
+	}{
+		{"EventIssueOpened is skipped", slackfacade.EventIssueOpened, true},
+		{"EventIssueReopened is skipped", slackfacade.EventIssueReopened, true},
+		{"EventCIPassed is skipped", slackfacade.EventCIPassed, true},
+		{"EventPRReady is skipped (agent handles)", slackfacade.EventPRReady, true},
+		{"EventPRFailed is skipped (agent handles)", slackfacade.EventPRFailed, true},
+		{"EventCIFailed is skipped (agent handles)", slackfacade.EventCIFailed, true},
+		{"EventPRMerged is skipped (agent handles)", slackfacade.EventPRMerged, true},
+		{"EventIssueClosed is skipped", slackfacade.EventIssueClosed, true},
+		{"EventPRClosed is skipped", slackfacade.EventPRClosed, true},
+		{"EventCommentAdded is NOT skipped", slackfacade.EventCommentAdded, false},
+		{"EventPROpened is NOT skipped (has PhaseOpen logic)", slackfacade.EventPROpened, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldSkipMessage(tt.event)
+			if got != tt.wantSkip {
+				t.Errorf("shouldSkipMessage(%s) = %v, want %v", tt.event, got, tt.wantSkip)
+			}
+		})
+	}
+}
+
+func TestNotifier_CIFailed_DoesNotPostMessage(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
+	notifier.retryWait = 10 * time.Millisecond
+
+	// Pre-create a thread
+	repo.SaveThread(context.Background(), &SlackThread{
+		ID:            "t1",
+		RepoOwner:     "acme",
+		RepoName:      "widgets",
+		GithubPRID:    10,
+		SlackChannel:  "#test",
+		SlackThreadTs: "existing-ts",
+		SlackParentTs: "existing-ts",
+		ThreadType:    "pull_request",
+	})
+
+	target := targets.TargetConfig{
+		RepoOwner:     "acme",
+		RepoName:      "widgets",
+		SlackChannel:  "#test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventCIFailed,
+		RepoOwner:   "acme",
+		RepoName:    "widgets",
+		IssueNumber: 10,
+	}
+
+	notifier.Notify(context.Background(), event, target)
+	debouncer.executeAll()
+
+	// Should NOT post any message (CI failed is agent-handled)
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	for _, msg := range client.postedMessages {
+		if msg.Thread != "" {
+			t.Errorf("Expected no thread reply for EventCIFailed, got: %q", msg.Text)
+		}
+	}
+}
+
+func TestNotifier_PROpened_PhaseOpen_DoesNotPostMessage_ButTransitionsPhase(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
+	notifier.retryWait = 10 * time.Millisecond
+
+	// Pre-create a thread in PhaseOpen
+	repo.SaveThread(context.Background(), &SlackThread{
+		ID:              "t1",
+		RepoOwner:       "acme",
+		RepoName:        "widgets",
+		GithubIssueID:   10,
+		SlackChannel:    "#test",
+		SlackThreadTs:   "existing-ts",
+		SlackParentTs:   "existing-ts",
+		ThreadType:      "issue",
+		WorkstreamPhase: PhaseOpen,
+	})
+
+	target := targets.TargetConfig{
+		RepoOwner:     "acme",
+		RepoName:      "widgets",
+		SlackChannel:  "#test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	event := slackfacade.NotificationEvent{
+		Type:              slackfacade.EventPROpened,
+		RepoOwner:         "acme",
+		RepoName:          "widgets",
+		IssueNumber:       17,
+		Title:             "Add feature",
+		Author:            "opencode-agent[bot]",
+		LinkedIssueNumber: 10,
+	}
+
+	notifier.Notify(context.Background(), event, target)
+	debouncer.executeAll()
+
+	// Phase should transition to in-progress (at least one thread with this ts)
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	foundInProgress := false
+	for _, thread := range repo.threads {
+		if thread.SlackThreadTs == "existing-ts" && thread.WorkstreamPhase == PhaseInProgress {
+			foundInProgress = true
+			break
+		}
+	}
+	if !foundInProgress {
+		t.Error("Expected at least one thread with phase in-progress after EventPROpened")
+	}
+
+	// Should NOT post a thread reply (PR opened in PhaseOpen is skipped)
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	for _, msg := range client.postedMessages {
+		if msg.Thread != "" {
+			t.Errorf("Expected no thread reply for EventPROpened in PhaseOpen, got: %q", msg.Text)
+		}
 	}
 }

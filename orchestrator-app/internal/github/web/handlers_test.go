@@ -800,6 +800,251 @@ func TestHandleWebhook_CheckRun_InProgress_Ignored(t *testing.T) {
 	}
 }
 
+// mockAgentInvoker records calls to InvokeForEvent
+type mockAgentInvoker struct {
+	mu    sync.Mutex
+	calls []facade.NotificationEvent
+}
+
+func (m *mockAgentInvoker) InvokeForEvent(ctx context.Context, event facade.NotificationEvent, target targets.TargetConfig) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls = append(m.calls, event)
+}
+
+func TestHandleWebhook_IssueComment_BotSenderSkipped(t *testing.T) {
+	previewSvc := &mockPreviewService{}
+	slackNotifier := &mockSlackNotifier{}
+	agentInvoker := &mockAgentInvoker{}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:      "example-org",
+			RepoName:       "test-repo",
+			GitHubPAT:      "github_pat_test",
+			WebhookSecret:  "secret123",
+			SlackChannel:   "#productbuilding-test",
+			SlackBotToken:  "xoxb-test",
+			BotGitHubLogin: "PrdctBldr",
+		},
+		found: true,
+	}
+
+	handler := NewHandler(registry, previewSvc, slackNotifier, agentInvoker)
+
+	// Comment from the bot account — no via-agent/via-slack markers
+	payload := map[string]interface{}{
+		"action": "created",
+		"comment": map[string]interface{}{
+			"id":   789,
+			"body": "Preview deploying for commit abc123...",
+			"user": map[string]string{"login": "PrdctBldr"},
+		},
+		"issue": map[string]interface{}{
+			"number": 42,
+			"title":  "Add dark mode support",
+		},
+		"sender":     map[string]string{"login": "PrdctBldr"},
+		"repository": map[string]interface{}{"owner": map[string]string{"login": "example-org"}, "name": "test-repo"},
+	}
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(body))
+	req.Header.Set("X-GitHub-Event", "issue_comment")
+	req.Header.Set("X-Hub-Signature-256", generateSignature(body, "secret123"))
+
+	rec := httptest.NewRecorder()
+	handler.HandleWebhook(rec, req)
+
+	time.Sleep(100 * time.Millisecond)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rec.Code)
+	}
+
+	slackNotifier.mu.Lock()
+	notified := slackNotifier.notifyCalled
+	slackNotifier.mu.Unlock()
+
+	if notified {
+		t.Error("Should NOT send Slack notification for bot-sender comment")
+	}
+
+	agentInvoker.mu.Lock()
+	invoked := len(agentInvoker.calls)
+	agentInvoker.mu.Unlock()
+
+	if invoked > 0 {
+		t.Error("Should NOT invoke agent for bot-sender comment")
+	}
+}
+
+func TestHandleWebhook_IssueComment_OpenCodeBot_InvokesAgent(t *testing.T) {
+	previewSvc := &mockPreviewService{}
+	slackNotifier := &mockSlackNotifier{}
+	agentInvoker := &mockAgentInvoker{}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:      "example-org",
+			RepoName:       "test-repo",
+			GitHubPAT:      "github_pat_test",
+			WebhookSecret:  "secret123",
+			SlackChannel:   "#productbuilding-test",
+			SlackBotToken:  "xoxb-test",
+			BotGitHubLogin: "PrdctBldr",
+		},
+		found: true,
+	}
+
+	handler := NewHandler(registry, previewSvc, slackNotifier, agentInvoker)
+
+	// Comment from opencode-agent[bot] — not the bot account
+	payload := map[string]interface{}{
+		"action": "created",
+		"comment": map[string]interface{}{
+			"id":   790,
+			"body": "Created PR #96",
+			"user": map[string]string{"login": "opencode-agent[bot]"},
+		},
+		"issue": map[string]interface{}{
+			"number": 42,
+			"title":  "Add dark mode support",
+		},
+		"sender":     map[string]string{"login": "opencode-agent[bot]"},
+		"repository": map[string]interface{}{"owner": map[string]string{"login": "example-org"}, "name": "test-repo"},
+	}
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(body))
+	req.Header.Set("X-GitHub-Event", "issue_comment")
+	req.Header.Set("X-Hub-Signature-256", generateSignature(body, "secret123"))
+
+	rec := httptest.NewRecorder()
+	handler.HandleWebhook(rec, req)
+
+	time.Sleep(100 * time.Millisecond)
+
+	slackNotifier.mu.Lock()
+	notified := slackNotifier.notifyCalled
+	slackNotifier.mu.Unlock()
+
+	if !notified {
+		t.Error("Should send Slack notification for opencode-agent[bot] comment")
+	}
+
+	agentInvoker.mu.Lock()
+	invoked := len(agentInvoker.calls)
+	agentInvoker.mu.Unlock()
+
+	if invoked != 1 {
+		t.Errorf("Expected 1 agent invocation for opencode-agent[bot] comment, got %d", invoked)
+	}
+}
+
+func TestHandleWebhook_PRMerged_InvokesAgent(t *testing.T) {
+	previewSvc := &mockPreviewService{}
+	slackNotifier := &mockSlackNotifier{}
+	agentInvoker := &mockAgentInvoker{}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:      "example-org",
+			RepoName:       "playground",
+			GitHubPAT:      "github_pat_test",
+			WebhookSecret:  "secret123",
+			SlackChannel:   "#productbuilding",
+			SlackBotToken:  "xoxb-test",
+			BotGitHubLogin: "PrdctBldr",
+		},
+		found: true,
+	}
+
+	handler := NewHandler(registry, previewSvc, slackNotifier, agentInvoker)
+
+	payload := map[string]interface{}{
+		"action": "closed",
+		"pull_request": map[string]interface{}{
+			"number": 17,
+			"title":  "Added tech/arch section",
+			"body":   "Fixes #16",
+			"merged": true,
+			"user":   map[string]string{"login": "alice"},
+			"head":   map[string]string{"sha": "c07b81d7", "ref": "feature/homepage-tech"},
+		},
+		"sender":     map[string]string{"login": "alice"},
+		"repository": map[string]interface{}{"owner": map[string]string{"login": "example-org"}, "name": "playground"},
+	}
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader(body))
+	req.Header.Set("X-GitHub-Event", "pull_request")
+	req.Header.Set("X-Hub-Signature-256", generateSignature(body, "secret123"))
+
+	rec := httptest.NewRecorder()
+	handler.HandleWebhook(rec, req)
+
+	time.Sleep(100 * time.Millisecond)
+
+	agentInvoker.mu.Lock()
+	defer agentInvoker.mu.Unlock()
+
+	if len(agentInvoker.calls) != 1 {
+		t.Errorf("Expected 1 agent invocation for PR merged, got %d", len(agentInvoker.calls))
+	}
+	if len(agentInvoker.calls) > 0 && agentInvoker.calls[0].Type != facade.EventPRMerged {
+		t.Errorf("Expected EventPRMerged, got %s", agentInvoker.calls[0].Type)
+	}
+}
+
+func TestHandleWebhook_CIFailed_InvokesAgent(t *testing.T) {
+	previewSvc := &mockPreviewService{}
+	slackNotifier := &mockSlackNotifier{}
+	agentInvoker := &mockAgentInvoker{}
+	registry := &mockTargetRegistry{
+		config: targets.TargetConfig{
+			RepoOwner:      "acme",
+			RepoName:       "widgets",
+			GitHubPAT:      "ghp_test",
+			WebhookSecret:  "secret123",
+			SlackChannel:   "#test",
+			SlackBotToken:  "xoxb-test",
+			BotGitHubLogin: "PrdctBldr",
+		},
+		found: true,
+	}
+
+	handler := NewHandler(registry, previewSvc, slackNotifier, agentInvoker)
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"action": "completed",
+		"check_run": map[string]interface{}{
+			"id": 1001, "name": "build", "status": "completed", "conclusion": "failure",
+			"html_url": "https://github.com/acme/widgets/runs/1001", "head_sha": "abc123",
+			"pull_requests": []map[string]interface{}{{"number": 10}},
+		},
+		"sender":     map[string]string{"login": "github-actions[bot]"},
+		"repository": map[string]interface{}{"owner": map[string]string{"login": "acme"}, "name": "widgets"},
+	})
+
+	sig := generateSignature(payload, "secret123")
+	req := httptest.NewRequest("POST", "/webhooks/github", bytes.NewReader(payload))
+	req.Header.Set("X-GitHub-Event", "check_run")
+	req.Header.Set("X-Hub-Signature-256", sig)
+	rec := httptest.NewRecorder()
+
+	handler.HandleWebhook(rec, req)
+
+	time.Sleep(100 * time.Millisecond)
+
+	agentInvoker.mu.Lock()
+	defer agentInvoker.mu.Unlock()
+
+	if len(agentInvoker.calls) != 1 {
+		t.Errorf("Expected 1 agent invocation for CI failed, got %d", len(agentInvoker.calls))
+	}
+	if len(agentInvoker.calls) > 0 && agentInvoker.calls[0].Type != facade.EventCIFailed {
+		t.Errorf("Expected EventCIFailed, got %s", agentInvoker.calls[0].Type)
+	}
+}
+
 func TestHandleWebhook_CheckRun_NoPR_Ignored(t *testing.T) {
 	previewSvc := &mockPreviewService{}
 	slackNotifier := &mockSlackNotifier{}

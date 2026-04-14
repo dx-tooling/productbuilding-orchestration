@@ -40,6 +40,7 @@ type PREvent struct {
 	Body      string
 	Author    string
 	Merged    bool
+	Sender    string // GitHub login of the user/bot that triggered the event
 }
 
 // webhookPayload mirrors the relevant fields of a GitHub PR webhook.
@@ -64,6 +65,9 @@ type webhookPayload struct {
 		} `json:"owner"`
 		Name string `json:"name"`
 	} `json:"repository"`
+	Sender struct {
+		Login string `json:"login"`
+	} `json:"sender"`
 }
 
 // ParsePREvent extracts a PREvent from a raw webhook payload.
@@ -88,6 +92,7 @@ func ParsePREvent(payload []byte) (*PREvent, error) {
 		Body:      p.PullRequest.Body,
 		Author:    p.PullRequest.User.Login,
 		Merged:    p.PullRequest.Merged,
+		Sender:    p.Sender.Login,
 	}, nil
 }
 
@@ -96,6 +101,7 @@ type IssueEvent struct {
 	Action     string     `json:"action"`
 	Issue      Issue      `json:"issue"`
 	Repository Repository `json:"repository"`
+	Sender     string     `json:"-"` // GitHub login of the user/bot that triggered the event; populated by ParseIssueEvent
 }
 
 // Issue represents a GitHub issue
@@ -112,6 +118,7 @@ type IssueCommentEvent struct {
 	Comment    Comment    `json:"comment"`
 	Issue      Issue      `json:"issue"`
 	Repository Repository `json:"repository"`
+	Sender     string     `json:"-"` // GitHub login of the user/bot that triggered the event; populated by ParseIssueCommentEvent
 }
 
 // Comment represents a GitHub comment
@@ -149,6 +156,9 @@ type issuePayload struct {
 		} `json:"owner"`
 		Name string `json:"name"`
 	} `json:"repository"`
+	Sender struct {
+		Login string `json:"login"`
+	} `json:"sender"`
 }
 
 // issueCommentPayload mirrors the relevant fields of a GitHub issue comment webhook.
@@ -171,6 +181,9 @@ type issueCommentPayload struct {
 		} `json:"owner"`
 		Name string `json:"name"`
 	} `json:"repository"`
+	Sender struct {
+		Login string `json:"login"`
+	} `json:"sender"`
 }
 
 // ParseIssueEvent extracts an IssueEvent from a raw webhook payload.
@@ -196,6 +209,7 @@ func ParseIssueEvent(payload []byte) (*IssueEvent, error) {
 			Owner: User{Login: p.Repository.Owner.Login},
 			Name:  p.Repository.Name,
 		},
+		Sender: p.Sender.Login,
 	}, nil
 }
 
@@ -221,6 +235,7 @@ func ParseIssueCommentEvent(payload []byte) (*IssueCommentEvent, error) {
 			Owner: User{Login: p.Repository.Owner.Login},
 			Name:  p.Repository.Name,
 		},
+		Sender: p.Sender.Login,
 	}, nil
 }
 
@@ -234,6 +249,7 @@ type CheckRunEvent struct {
 		} `json:"owner"`
 		Name string `json:"name"`
 	} `json:"repository"`
+	Sender string `json:"-"` // populated from sender.login in ParseCheckRunEvent
 }
 
 // CheckRunPayload represents the check_run payload within a webhook event.
@@ -251,11 +267,17 @@ type CheckRunPayload struct {
 
 // ParseCheckRunEvent extracts a CheckRunEvent from a raw webhook payload.
 func ParseCheckRunEvent(payload []byte) (*CheckRunEvent, error) {
-	var event CheckRunEvent
-	if err := json.Unmarshal(payload, &event); err != nil {
+	var raw struct {
+		CheckRunEvent
+		SenderObj struct {
+			Login string `json:"login"`
+		} `json:"sender"`
+	}
+	if err := json.Unmarshal(payload, &raw); err != nil {
 		return nil, fmt.Errorf("unmarshal check_run payload: %w", err)
 	}
-	return &event, nil
+	raw.CheckRunEvent.Sender = raw.SenderObj.Login
+	return &raw.CheckRunEvent, nil
 }
 
 // closingKeywordRe matches GitHub closing keywords: Fixes #N, Closes #N, Resolves #N (and variants)

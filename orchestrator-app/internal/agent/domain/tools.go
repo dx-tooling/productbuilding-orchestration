@@ -371,6 +371,8 @@ func (e *GitHubToolExecutor) closeIssue(ctx context.Context, argsJSON string, ta
 		return "", err
 	}
 
+	e.effects.ClosedIssues = append(e.effects.ClosedIssues, args.Number)
+
 	return fmt.Sprintf("Closed issue #%d.\nURL: https://github.com/%s/%s/issues/%d",
 		args.Number, target.RepoOwner, target.RepoName, args.Number), nil
 }
@@ -386,6 +388,8 @@ func (e *GitHubToolExecutor) closePR(ctx context.Context, argsJSON string, targe
 	if err := e.github.ClosePR(ctx, target.RepoOwner, target.RepoName, args.PRNumber, target.GitHubPAT); err != nil {
 		return "", err
 	}
+
+	e.effects.ClosedPRs = append(e.effects.ClosedPRs, args.PRNumber)
 
 	return fmt.Sprintf("Closed PR #%d.\nURL: https://github.com/%s/%s/pull/%d",
 		args.PRNumber, target.RepoOwner, target.RepoName, args.PRNumber), nil

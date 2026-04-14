@@ -30,18 +30,28 @@ type PreviewService interface {
 	DeletePreview(ctx context.Context, req previewdomain.DeployRequest, pat string)
 }
 
+// AgentInvoker invokes the LLM agent for events that should be narrated conversationally.
+type AgentInvoker interface {
+	InvokeForEvent(ctx context.Context, event slackfacade.NotificationEvent, target targets.TargetConfig)
+}
+
 type Handler struct {
 	registry       Registry
 	previewService PreviewService
 	notifier       Notifier
+	agentInvoker   AgentInvoker
 }
 
-func NewHandler(registry Registry, previewService PreviewService, notifier Notifier) *Handler {
-	return &Handler{
+func NewHandler(registry Registry, previewService PreviewService, notifier Notifier, agentInvoker ...AgentInvoker) *Handler {
+	h := &Handler{
 		registry:       registry,
 		previewService: previewService,
 		notifier:       notifier,
 	}
+	if len(agentInvoker) > 0 {
+		h.agentInvoker = agentInvoker[0]
+	}
+	return h
 }
 
 func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -114,6 +124,8 @@ func (h *Handler) handlePullRequest(w http.ResponseWriter, r *http.Request, body
 		HeadSHA:   event.HeadSHA,
 	}
 
+	isBot := target.BotGitHubLogin != "" && event.Sender == target.BotGitHubLogin
+
 	switch event.Action {
 	case "opened", "synchronize", "reopened":
 		// Deploy/update preview asynchronously
@@ -126,9 +138,41 @@ func (h *Handler) handlePullRequest(w http.ResponseWriter, r *http.Request, body
 				eventType = slackfacade.EventPRMerged
 			}
 			go h.notifySlackPR(eventType, event, target)
+
+			// Invoke agent for merged PRs from non-bot senders
+			if !isBot && h.agentInvoker != nil && event.Merged {
+				slackEvent := slackfacade.NotificationEvent{
+					Type:              slackfacade.EventPRMerged,
+					RepoOwner:         event.RepoOwner,
+					RepoName:          event.RepoName,
+					IssueNumber:       event.PRNumber,
+					Title:             event.Title,
+					Body:              event.Body,
+					Author:            event.Author,
+					LinkedIssueNumber: domain.ExtractLinkedIssue(event.Body),
+					URL:               fmt.Sprintf("https://github.com/%s/%s/pull/%d", event.RepoOwner, event.RepoName, event.PRNumber),
+				}
+				go h.agentInvoker.InvokeForEvent(context.Background(), slackEvent, target)
+			}
 		}
 	default:
 		slog.Debug("ignoring PR action", "action", event.Action)
+	}
+
+	// Invoke agent for PR opened events from non-bot senders
+	if event.Action == "opened" && !isBot && h.agentInvoker != nil {
+		slackEvent := slackfacade.NotificationEvent{
+			Type:              slackfacade.EventPROpened,
+			RepoOwner:         event.RepoOwner,
+			RepoName:          event.RepoName,
+			IssueNumber:       event.PRNumber,
+			Title:             event.Title,
+			Body:              event.Body,
+			Author:            event.Author,
+			LinkedIssueNumber: domain.ExtractLinkedIssue(event.Body),
+			URL:               fmt.Sprintf("https://github.com/%s/%s/pull/%d", event.RepoOwner, event.RepoName, event.PRNumber),
+		}
+		go h.agentInvoker.InvokeForEvent(context.Background(), slackEvent, target)
 	}
 
 	w.WriteHeader(http.StatusAccepted)
@@ -224,6 +268,14 @@ func (h *Handler) handleIssueComment(w http.ResponseWriter, r *http.Request, bod
 		return
 	}
 
+	// Skip comments posted by the bot account itself (e.g. preview deployment checklists).
+	// This complements the content-based filter above, which only catches via-slack/via-agent markers.
+	if target.BotGitHubLogin != "" && event.Sender == target.BotGitHubLogin {
+		slog.Debug("skipping comment from bot account", "commenter", event.Sender)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
 	slog.Info("issue comment webhook received",
 		"repo", event.Repository.Owner.Login+"/"+event.Repository.Name,
 		"issue", event.Issue.Number,
@@ -233,6 +285,22 @@ func (h *Handler) handleIssueComment(w http.ResponseWriter, r *http.Request, bod
 	// Send Slack notification
 	if h.notifier != nil {
 		go h.notifySlackComment(event, target)
+	}
+
+	// Invoke agent for external-actor comments
+	if h.agentInvoker != nil {
+		slackEvent := slackfacade.NotificationEvent{
+			Type:        slackfacade.EventCommentAdded,
+			RepoOwner:   event.Repository.Owner.Login,
+			RepoName:    event.Repository.Name,
+			IssueNumber: event.Issue.Number,
+			Title:       event.Issue.Title,
+			Body:        event.Comment.Body,
+			Author:      event.Comment.User.Login,
+			CommentID:   event.Comment.ID,
+			URL:         fmt.Sprintf("https://github.com/%s/%s/issues/%d", event.Repository.Owner.Login, event.Repository.Name, event.Issue.Number),
+		}
+		go h.agentInvoker.InvokeForEvent(context.Background(), slackEvent, target)
 	}
 
 	w.WriteHeader(http.StatusAccepted)
@@ -284,6 +352,22 @@ func (h *Handler) handleCheckRun(w http.ResponseWriter, r *http.Request, body []
 	if h.notifier != nil {
 		for _, pr := range event.CheckRun.PullRequests {
 			go h.notifySlackCheckRun(event, pr.Number, target)
+		}
+	}
+
+	// Invoke agent for CI failures (always external — CI is never bot-initiated)
+	if h.agentInvoker != nil && (event.CheckRun.Conclusion == "failure" || event.CheckRun.Conclusion == "timed_out") {
+		for _, pr := range event.CheckRun.PullRequests {
+			slackEvent := slackfacade.NotificationEvent{
+				Type:         slackfacade.EventCIFailed,
+				RepoOwner:    event.Repository.Owner.Login,
+				RepoName:     event.Repository.Name,
+				IssueNumber:  pr.Number,
+				CheckRunName: event.CheckRun.Name,
+				WorkflowURL:  event.CheckRun.HTMLURL,
+				HeadSHA:      event.CheckRun.HeadSHA,
+			}
+			go h.agentInvoker.InvokeForEvent(context.Background(), slackEvent, target)
 		}
 	}
 

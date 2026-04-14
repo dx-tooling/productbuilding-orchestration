@@ -5,6 +5,17 @@ import (
 	"testing"
 )
 
+func TestRenderRouterPrompt_ContainsEventNarratorRouting(t *testing.T) {
+	prompt := renderRouterPrompt("acme", "widgets")
+
+	if !strings.Contains(prompt, "event_narrator") {
+		t.Error("expected router prompt to contain event_narrator specialist")
+	}
+	if !strings.Contains(prompt, "[system event]") {
+		t.Error("expected router prompt to mention [system event] prefix routing")
+	}
+}
+
 func TestRenderRouterPrompt_ContainsPhaseGuidance(t *testing.T) {
 	prompt := renderRouterPrompt("acme", "widgets")
 

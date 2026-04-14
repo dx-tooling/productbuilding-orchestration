@@ -101,6 +101,8 @@ type SideEffects struct {
 	CreatedIssues   []CreatedIssue
 	PostedComments  []int64
 	DelegatedIssues []int
+	ClosedIssues    []int
+	ClosedPRs       []int
 }
 
 // IssueContext provides linked GitHub issue data to the agent.

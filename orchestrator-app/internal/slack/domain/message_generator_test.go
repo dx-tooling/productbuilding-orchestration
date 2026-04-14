@@ -230,7 +230,7 @@ func TestMessageGenerator_EventMessage_PRMerged_NoCIInfo(t *testing.T) {
 	}
 }
 
-func TestMessageGenerator_EventMessage_IssueClosed_WithPR(t *testing.T) {
+func TestMessageGenerator_EventMessage_IssueClosed_ReturnsEmpty(t *testing.T) {
 	g := NewMessageGenerator()
 	event := slackfacade.NotificationEvent{
 		Type: slackfacade.EventIssueClosed,
@@ -241,31 +241,8 @@ func TestMessageGenerator_EventMessage_IssueClosed_WithPR(t *testing.T) {
 
 	msg := g.EventMessage(event, snap)
 
-	if !strings.Contains(msg.Text, "closed") {
-		t.Errorf("Expected 'closed' in message, got: %s", msg.Text)
-	}
-	if !strings.Contains(msg.Text, "PR #52") {
-		t.Errorf("Expected 'PR #52' in message, got: %s", msg.Text)
-	}
-	if !strings.Contains(msg.Text, "merged") {
-		t.Errorf("Expected 'merged' in message, got: %s", msg.Text)
-	}
-}
-
-func TestMessageGenerator_EventMessage_IssueClosed_NoPR(t *testing.T) {
-	g := NewMessageGenerator()
-	event := slackfacade.NotificationEvent{
-		Type: slackfacade.EventIssueClosed,
-	}
-	snap := &featurecontext.FeatureSnapshot{}
-
-	msg := g.EventMessage(event, snap)
-
-	if !strings.Contains(msg.Text, "closed") {
-		t.Errorf("Expected 'closed' in message, got: %s", msg.Text)
-	}
-	if strings.Contains(msg.Text, "PR") {
-		t.Errorf("Should not mention PR when nil, got: %s", msg.Text)
+	if msg.Text != "" {
+		t.Errorf("Expected empty message for IssueClosed (removed), got: %s", msg.Text)
 	}
 }
 
@@ -294,7 +271,7 @@ func TestMessageGenerator_EventMessage_CIFailed(t *testing.T) {
 	}
 }
 
-func TestMessageGenerator_EventMessage_CIPassed(t *testing.T) {
+func TestMessageGenerator_EventMessage_CIPassed_ReturnsEmpty(t *testing.T) {
 	g := NewMessageGenerator()
 	event := slackfacade.NotificationEvent{
 		Type: slackfacade.EventCIPassed,
@@ -302,24 +279,64 @@ func TestMessageGenerator_EventMessage_CIPassed(t *testing.T) {
 
 	msg := g.EventMessage(event, nil)
 
-	if !strings.Contains(msg.Text, "passing") {
-		t.Errorf("Expected 'passing' in message, got: %s", msg.Text)
+	if msg.Text != "" {
+		t.Errorf("Expected empty message for CIPassed (removed), got: %s", msg.Text)
+	}
+}
+
+func TestMessageGenerator_RemovedEventCases_ReturnEmpty(t *testing.T) {
+	g := NewMessageGenerator()
+	removedEvents := []slackfacade.EventType{
+		slackfacade.EventIssueOpened,
+		slackfacade.EventIssueReopened,
+		slackfacade.EventIssueClosed,
+		slackfacade.EventPRClosed,
+		slackfacade.EventCIPassed,
+	}
+
+	for _, eventType := range removedEvents {
+		event := slackfacade.NotificationEvent{
+			Type:      eventType,
+			Author:    "alice",
+			RepoOwner: "acme",
+			RepoName:  "widgets",
+		}
+		msg := g.EventMessage(event, nil)
+		if msg.Text != "" {
+			t.Errorf("EventMessage(%s) = %q, want empty string (case removed)", eventType, msg.Text)
+		}
+	}
+}
+
+func TestMessageGenerator_PROpened_PhaseOpen_ReturnsEmpty(t *testing.T) {
+	g := NewMessageGenerator()
+	event := slackfacade.NotificationEvent{
+		Type:        slackfacade.EventPROpened,
+		RepoOwner:   "acme",
+		RepoName:    "widgets",
+		IssueNumber: 10,
+		Author:      "alice",
+	}
+
+	msg := g.EventMessage(event, nil, PhaseOpen)
+	if msg.Text != "" {
+		t.Errorf("EventMessage(PROpened, PhaseOpen) = %q, want empty string", msg.Text)
 	}
 }
 
 func TestMessageGenerator_NilSnapshot_Fallback(t *testing.T) {
 	g := NewMessageGenerator()
-	events := []slackfacade.NotificationEvent{
-		{Type: slackfacade.EventIssueOpened, IssueNumber: 1, Title: "Test", Author: "alice", RepoOwner: "a", RepoName: "b"},
+
+	// Events that should still produce non-empty messages
+	activeEvents := []slackfacade.NotificationEvent{
 		{Type: slackfacade.EventPROpened, IssueNumber: 2, Title: "Test PR", Author: "bob", RepoOwner: "a", RepoName: "b"},
 		{Type: slackfacade.EventPRMerged},
-		{Type: slackfacade.EventIssueClosed},
 		{Type: slackfacade.EventCommentAdded, Author: "carol", Body: "hi"},
 		{Type: slackfacade.EventPRReady, PreviewURL: "https://example.com"},
 		{Type: slackfacade.EventPRFailed, Status: "build"},
 	}
 
-	for _, event := range events {
+	for _, event := range activeEvents {
 		// Should not panic with nil snapshot
 		parent := g.ParentMessage(event, nil)
 		if parent.Text == "" {
@@ -329,6 +346,23 @@ func TestMessageGenerator_NilSnapshot_Fallback(t *testing.T) {
 		reply := g.EventMessage(event, nil)
 		if reply.Text == "" {
 			t.Errorf("EventMessage should produce non-empty text for %s", event.Type)
+		}
+	}
+
+	// Removed events should return empty EventMessage (but ParentMessage may still work)
+	removedEvents := []slackfacade.NotificationEvent{
+		{Type: slackfacade.EventIssueOpened, IssueNumber: 1, Title: "Test", Author: "alice", RepoOwner: "a", RepoName: "b"},
+		{Type: slackfacade.EventIssueClosed},
+		{Type: slackfacade.EventCIPassed},
+	}
+
+	for _, event := range removedEvents {
+		// Should not panic
+		g.ParentMessage(event, nil)
+
+		reply := g.EventMessage(event, nil)
+		if reply.Text != "" {
+			t.Errorf("EventMessage should return empty for removed event %s, got %q", event.Type, reply.Text)
 		}
 	}
 }

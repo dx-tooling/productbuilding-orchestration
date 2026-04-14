@@ -62,7 +62,7 @@ func TestMessageGenerator_PreviewReady_NoPhase_DefaultMessage(t *testing.T) {
 	}
 }
 
-func TestMessageGenerator_PROpened_Open_WorkStarted(t *testing.T) {
+func TestMessageGenerator_PROpened_Open_ReturnsEmpty(t *testing.T) {
 	gen := NewMessageGenerator()
 
 	event := slackfacade.NotificationEvent{
@@ -75,11 +75,9 @@ func TestMessageGenerator_PROpened_Open_WorkStarted(t *testing.T) {
 
 	msg := gen.EventMessage(event, nil, PhaseOpen)
 
-	if !strings.Contains(strings.ToLower(msg.Text), "work") && !strings.Contains(strings.ToLower(msg.Text), "started") {
-		t.Errorf("Expected 'work started' framing for PR opened in open phase, got: %s", msg.Text)
-	}
-	if !strings.Contains(strings.ToLower(msg.Text), "something to look at") {
-		t.Errorf("Expected forward-looking framing, got: %s", msg.Text)
+	// PROpened in PhaseOpen is now suppressed (agent invoker handles the narration)
+	if msg.Text != "" {
+		t.Errorf("Expected empty message for PROpened in PhaseOpen (agent handles), got: %s", msg.Text)
 	}
 }
 

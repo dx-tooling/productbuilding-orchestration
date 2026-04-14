@@ -83,6 +83,12 @@ func defaultSpecialistConfigs() map[string]SpecialistConfig {
 			ToolDefs:       CloserTools(),
 			MaxIterations:  5,
 		},
+		"event_narrator": {
+			Name:           "event_narrator",
+			PromptTemplate: eventNarratorPromptTmpl,
+			ToolDefs:       EventNarratorTools(),
+			MaxIterations:  1,
+		},
 	}
 }
 

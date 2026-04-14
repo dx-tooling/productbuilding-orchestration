@@ -99,6 +99,10 @@ func (g *MessageGenerator) EventMessage(event slackfacade.NotificationEvent, sna
 
 	switch event.Type {
 	case slackfacade.EventPROpened:
+		// PhaseOpen means the agent will narrate; return empty to suppress template message
+		if currentPhase == PhaseOpen {
+			return MessageBlock{}
+		}
 		text = g.eventPROpened(event, snap, currentPhase)
 	case slackfacade.EventPRReady:
 		text = g.eventPreviewReady(event, currentPhase)
@@ -108,18 +112,13 @@ func (g *MessageGenerator) EventMessage(event slackfacade.NotificationEvent, sna
 		text = g.eventComment(event)
 	case slackfacade.EventPRMerged:
 		text = g.eventPRMerged(snap, currentPhase)
-	case slackfacade.EventIssueClosed:
-		text = g.eventIssueClosed(snap)
-	case slackfacade.EventPRClosed:
-		text = "This pull request has been closed. The preview will be torn down shortly."
-	case slackfacade.EventIssueOpened:
-		text = fmt.Sprintf("@%s opened this issue.", event.Author)
-	case slackfacade.EventIssueReopened:
-		text = "This issue has been reopened."
 	case slackfacade.EventCIFailed:
 		text = g.eventCIFailed(event)
-	case slackfacade.EventCIPassed:
-		text = g.eventCIPassed(event)
+	// Removed cases: these events are either suppressed (bot self-narration) or
+	// delegated to the agent invoker for natural-language narration.
+	case slackfacade.EventIssueOpened, slackfacade.EventIssueReopened,
+		slackfacade.EventIssueClosed, slackfacade.EventPRClosed, slackfacade.EventCIPassed:
+		return MessageBlock{}
 	default:
 		text = fmt.Sprintf("Update: %s", event.Type)
 	}
@@ -228,13 +227,6 @@ func (g *MessageGenerator) eventPRMerged(snap *featurecontext.FeatureSnapshot, p
 	return text
 }
 
-func (g *MessageGenerator) eventIssueClosed(snap *featurecontext.FeatureSnapshot) string {
-	if snap != nil && snap.PR != nil && snap.PR.Merged {
-		return fmt.Sprintf("This issue is now closed. It was addressed by PR #%d, which has been merged.", snap.PR.Number)
-	}
-	return "This issue has been closed."
-}
-
 func (g *MessageGenerator) eventCIFailed(event slackfacade.NotificationEvent) string {
 	lines := []string{"CI failed on the latest push."}
 
@@ -251,10 +243,6 @@ func (g *MessageGenerator) eventCIFailed(event slackfacade.NotificationEvent) st
 	}
 
 	return strings.Join(lines, "\n")
-}
-
-func (g *MessageGenerator) eventCIPassed(event slackfacade.NotificationEvent) string {
-	return "CI checks are passing on the latest push."
 }
 
 // sanitizeBody transforms raw GitHub markdown into plain text suitable for Slack blockquotes.

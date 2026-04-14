@@ -2,7 +2,6 @@ package domain
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/targets"
@@ -44,20 +43,18 @@ func TestNotifier_PreviewReady_InProgressPhase_ProducesReviewPrompt(t *testing.T
 	notifier.Notify(context.Background(), event, target)
 	debouncer.executeAll()
 
-	// Check that the posted message uses PM-style framing
-	found := false
-	for _, msg := range client.postedMessages {
-		if msg.Thread != "" && strings.Contains(msg.Text, "what you think") {
-			found = true
-			break
-		}
+	// EventPRReady is now delegated to the agent invoker — no template message should be posted.
+	if len(client.postedMessages) != 0 {
+		t.Errorf("Expected no messages (agent handles EventPRReady), got: %+v", client.postedMessages)
 	}
-	if !found {
-		var texts []string
-		for _, msg := range client.postedMessages {
-			texts = append(texts, msg.Text)
-		}
-		t.Errorf("Expected PM-style review prompt, got messages: %v", texts)
+
+	// Phase transition must still happen: InProgress → Review
+	phaseCalls := repo.getPhaseCalls()
+	if len(phaseCalls) == 0 {
+		t.Fatal("Expected phase transition to PhaseReview, got none")
+	}
+	if phaseCalls[0].Phase != PhaseReview {
+		t.Errorf("Expected phase = %s, got %s", PhaseReview, phaseCalls[0].Phase)
 	}
 }
 
@@ -97,19 +94,18 @@ func TestNotifier_PreviewReady_RevisionPhase_ProducesFeedbackFollowup(t *testing
 	notifier.Notify(context.Background(), event, target)
 	debouncer.executeAll()
 
-	found := false
-	for _, msg := range client.postedMessages {
-		if msg.Thread != "" && strings.Contains(strings.ToLower(msg.Text), "feedback") {
-			found = true
-			break
-		}
+	// EventPRReady is now delegated to the agent invoker — no template message should be posted.
+	if len(client.postedMessages) != 0 {
+		t.Errorf("Expected no messages (agent handles EventPRReady), got: %+v", client.postedMessages)
 	}
-	if !found {
-		var texts []string
-		for _, msg := range client.postedMessages {
-			texts = append(texts, msg.Text)
-		}
-		t.Errorf("Expected feedback follow-up message, got: %v", texts)
+
+	// Phase transition must still happen: Revision → Review
+	phaseCalls := repo.getPhaseCalls()
+	if len(phaseCalls) == 0 {
+		t.Fatal("Expected phase transition to PhaseReview, got none")
+	}
+	if phaseCalls[0].Phase != PhaseReview {
+		t.Errorf("Expected phase = %s, got %s", PhaseReview, phaseCalls[0].Phase)
 	}
 }
 
@@ -146,18 +142,17 @@ func TestNotifier_PRMerged_ReviewPhase_ProducesLiveConfirmation(t *testing.T) {
 	notifier.Notify(context.Background(), event, target)
 	debouncer.executeAll()
 
-	found := false
-	for _, msg := range client.postedMessages {
-		if msg.Thread != "" && strings.Contains(strings.ToLower(msg.Text), "live") {
-			found = true
-			break
-		}
+	// EventPRMerged is now delegated to the agent invoker — no template message should be posted.
+	if len(client.postedMessages) != 0 {
+		t.Errorf("Expected no messages (agent handles EventPRMerged), got: %+v", client.postedMessages)
 	}
-	if !found {
-		var texts []string
-		for _, msg := range client.postedMessages {
-			texts = append(texts, msg.Text)
-		}
-		t.Errorf("Expected 'live' confirmation, got: %v", texts)
+
+	// Phase transition must still happen: Review → Done
+	phaseCalls := repo.getPhaseCalls()
+	if len(phaseCalls) == 0 {
+		t.Fatal("Expected phase transition to PhaseDone, got none")
+	}
+	if phaseCalls[0].Phase != PhaseDone {
+		t.Errorf("Expected phase = %s, got %s", PhaseDone, phaseCalls[0].Phase)
 	}
 }

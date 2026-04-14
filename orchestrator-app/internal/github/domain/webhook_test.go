@@ -259,6 +259,157 @@ func TestParseCheckRunEvent_Failure(t *testing.T) {
 	}
 }
 
+func TestParsePREvent_ParsesSender(t *testing.T) {
+	payload := []byte(`{
+		"action": "opened",
+		"pull_request": {
+			"number": 42,
+			"title": "Add feature",
+			"user": {"login": "alice"},
+			"head": {"sha": "abc123", "ref": "feature/test"}
+		},
+		"sender": {"login": "alice"},
+		"repository": {
+			"owner": {"login": "example-org"},
+			"name": "my-app"
+		}
+	}`)
+
+	event, err := ParsePREvent(payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.Sender != "alice" {
+		t.Errorf("Sender = %q, want %q", event.Sender, "alice")
+	}
+}
+
+func TestParsePREvent_SenderAbsent(t *testing.T) {
+	payload := []byte(`{
+		"action": "opened",
+		"pull_request": {
+			"number": 42,
+			"title": "Add feature",
+			"user": {"login": "alice"},
+			"head": {"sha": "abc123", "ref": "feature/test"}
+		},
+		"repository": {
+			"owner": {"login": "example-org"},
+			"name": "my-app"
+		}
+	}`)
+
+	event, err := ParsePREvent(payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.Sender != "" {
+		t.Errorf("Sender = %q, want empty string when sender absent", event.Sender)
+	}
+}
+
+func TestParseIssueEvent_ParsesSender(t *testing.T) {
+	payload := []byte(`{
+		"action": "closed",
+		"issue": {
+			"number": 7,
+			"title": "Bug report",
+			"body": "Steps to reproduce...",
+			"user": {"login": "alice"}
+		},
+		"sender": {"login": "PrdctBldr"},
+		"repository": {
+			"owner": {"login": "acme"},
+			"name": "widgets"
+		}
+	}`)
+
+	event, err := ParseIssueEvent(payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.Sender != "PrdctBldr" {
+		t.Errorf("Sender = %q, want %q", event.Sender, "PrdctBldr")
+	}
+}
+
+func TestParseIssueEvent_SenderAbsent(t *testing.T) {
+	payload := []byte(`{
+		"action": "opened",
+		"issue": {
+			"number": 7,
+			"title": "Bug report",
+			"body": "",
+			"user": {"login": "alice"}
+		},
+		"repository": {
+			"owner": {"login": "acme"},
+			"name": "widgets"
+		}
+	}`)
+
+	event, err := ParseIssueEvent(payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.Sender != "" {
+		t.Errorf("Sender = %q, want empty string when sender absent", event.Sender)
+	}
+}
+
+func TestParseIssueCommentEvent_ParsesSender(t *testing.T) {
+	payload := []byte(`{
+		"action": "created",
+		"comment": {
+			"id": 100,
+			"body": "Looks good",
+			"user": {"login": "bob"}
+		},
+		"issue": {"number": 5, "title": "Feature"},
+		"sender": {"login": "bob"},
+		"repository": {
+			"owner": {"login": "acme"},
+			"name": "widgets"
+		}
+	}`)
+
+	event, err := ParseIssueCommentEvent(payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.Sender != "bob" {
+		t.Errorf("Sender = %q, want %q", event.Sender, "bob")
+	}
+}
+
+func TestParseCheckRunEvent_ParsesSender(t *testing.T) {
+	payload := []byte(`{
+		"action": "completed",
+		"check_run": {
+			"id": 1001,
+			"name": "build",
+			"status": "completed",
+			"conclusion": "failure",
+			"html_url": "https://github.com/acme/widgets/runs/1001",
+			"head_sha": "abc123",
+			"pull_requests": [{"number": 10}]
+		},
+		"sender": {"login": "github-actions[bot]"},
+		"repository": {
+			"owner": {"login": "acme"},
+			"name": "widgets"
+		}
+	}`)
+
+	event, err := ParseCheckRunEvent(payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.Sender != "github-actions[bot]" {
+		t.Errorf("Sender = %q, want %q", event.Sender, "github-actions[bot]")
+	}
+}
+
 func TestParseCheckRunEvent_Success(t *testing.T) {
 	payload := []byte(`{
 		"action": "completed",

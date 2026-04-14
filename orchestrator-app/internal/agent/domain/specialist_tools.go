@@ -51,6 +51,11 @@ func ResearcherTools() []ToolDef {
 	})
 }
 
+// EventNarratorTools returns tools for the event_narrator specialist (none — tool-free).
+func EventNarratorTools() []ToolDef {
+	return []ToolDef{}
+}
+
 // CloserTools returns tools for the closer specialist.
 func CloserTools() []ToolDef {
 	return filterTools(map[string]bool{
