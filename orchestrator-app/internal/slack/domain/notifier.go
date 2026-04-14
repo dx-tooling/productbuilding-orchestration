@@ -172,6 +172,7 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 			"issue_number", event.IssueNumber,
 			"linked_issue", event.LinkedIssueNumber,
 			"thread_found", thread != nil,
+			"lookup_error", fmt.Sprintf("%v", err),
 		)
 
 		// Check linked issue before retry sleep — this is the common path for
