@@ -618,9 +618,10 @@ func TestSpecialist_PassesOnIssueCreatedToTools(t *testing.T) {
 	}
 }
 
-func TestDelegatorPrompt_FeedbackRelayMentionsExistingBranch(t *testing.T) {
-	// The delegator prompt must tell the LLM to push to the existing branch/PR
-	// when relaying feedback, so OpenCode doesn't create a duplicate PR.
+func TestDelegatorPrompt_DirectsToPostOnPRWhenActive(t *testing.T) {
+	// When a PR exists, the delegator should be told to post on the PR,
+	// not the issue. This is cleaner than the "push to existing branch"
+	// workaround and matches how developers actually work.
 	var buf strings.Builder
 	err := delegatorPromptTmpl.Execute(&buf, PromptData{RepoOwner: "acme", RepoName: "widgets"})
 	if err != nil {
@@ -628,8 +629,14 @@ func TestDelegatorPrompt_FeedbackRelayMentionsExistingBranch(t *testing.T) {
 	}
 	prompt := buf.String()
 
-	if !strings.Contains(prompt, "existing branch") {
-		t.Error("delegator prompt must mention 'existing branch' to prevent duplicate PRs during feedback relay")
+	// The prompt should mention posting on the PR when one is active
+	if !strings.Contains(prompt, "Active PR") && !strings.Contains(prompt, "active PR") {
+		t.Error("delegator prompt must instruct posting on the active PR when one exists")
+	}
+
+	// The old "push to existing branch" workaround should be gone
+	if strings.Contains(prompt, "push additional commits to the existing branch") {
+		t.Error("delegator prompt should NOT contain the 'push to existing branch' workaround — posting on the PR makes it implicit")
 	}
 }
 
@@ -668,5 +675,47 @@ func TestSpecialist_IncludesWorkstreamPhaseInContext(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected workstream phase in specialist LLM messages")
+	}
+}
+
+func TestSpecialist_IncludesLinkedPRInContext(t *testing.T) {
+	// When a PR exists for the workstream, the specialist should see it
+	// in its LLM context so it can post comments on the PR, not the issue.
+	llm := &mockLLMClient{
+		responses: []ChatResponse{
+			{Content: "I'll post the feedback on the PR.", FinishReason: "stop"},
+		},
+	}
+	tools := &mockToolExecutor{}
+	s := newTestSpecialist(llm, tools)
+
+	_, err := s.Run(context.Background(), RunRequest{
+		ChannelID:       "C123",
+		MessageTs:       "123.456",
+		UserText:        "make the sidebar narrower",
+		UserName:        "alice",
+		Target:          agentTarget,
+		LinkedIssue:     &IssueContext{Number: 19, Title: "Sidebar redesign"},
+		LinkedPR:        &LinkedPRContext{Number: 22},
+		WorkstreamPhase: "review",
+	}, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(llm.requests) == 0 {
+		t.Fatal("expected at least 1 LLM request")
+	}
+
+	found := false
+	for _, msg := range llm.requests[0].Messages {
+		if strings.Contains(msg.Content, "#22") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected linked PR #22 in specialist LLM messages")
 	}
 }

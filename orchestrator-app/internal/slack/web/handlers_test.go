@@ -621,6 +621,70 @@ func TestHandleEvent_InThreadMention_AgentRunsWithContext(t *testing.T) {
 	}
 }
 
+func TestHandleEvent_InThreadMention_PopulatesLinkedPR(t *testing.T) {
+	agentRunner := &mockAgentRunner{
+		response: agent.RunResponse{Text: "Feedback relayed!"},
+	}
+	threadFinder := &mockThreadFinder{
+		thread: &domain.SlackThread{
+			GithubIssueID:  19,
+			GithubPRID:     22,
+			RepoOwner:      "example-org",
+			RepoName:       "playground",
+			WorkstreamPhase: domain.PhaseReview,
+		},
+	}
+	slackClient := &mockSlackClient{
+		userName:    "Alice",
+		channelName: "productbuilding-playground",
+	}
+	registry := &mockTargetRegistry{
+		channelConfig: defaultTarget(),
+		channelFound:  true,
+		botToken:      "xoxb-test",
+	}
+
+	h := NewHandler(agentRunner, threadFinder, &mockThreadSaver{}, nil, slackClient, registry, testSigningSecret, "")
+
+	payload := map[string]interface{}{
+		"type": "event_callback",
+		"event": map[string]interface{}{
+			"type":      "app_mention",
+			"user":      "U123",
+			"text":      "<@UBOT> make the sidebar narrower",
+			"thread_ts": "1111111111.111111",
+			"channel":   "C0PRODUCT",
+			"ts":        "2222222222.222222",
+		},
+		"authorizations": []map[string]string{{"user_id": "UBOT"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := makeSignedRequest(t, body)
+	rec := httptest.NewRecorder()
+
+	h.HandleEvent(rec, req)
+	time.Sleep(200 * time.Millisecond)
+
+	if !agentRunner.wasCalled() {
+		t.Fatal("Expected agent to be called")
+	}
+
+	lastReq := agentRunner.getLastReq()
+
+	// LinkedIssue should be the issue (not overridden to PR number)
+	if lastReq.LinkedIssue == nil || lastReq.LinkedIssue.Number != 19 {
+		t.Errorf("Expected LinkedIssue #19, got %+v", lastReq.LinkedIssue)
+	}
+
+	// LinkedPR should be populated from the thread's GithubPRID
+	if lastReq.LinkedPR == nil {
+		t.Fatal("Expected LinkedPR to be set when thread has GithubPRID")
+	}
+	if lastReq.LinkedPR.Number != 22 {
+		t.Errorf("Expected LinkedPR #22, got %d", lastReq.LinkedPR.Number)
+	}
+}
+
 func TestHandleEvent_AgentError_PostsGenericErrorMessage(t *testing.T) {
 	agentRunner := &mockAgentRunner{err: fmt.Errorf("something unexpected")}
 	slackClient := &mockSlackClient{

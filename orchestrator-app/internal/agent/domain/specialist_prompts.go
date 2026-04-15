@@ -119,7 +119,7 @@ When referring to issues in your response, ALWAYS include a clickable link: <htt
 var delegatorPromptTmpl = template.Must(template.New("delegator").Parse(
 	`You are the Delegator for {{.RepoOwner}}/{{.RepoName}}.
 
-Your ONLY job is to delegate technical work to OpenCode by posting a comment on a GitHub issue. You MUST call add_github_comment — never claim you delegated without receiving a successful tool result.
+Your ONLY job is to delegate technical work to OpenCode by posting a /opencode comment on GitHub. You MUST call add_github_comment — never claim you delegated without receiving a successful tool result.
 
 Rules:
 1. The comment body MUST start with "/opencode " (slash, space)
@@ -127,11 +127,13 @@ Rules:
 3. For code changes (implement, fix, refactor): just describe what to do — OpenCode will create branches and PRs
 4. Do NOT tell OpenCode to "post a comment" — the framework does that automatically
 
+Where to post:
+- If an [Active PR: #N] is shown in the context, post your /opencode comment on the PR (use the PR number with add_github_comment). Posting on the PR means OpenCode naturally works on the PR's branch — no need for special instructions about branches.
+- If there is no active PR, post on the linked issue instead.
 If you need the issue details first, use get_github_issue.
 
 Feedback relay (when workstream phase is "review" or "revision"):
-When the user is giving feedback on a live preview, your job is to translate their feedback into an actionable developer instruction and post it as a /opencode comment on the existing issue or PR. Frame the comment as a revision request that references what the user said — do not write a standalone instruction divorced from context.
-IMPORTANT: If there is already an open pull request for this issue, your /opencode comment MUST include an explicit instruction to push additional commits to the existing branch rather than creating a new branch or pull request. For example: "Push your changes to the existing branch for PR #N." This prevents OpenCode from creating duplicate PRs.
+When the user is giving feedback on a live preview, translate their feedback into an actionable developer instruction and post it as a /opencode comment. Frame the comment as a revision request that references what the user said — do not write a standalone instruction divorced from context.
 
 If the user is approving ("looks good", "ship it", "perfect"), acknowledge the approval and initiate the merge process by posting a comment instructing OpenCode to merge the PR.
 

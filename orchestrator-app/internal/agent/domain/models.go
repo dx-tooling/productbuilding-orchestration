@@ -31,10 +31,16 @@ type RunRequest struct {
 	BotUserID       string
 	Target          targets.TargetConfig
 	LinkedIssue     *IssueContext
-	ThreadMessages  []ThreadMessage             // Pre-fetched thread context; if set, specialist skips fetching
-	FeatureSummary  string                      // Pre-formatted feature context summary for LLM
-	WorkstreamPhase slackdomain.WorkstreamPhase // Lifecycle phase of the workstream (e.g. review, revision)
+	LinkedPR        *LinkedPRContext                // Active PR for this workstream; if set, delegator posts on PR
+	ThreadMessages  []ThreadMessage                 // Pre-fetched thread context; if set, specialist skips fetching
+	FeatureSummary  string                          // Pre-formatted feature context summary for LLM
+	WorkstreamPhase slackdomain.WorkstreamPhase     // Lifecycle phase of the workstream (e.g. review, revision)
 	OnIssueCreated  func(owner, repo string, number int, title string)
+}
+
+// LinkedPRContext provides the active pull request for a workstream.
+type LinkedPRContext struct {
+	Number int
 }
 
 // RunResponse is returned after the agent completes.

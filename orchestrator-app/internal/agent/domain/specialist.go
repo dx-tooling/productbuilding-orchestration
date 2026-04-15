@@ -88,6 +88,9 @@ func (s *Specialist) Run(ctx context.Context, req RunRequest, prior *PriorStepCo
 	if req.WorkstreamPhase != "" {
 		userMessage += fmt.Sprintf("\n\n[Workstream phase: %s]", req.WorkstreamPhase)
 	}
+	if req.LinkedPR != nil {
+		userMessage += fmt.Sprintf("\n[Active PR: #%d]", req.LinkedPR.Number)
+	}
 	messages := BuildContext(systemPrompt, userMessage, threadMsgs, req.LinkedIssue, req.FeatureSummary, s.tokenBudget)
 
 	// Inject prior step context if chaining

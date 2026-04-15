@@ -261,17 +261,22 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 		thread, _ = h.threadFinder.FindThreadBySlackTs(ctx, threadTs)
 	}
 
-	// Use thread for linked issue and workstream phase
+	// Use thread for linked issue, linked PR, and workstream phase
 	var linkedIssue *agent.IssueContext
+	var linkedPR *agent.LinkedPRContext
 	var workstreamPhase domain.WorkstreamPhase
 	if thread != nil {
-		linkedIssue = &agent.IssueContext{
-			Number: thread.GithubIssueID,
-			Title:  "", // Will be fetched by agent if needed
-			State:  "",
+		if thread.GithubIssueID > 0 {
+			linkedIssue = &agent.IssueContext{
+				Number: thread.GithubIssueID,
+			}
 		}
 		if thread.GithubPRID > 0 {
-			linkedIssue.Number = thread.GithubPRID
+			linkedPR = &agent.LinkedPRContext{Number: thread.GithubPRID}
+			// If there's a PR but no issue, use PR as the linked issue (fallback)
+			if linkedIssue == nil {
+				linkedIssue = &agent.IssueContext{Number: thread.GithubPRID}
+			}
 		}
 		workstreamPhase = thread.WorkstreamPhase
 	}
@@ -306,6 +311,7 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 		BotUserID:       botUserID,
 		Target:          target,
 		LinkedIssue:     linkedIssue,
+		LinkedPR:        linkedPR,
 		FeatureSummary:  featureSummary,
 		WorkstreamPhase: workstreamPhase,
 		OnIssueCreated: func(owner, repo string, number int, title string) {
