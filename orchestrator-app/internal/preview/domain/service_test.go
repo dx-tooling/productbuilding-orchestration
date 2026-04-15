@@ -779,7 +779,10 @@ func TestDeployPreview_ExistingPreview_PreservesIdentity(t *testing.T) {
 	}
 }
 
-func TestDeployPreview_SlackTracking_MinimalComments(t *testing.T) {
+func TestDeployPreview_SlackTracking_StillUsesFullChecklist(t *testing.T) {
+	// GitHub comments must always use the full progress checklist, even when
+	// Slack is tracking the PR. GitHub is the source of truth for developers
+	// while Slack serves the product owner — neither should be compromised.
 	d := setupTestService(t, WithSlackThreadChecker(&mockSlackThreadChecker{hasThread: true}))
 	req := testDeployRequest()
 
@@ -788,26 +791,28 @@ func TestDeployPreview_SlackTracking_MinimalComments(t *testing.T) {
 	d.commenter.mu.Lock()
 	defer d.commenter.mu.Unlock()
 
-	// Ack comment should say "tracked in Slack"
+	// Ack comment should be the full "Preview deploying" format, not the minimal "tracked in Slack"
 	if len(d.commenter.createCalls) != 1 {
 		t.Fatalf("expected 1 create call, got %d", len(d.commenter.createCalls))
 	}
 	ackBody := d.commenter.createCalls[0].Body
-	if !strings.Contains(ackBody, "tracked in Slack") {
-		t.Errorf("ack body should mention Slack tracking, got: %s", ackBody)
+	if strings.Contains(ackBody, "tracked in Slack") {
+		t.Errorf("ack body should NOT use minimal Slack-tracking format, got: %s", ackBody)
+	}
+	if !strings.Contains(ackBody, "Preview deploying") {
+		t.Errorf("ack body should use full progress format, got: %s", ackBody)
 	}
 
-	// Should have fewer update calls than the non-tracked path (only the final URL update)
-	// Non-tracked has ~6 progress updates; tracked should have exactly 1 (final URL)
-	if len(d.commenter.updateCalls) != 1 {
-		t.Errorf("expected 1 update call (final URL only), got %d", len(d.commenter.updateCalls))
+	// Should have multiple update calls (full progress checklist updates)
+	if len(d.commenter.updateCalls) < 2 {
+		t.Errorf("expected multiple progress updates (full checklist), got %d", len(d.commenter.updateCalls))
 	}
 
-	// Final comment should be just the preview URL, not the full checklist
+	// Final comment should include the checklist with checkmarks
 	if len(d.commenter.updateCalls) > 0 {
 		finalBody := d.commenter.updateCalls[len(d.commenter.updateCalls)-1].Body
-		if strings.Contains(finalBody, "- [x]") || strings.Contains(finalBody, "- [ ]") {
-			t.Errorf("final comment should not have progress checklist, got: %s", finalBody)
+		if !strings.Contains(finalBody, "- [x]") {
+			t.Errorf("final comment should have completed checklist items, got: %s", finalBody)
 		}
 		if !strings.Contains(finalBody, "my-app-pr-42.preview.example.com") {
 			t.Errorf("final comment should contain preview URL, got: %s", finalBody)
