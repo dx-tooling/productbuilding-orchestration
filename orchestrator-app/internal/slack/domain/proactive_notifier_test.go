@@ -43,9 +43,10 @@ func TestNotifier_PreviewReady_InProgressPhase_ProducesReviewPrompt(t *testing.T
 	notifier.Notify(context.Background(), event, target)
 	debouncer.executeAll()
 
-	// EventPRReady is now delegated to the agent invoker — no template message should be posted.
-	if len(client.postedMessages) != 0 {
-		t.Errorf("Expected no messages (agent handles EventPRReady), got: %+v", client.postedMessages)
+	// Preview events come from the preview service (not webhooks), so the
+	// notifier posts the template message directly.
+	if len(client.postedMessages) != 1 {
+		t.Fatalf("Expected 1 message for EventPRReady, got %d: %+v", len(client.postedMessages), client.postedMessages)
 	}
 
 	// Phase transition must still happen: InProgress → Review
@@ -94,9 +95,9 @@ func TestNotifier_PreviewReady_RevisionPhase_ProducesFeedbackFollowup(t *testing
 	notifier.Notify(context.Background(), event, target)
 	debouncer.executeAll()
 
-	// EventPRReady is now delegated to the agent invoker — no template message should be posted.
-	if len(client.postedMessages) != 0 {
-		t.Errorf("Expected no messages (agent handles EventPRReady), got: %+v", client.postedMessages)
+	// Preview events come from the preview service — notifier posts template.
+	if len(client.postedMessages) != 1 {
+		t.Fatalf("Expected 1 message for EventPRReady (revision phase), got %d: %+v", len(client.postedMessages), client.postedMessages)
 	}
 
 	// Phase transition must still happen: Revision → Review

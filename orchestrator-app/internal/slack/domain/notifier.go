@@ -392,10 +392,6 @@ func shouldSkipMessage(eventType slackfacade.EventType) bool {
 		return true
 	case slackfacade.EventCIPassed:
 		return true
-	case slackfacade.EventPRReady: // agent invoker handles this
-		return true
-	case slackfacade.EventPRFailed: // agent invoker handles this
-		return true
 	case slackfacade.EventCIFailed: // agent invoker handles this
 		return true
 	case slackfacade.EventPRMerged: // agent invoker handles this

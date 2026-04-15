@@ -1432,7 +1432,9 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 		ThreadType:    "pull_request",
 	})
 
-	// Events that are now delegated to the agent invoker should NOT post messages.
+	// Preview events (pr_ready, pr_failed) come from the preview service, not
+	// from webhooks, so the agent invoker never sees them. The notifier must
+	// post the template message.
 	t.Run("PR ready posts to existing thread", func(t *testing.T) {
 		client.postedMessages = nil
 		notifier.Notify(context.Background(), slackfacade.NotificationEvent{
@@ -1446,9 +1448,8 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 		}, target)
 		debouncer.executeAll()
 
-		if len(client.postedMessages) != 0 {
-			t.Errorf("Expected no message (agent handles EventPRReady), got %d: %+v",
-				len(client.postedMessages), client.postedMessages)
+		if len(client.postedMessages) != 1 {
+			t.Fatalf("Expected 1 message for EventPRReady, got %d", len(client.postedMessages))
 		}
 	})
 
@@ -1463,9 +1464,8 @@ func TestNotifier_Notify_Formatting(t *testing.T) {
 		}, target)
 		debouncer.executeAll()
 
-		if len(client.postedMessages) != 0 {
-			t.Errorf("Expected no message (agent handles EventPRFailed), got %d: %+v",
-				len(client.postedMessages), client.postedMessages)
+		if len(client.postedMessages) != 1 {
+			t.Fatalf("Expected 1 message for EventPRFailed, got %d", len(client.postedMessages))
 		}
 	})
 
@@ -1710,8 +1710,8 @@ func TestShouldSkipMessage(t *testing.T) {
 		{"EventIssueOpened is skipped", slackfacade.EventIssueOpened, true},
 		{"EventIssueReopened is skipped", slackfacade.EventIssueReopened, true},
 		{"EventCIPassed is skipped", slackfacade.EventCIPassed, true},
-		{"EventPRReady is skipped (agent handles)", slackfacade.EventPRReady, true},
-		{"EventPRFailed is skipped (agent handles)", slackfacade.EventPRFailed, true},
+		{"EventPRReady is NOT skipped (preview service only)", slackfacade.EventPRReady, false},
+		{"EventPRFailed is NOT skipped (preview service only)", slackfacade.EventPRFailed, false},
 		{"EventCIFailed is skipped (agent handles)", slackfacade.EventCIFailed, true},
 		{"EventPRMerged is skipped (agent handles)", slackfacade.EventPRMerged, true},
 		{"EventIssueClosed is skipped", slackfacade.EventIssueClosed, true},
