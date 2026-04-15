@@ -37,10 +37,10 @@ func TestRouter_ReviewPhase_FeedbackRoutesDelegator(t *testing.T) {
 }
 
 func TestRouter_ReviewPhase_ApprovalRoutesDelegator(t *testing.T) {
-	// When phase is review and user approves, router should route to delegator (to merge)
+	// When phase is review and user approves, router should route to delegator (to mark PR ready)
 	llm := &mockLLMClient{
 		responses: []ChatResponse{
-			{Content: `{"steps":[{"specialist":"delegator","params":{},"reasoning":"user approves, initiate merge"}]}`, FinishReason: "stop"},
+			{Content: `{"steps":[{"specialist":"delegator","params":{},"reasoning":"user approves, mark PR ready for developer review"}]}`, FinishReason: "stop"},
 		},
 	}
 	r := NewRouter(llm)
