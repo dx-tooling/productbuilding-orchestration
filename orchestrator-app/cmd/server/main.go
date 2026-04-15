@@ -228,6 +228,10 @@ func main() {
 	eventAgentRunner := &eventAgentRunnerAdapter{runner: agentRunner}
 	eventInvoker := slackdomain.NewEventAgentInvoker(eventAgentRunner, slackRepo, slackClient, 5*time.Second)
 
+	// Wire the event narrator into the notifier so preview-ready/failed events
+	// get conversational LLM narration instead of template messages.
+	slackNotifier.SetEventNarrator(eventAgentRunner)
+
 	// ── Build Trace Repository ────────────────────────────────────────
 	traceRepo := agentinfra.NewTraceRepository(db)
 

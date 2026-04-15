@@ -1839,3 +1839,175 @@ func TestNotifier_PROpened_PhaseOpen_DoesNotPostMessage_ButTransitionsPhase(t *t
 		}
 	}
 }
+
+// --- Event narrator integration tests ---
+
+type mockEventNarrator struct {
+	calls    []EventRunRequest
+	response string
+	err      error
+}
+
+func (m *mockEventNarrator) RunForEvent(ctx context.Context, req EventRunRequest) (EventRunResponse, error) {
+	m.calls = append(m.calls, req)
+	return EventRunResponse{Text: m.response}, m.err
+}
+
+func TestNotifier_PRReady_UsesNarratorWhenAvailable(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	narrator := &mockEventNarrator{response: "Die Preview ist jetzt live!"}
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{}, WithEventNarrator(narrator))
+	notifier.retryWait = 10 * time.Millisecond
+
+	repo.SaveThread(context.Background(), &SlackThread{
+		ID:            "t1",
+		RepoOwner:     "acme",
+		RepoName:      "widgets",
+		GithubPRID:    10,
+		SlackChannel:  "#test",
+		SlackThreadTs: "thread-ts",
+		SlackParentTs: "thread-ts",
+		ThreadType:    "pull_request",
+	})
+
+	target := targets.TargetConfig{
+		RepoOwner:    "acme",
+		RepoName:     "widgets",
+		SlackChannel: "#test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	notifier.Notify(context.Background(), slackfacade.NotificationEvent{
+		Type:        slackfacade.EventPRReady,
+		RepoOwner:   "acme",
+		RepoName:    "widgets",
+		IssueNumber: 10,
+		PreviewURL:  "https://preview.example.com",
+		UserNote:    "Login: test/test",
+	}, target)
+	debouncer.executeAll()
+
+	if len(narrator.calls) != 1 {
+		t.Fatalf("Expected narrator to be called once, got %d", len(narrator.calls))
+	}
+	if !strings.Contains(narrator.calls[0].UserText, "preview") {
+		t.Errorf("Expected narrator to receive preview event text, got: %q", narrator.calls[0].UserText)
+	}
+
+	// Should post the narrator's response, not the template
+	var threadReplies []string
+	for _, msg := range client.postedMessages {
+		if msg.Thread != "" {
+			threadReplies = append(threadReplies, msg.Text)
+		}
+	}
+	if len(threadReplies) != 1 {
+		t.Fatalf("Expected 1 thread reply, got %d", len(threadReplies))
+	}
+	if threadReplies[0] != "Die Preview ist jetzt live!" {
+		t.Errorf("Expected narrator response, got: %q", threadReplies[0])
+	}
+}
+
+func TestNotifier_PRReady_FallsBackToTemplateOnNarratorError(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	narrator := &mockEventNarrator{err: fmt.Errorf("LLM timeout")}
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{}, WithEventNarrator(narrator))
+	notifier.retryWait = 10 * time.Millisecond
+
+	repo.SaveThread(context.Background(), &SlackThread{
+		ID:            "t1",
+		RepoOwner:     "acme",
+		RepoName:      "widgets",
+		GithubPRID:    10,
+		SlackChannel:  "#test",
+		SlackThreadTs: "thread-ts",
+		SlackParentTs: "thread-ts",
+		ThreadType:    "pull_request",
+	})
+
+	target := targets.TargetConfig{
+		RepoOwner:    "acme",
+		RepoName:     "widgets",
+		SlackChannel: "#test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	notifier.Notify(context.Background(), slackfacade.NotificationEvent{
+		Type:        slackfacade.EventPRReady,
+		RepoOwner:   "acme",
+		RepoName:    "widgets",
+		IssueNumber: 10,
+		PreviewURL:  "https://preview.example.com",
+	}, target)
+	debouncer.executeAll()
+
+	// Narrator was called but failed — should fall back to template message
+	if len(narrator.calls) != 1 {
+		t.Fatalf("Expected narrator to be called once, got %d", len(narrator.calls))
+	}
+
+	var threadReplies []string
+	for _, msg := range client.postedMessages {
+		if msg.Thread != "" {
+			threadReplies = append(threadReplies, msg.Text)
+		}
+	}
+	if len(threadReplies) != 1 {
+		t.Fatalf("Expected 1 thread reply (template fallback), got %d", len(threadReplies))
+	}
+	// Template message should still contain the preview URL
+	if !strings.Contains(threadReplies[0], "preview") {
+		t.Errorf("Template fallback should mention preview, got: %q", threadReplies[0])
+	}
+}
+
+func TestNotifier_PRReady_WithoutNarrator_UsesTemplate(t *testing.T) {
+	client := &mockClient{}
+	repo := newMockRepository()
+	debouncer := newMockDebouncer()
+	// No narrator — should use template as before
+	notifier := NewNotifier(client, repo, debouncer, &mockAssembler{})
+	notifier.retryWait = 10 * time.Millisecond
+
+	repo.SaveThread(context.Background(), &SlackThread{
+		ID:            "t1",
+		RepoOwner:     "acme",
+		RepoName:      "widgets",
+		GithubPRID:    10,
+		SlackChannel:  "#test",
+		SlackThreadTs: "thread-ts",
+		SlackParentTs: "thread-ts",
+		ThreadType:    "pull_request",
+	})
+
+	target := targets.TargetConfig{
+		RepoOwner:    "acme",
+		RepoName:     "widgets",
+		SlackChannel: "#test",
+		SlackBotToken: "xoxb-test",
+	}
+
+	notifier.Notify(context.Background(), slackfacade.NotificationEvent{
+		Type:        slackfacade.EventPRReady,
+		RepoOwner:   "acme",
+		RepoName:    "widgets",
+		IssueNumber: 10,
+		PreviewURL:  "https://preview.example.com",
+	}, target)
+	debouncer.executeAll()
+
+	var threadReplies []string
+	for _, msg := range client.postedMessages {
+		if msg.Thread != "" {
+			threadReplies = append(threadReplies, msg.Text)
+		}
+	}
+	if len(threadReplies) != 1 {
+		t.Fatalf("Expected 1 thread reply (template), got %d", len(threadReplies))
+	}
+}

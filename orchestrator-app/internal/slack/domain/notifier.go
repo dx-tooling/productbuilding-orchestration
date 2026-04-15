@@ -51,6 +51,22 @@ type pendingFlush struct {
 	comments []*slackfacade.NotificationEvent // all comments in arrival order (append)
 }
 
+// NotifierOption configures optional Notifier dependencies.
+type NotifierOption func(*Notifier)
+
+// WithEventNarrator enables LLM-backed conversational narration for preview events.
+// When set, EventPRReady and EventPRFailed are narrated by the agent instead of
+// using template messages. Falls back to the template if the agent call fails.
+func WithEventNarrator(narrator EventAgentRunner) NotifierOption {
+	return func(n *Notifier) { n.narrator = narrator }
+}
+
+// SetEventNarrator sets the event narrator after construction. Useful when the
+// narrator depends on components built after the notifier (e.g., the LLM client).
+func (n *Notifier) SetEventNarrator(narrator EventAgentRunner) {
+	n.narrator = narrator
+}
+
 // Notifier sends notifications to Slack with debouncing and emoji reactions
 type Notifier struct {
 	client     SlackClient
@@ -58,6 +74,7 @@ type Notifier struct {
 	debouncer  Debouncer
 	assembler  FeatureContextAssembler  // enriches notifications with feature context
 	messages   *MessageGenerator        // produces conversational messages
+	narrator   EventAgentRunner         // optional: LLM narrator for preview events
 	pending    map[string]*pendingFlush // key: channel#issue -> two-lane buffer
 	reactions  map[string]string        // threadTs -> current emoji
 	retryWait  time.Duration            // wait before retry lookups (default 5s)
@@ -65,8 +82,8 @@ type Notifier struct {
 }
 
 // NewNotifier creates a new Slack notifier with the given dependencies
-func NewNotifier(client SlackClient, repository ThreadRepository, debouncer Debouncer, assembler FeatureContextAssembler) *Notifier {
-	return &Notifier{
+func NewNotifier(client SlackClient, repository ThreadRepository, debouncer Debouncer, assembler FeatureContextAssembler, opts ...NotifierOption) *Notifier {
+	n := &Notifier{
 		client:     client,
 		repository: repository,
 		debouncer:  debouncer,
@@ -76,6 +93,10 @@ func NewNotifier(client SlackClient, repository ThreadRepository, debouncer Debo
 		reactions:  make(map[string]string),
 		retryWait:  5 * time.Second,
 	}
+	for _, opt := range opts {
+		opt(n)
+	}
+	return n
 }
 
 // Notify sends a notification to Slack (debounced)
@@ -283,13 +304,30 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 				skipMsg = true
 			}
 			if !newThread && !skipMsg {
-				updateMsg := n.messages.EventMessage(*event, snap, thread.WorkstreamPhase)
-				if err := n.client.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, updateMsg); err != nil {
-					slog.Warn("failed to post to slack thread",
-						"error", err,
-						"channel", thread.SlackChannel,
-						"thread", thread.SlackThreadTs,
-					)
+				posted := false
+
+				// For preview events, try the LLM narrator first for a conversational message.
+				if n.narrator != nil && isNarratableEvent(event.Type) {
+					narratorText := n.tryNarrate(ctx, *event, thread, target)
+					if narratorText != "" {
+						if err := n.client.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, MessageBlock{Text: narratorText}); err != nil {
+							slog.Warn("failed to post narrator response to slack thread", "error", err)
+						} else {
+							posted = true
+						}
+					}
+				}
+
+				// Fall back to template message if narrator unavailable or failed.
+				if !posted {
+					updateMsg := n.messages.EventMessage(*event, snap, thread.WorkstreamPhase)
+					if err := n.client.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, updateMsg); err != nil {
+						slog.Warn("failed to post to slack thread",
+							"error", err,
+							"channel", thread.SlackChannel,
+							"thread", thread.SlackThreadTs,
+						)
+					}
 				}
 			}
 
@@ -422,3 +460,37 @@ var (
 	tripleTickRe    = regexp.MustCompile("```[a-zA-Z]*")
 	excessNewlineRe = regexp.MustCompile(`\n{3,}`)
 )
+
+// isNarratableEvent returns true for event types that should be narrated by
+// the LLM agent instead of using template messages. Currently: preview events
+// that originate from the preview service (not from GitHub webhooks).
+func isNarratableEvent(eventType slackfacade.EventType) bool {
+	switch eventType {
+	case slackfacade.EventPRReady, slackfacade.EventPRFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// tryNarrate invokes the LLM narrator for a preview event and returns the
+// conversational text. Returns "" if the narrator fails or returns empty.
+func (n *Notifier) tryNarrate(ctx context.Context, event slackfacade.NotificationEvent, thread *SlackThread, target targets.TargetConfig) string {
+	req := EventRunRequest{
+		ChannelID:       thread.SlackChannel,
+		ThreadTs:        thread.SlackThreadTs,
+		UserText:        formatSystemEvent(event),
+		Target:          target,
+		WorkstreamPhase: thread.WorkstreamPhase,
+	}
+
+	resp, err := n.narrator.RunForEvent(ctx, req)
+	if err != nil {
+		slog.Warn("narrator failed for preview event, falling back to template",
+			"event", event.Type,
+			"error", err,
+		)
+		return ""
+	}
+	return resp.Text
+}
