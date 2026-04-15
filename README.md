@@ -5,7 +5,7 @@ A PR preview platform and AI agent orchestration system. It receives GitHub webh
 Two main capabilities:
 
 1. **PR previews** — Open a PR on a target repo and a live preview appears at a stable URL (`https://pr-{number}-preview.{domain}`). Updates on new commits, tears down on PR close.
-2. **Slack agent** — `@ProductBuilder` in Slack to create issues, request implementations, check status. The agent uses specialist routing to pick the right action (create issue, delegate to coding agent, comment, research, close).
+2. **Slack agent** — `@ProductBuilder` in Slack to create issues, request implementations, check status. The agent uses specialist routing to pick the right action (create issue, delegate to coding agent, comment, research, close). The system's scope ends at producing good pull requests — merging is a developer responsibility.
 
 ## Core + Deployment separation
 
@@ -94,6 +94,25 @@ Each vertical under `internal/` is organized into sub-packages:
 Verticals communicate through interfaces defined in `domain/`. The dependency graph is wired explicitly in `main.go`.
 
 One cross-cutting package sits outside the vertical structure: `internal/featurecontext/` aggregates issue, PR, CI, and preview state into a single `FeatureSnapshot` used by both the Slack notifier (to enrich notifications) and the agent handler (to provide pre-loaded context).
+
+### Agent architecture
+
+The LLM agent uses a **router → specialist** pattern. A router LLM call classifies user intent, then dispatches to one or more focused specialists:
+
+| Specialist | Role |
+|------------|------|
+| `issue_creator` | Creates GitHub issues (searches for duplicates first) |
+| `delegator` | Delegates work to OpenCode by posting `/opencode` comments on issues or PRs |
+| `commenter` | Posts plain comments on GitHub issues |
+| `researcher` | Answers questions by searching issues, code, PR diffs, CI status, conversation history |
+| `closer` | Closes GitHub issues or pull requests |
+| `event_narrator` | Translates automated system events into natural-language Slack updates |
+
+**Scope boundary**: The system helps non-technical users go from idea to pull request. It does NOT merge PRs — merging is a developer responsibility. When a user approves ("ship it"), the bot posts an approval summary on the PR and hands off.
+
+**Workstream phases** track where each conversation is in its lifecycle: `intake` → `open` → `in-progress` → `review` → `revision` → `done`. The router uses the current phase to disambiguate intent (e.g., "looks good" means different things during intake vs. after a preview).
+
+**PR-centric delegation**: Once a PR exists for a workstream, the delegator posts `/opencode` comments on the PR (not the issue), so OpenCode naturally works on the PR's branch.
 
 ### Database
 

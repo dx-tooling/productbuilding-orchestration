@@ -43,7 +43,7 @@ This repo is the generic core. Each deployment has its own repo (created via `cr
 
 The Go app (`orchestrator-app/`) is organized into independent verticals, each with `domain/`, `web/`, `infra/`, and `facade/` sub-packages:
 
-- **agent** — LLM agent loop: prompt assembly -> LLM API call -> tool execution -> response. Multi-provider backend (Anthropic, OpenAI-compatible) with optional fallback. Tools wrap GitHub and Slack actions via adapter pattern.
+- **agent** — LLM agent loop: router classifies intent → specialist executes (issue_creator, delegator, commenter, researcher, closer, event_narrator). Multi-provider backend (Anthropic, OpenAI-compatible) with optional fallback. Tools wrap GitHub and Slack actions via adapter pattern. Prompts are in `specialist_prompts.go`. **Scope boundary**: the system's job ends at producing good PRs — it does NOT merge. When users approve, the delegator posts an approval summary; merging is a developer responsibility.
 - **preview** — Preview lifecycle: clone repo, run Docker Compose, track status in SQLite, health-check, report back on PR.
 - **github** — Webhook receiver: parses/validates incoming PR/issue events, triggers preview or agent flows.
 - **slack** — Slack Events API handler, @mention routing to agent, notification debouncing, thread tracking. See `internal/slack/domain/NOTIFIER.md` for the two-lane event buffer design.

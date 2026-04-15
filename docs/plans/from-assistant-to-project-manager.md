@@ -8,7 +8,7 @@ The difference is felt by the Slack user. A PM from an agency doesn't just do wh
 
 This plan addresses all three.
 
-The reference point is specific: a project manager at a software agency who is the client's single point of contact. The client never talks to the developers. They never see a task board, a CI pipeline, or a deployment log. They describe what they want in their own language, the PM handles everything behind the scenes, and the PM comes back when there's something to look at or decide. When the client says "ship it," the PM follows through until the feature is live. The entire internal machinery of the agency is invisible. The client's experience is: I talk to my PM, things happen, I review, I give feedback, and eventually it ships.
+The reference point is specific: a project manager at a software agency who is the client's single point of contact. The client never talks to the developers. They never see a task board, a CI pipeline, or a deployment log. They describe what they want in their own language, the PM handles everything behind the scenes, and the PM comes back when there's something to look at or decide. When the client says "ship it," the PM confirms the PR is ready and hands it off to the development team for review and merge. The entire internal machinery of the agency is invisible. The client's experience is: I talk to my PM, things happen, I review, I give feedback, and eventually it ships.
 
 Every decision in this plan -- what to say, when to say it, what to surface, what to hide -- is measured against that experience.
 
@@ -81,7 +81,7 @@ Feedback relay is not just "post a comment." The agent needs to distinguish betw
 
 - **Actionable feedback** ("the button should be blue, not green") -- relay to developer via `/opencode`
 - **Questions** ("why does this page load slowly?") -- investigate or discuss, don't delegate
-- **Approval** ("looks great, ship it") -- acknowledge, initiate the merge, and follow up when it's live. The conversation doesn't end at "Will do." It ends at "This is live now."
+- **Approval** ("looks great, ship it") -- acknowledge the approval, post a summary on the PR marking it ready for developer review and merge. The system's job ends at producing a good PR; merging is a developer responsibility.
 
 The agent already has a multi-specialist router that classifies intent. This is an extension of that capability: within the context of a preview thread, recognize what kind of response the user is giving and route accordingly.
 
@@ -138,7 +138,7 @@ The difference between a status update and a proactive prompt is mostly about la
 | "The preview is live" | "This is ready for you to try out. Let me know what you think." |
 | "PR #52 opened by @dev" | "Work has started on your request. I'll let you know when there's something to look at." |
 | "Preview updated" | "Updated preview is live -- this should reflect the changes you asked for." |
-| "PR merged" | "This is live now. Let me know if anything looks off in production." |
+| "PR merged" | "A developer merged this -- it's live now. Let me know if anything looks off." |
 
 Same events, different framing. The status update informs. The proactive prompt invites action and sets the user's expectation of what happens next. The PM never leaves the user wondering "so... is it done?"
 
@@ -247,14 +247,12 @@ Bot:  Noted, I've passed that to the developer.
 
 Bot:  Updated preview is live -- the sidebar contrast should be improved.
 User: Perfect, ship it
-Bot:  On it.
-
-  ...time passes...
-
-Bot:  Dark mode is live. Let me know if anything looks off in production.
+Bot:  Great! I've marked the PR as ready for developer review and merge.
+      Here's what it delivers: [summary of changes].
+      A developer can review and merge whenever ready.
 ```
 
-This reads like a conversation with a PM from an agency. The user never had to think about GitHub issues, PR numbers, CI pipelines, or deployment mechanics. They never had to ask "what's the status?" or "is this done?" They described what they wanted, answered one scoping question, reviewed a preview, gave feedback, approved, and were told when it shipped. The PM handled everything between those moments -- and the user doesn't know or care what "everything" involved.
+This reads like a conversation with a PM from an agency. The user never had to think about GitHub issues, PR numbers, CI pipelines, or deployment mechanics. They described what they wanted, answered one scoping question, reviewed a preview, gave feedback, and approved. The PM handled everything between those moments. The handoff to the development team for final review and merge is the natural end of the PM's involvement -- from there, the developer team owns the merge and deployment.
 
 ---
 
@@ -351,10 +349,10 @@ revision        The user gave feedback. The agent relayed it. The developer is
                 expected to push an update. Similar to in-progress but with the 
                 knowledge that this is a feedback-driven iteration.
 
-done            The PR is merged and the feature is live. The PM has confirmed 
-                deployment to the user. This is the user's "done," not the 
-                developer's -- the workstream isn't complete until the user 
-                knows the work shipped.
+done            The user approved the PR and it's been handed off for developer 
+                review and merge. Or: a developer merged the PR and the PM 
+                narrated the event. Either way, the PM's active involvement 
+                in this workstream is complete.
 
 abandoned       The user explicitly cancelled the request ("never mind," "let's not 
                 do this") or the PM closed a stale workstream. The PM acknowledges 
@@ -365,9 +363,9 @@ The phase is determined by the state of the artifacts plus a few key events:
 - Issue created → `open`
 - PR opened → `in-progress`
 - Preview becomes ready → `review`
-- User responds after preview-ready notification → back to `revision` (if feedback) or `done` (if approval, after merge confirms)
+- User responds after preview-ready notification → back to `revision` (if feedback) or `done` (if approval — PR marked ready for developer merge)
 - New push after feedback → `in-progress` (briefly), then `review` again when preview is ready
-- PR merged → `done` (after the PM confirms deployment to the user)
+- PR merged by developer → `done` (PM narrates the event to the user)
 - User cancels or abandons → `abandoned`
 
 Note on scope changes: when the user pivots mid-stream ("actually, make it a toggle instead of following OS preference"), this is not a new workstream. It's feedback that changes the goal, not just the implementation. The PM acknowledges the change, updates the issue, and relays to the developer -- staying in `revision`. The workstream's identity follows the user's intent, not the technical artifacts.
@@ -435,8 +433,8 @@ Today, state changes happen implicitly when artifacts change. Preview goes from 
 | PR opened, linked to issue | → `in-progress` | GitHub webhook handler |
 | Preview becomes ready | → `review` | Preview service, after health check passes |
 | User @mentions bot while phase is `review` | → `revision` (if feedback) or stays `review` (if question) | Slack handler, after router classifies intent |
-| User approves ("ship it", "looks good") | → `done` (pending merge) | Agent, after router classifies as approval |
-| PR merged + deployment confirmed | → `done` | GitHub webhook handler, after PM posts "this is live" |
+| User approves ("ship it", "looks good") | → `done` (PR marked ready for developer review) | Agent, after router classifies as approval |
+| PR merged by developer | → `done` | GitHub webhook handler |
 | PR closed without merge | → `open` (back to issue) | GitHub webhook handler |
 | User cancels ("never mind", "scrap this") | → `abandoned` | Agent, after router classifies as cancellation |
 | User pivots scope ("actually, make it X") | stays in current phase | Agent relays updated scope to developer |
