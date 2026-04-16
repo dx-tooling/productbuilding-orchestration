@@ -33,6 +33,31 @@ func TestEventNarratorPrompt_ContainsNoToolsInstruction(t *testing.T) {
 	}
 }
 
+func TestEventNarratorPrompt_NeverPromisesActions(t *testing.T) {
+	var buf bytes.Buffer
+	if err := eventNarratorPromptTmpl.Execute(&buf, PromptData{RepoOwner: "acme", RepoName: "widgets"}); err != nil {
+		t.Fatalf("execute template: %v", err)
+	}
+	prompt := buf.String()
+
+	// The event_narrator has no tools. It must never promise to take action.
+	// "indicate you are looking into it" caused the LLM to promise follow-up it couldn't deliver.
+	if strings.Contains(prompt, "looking into it") {
+		t.Error("event narrator must not say 'looking into it' — it has no tools and cannot take action")
+	}
+	if strings.Contains(prompt, "offer to investigate") {
+		t.Error("event narrator must not 'offer to investigate' — it has no tools; it should tell the user to ask for investigation")
+	}
+
+	// Must explicitly instruct: never promise actions, ask the user instead
+	if !strings.Contains(prompt, "NEVER promise") {
+		t.Error("event narrator prompt must explicitly forbid promising actions")
+	}
+	if !strings.Contains(prompt, "ask the user") {
+		t.Error("event narrator prompt must instruct the LLM to ask the user what to do next")
+	}
+}
+
 func TestEventNarratorTools_ReturnsEmpty(t *testing.T) {
 	tools := EventNarratorTools()
 	if len(tools) != 0 {
