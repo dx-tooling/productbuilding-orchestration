@@ -107,7 +107,7 @@ func (i *EventAgentInvoker) InvokeForEvent(ctx context.Context, event slackfacad
 		return
 	}
 
-	if err := i.poster.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, MessageBlock{Text: resp.Text}); err != nil {
+	if err := i.poster.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, MessageBlock{Text: MarkdownToMrkdwn(resp.Text)}); err != nil {
 		slog.Warn("event agent invoker: failed to post response",
 			"error", err,
 			"thread", thread.SlackThreadTs,

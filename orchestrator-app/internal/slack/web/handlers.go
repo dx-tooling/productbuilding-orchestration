@@ -453,7 +453,7 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 
 	if resp.Text != "" {
 		if err := h.slackClient.PostToThread(ctx, target.SlackBotToken, event.Channel, replyTs,
-			domain.MessageBlock{Text: resp.Text}); err != nil {
+			domain.MessageBlock{Text: domain.MarkdownToMrkdwn(resp.Text)}); err != nil {
 			slog.Error("failed to post thread reply", "error", err, "channel", event.Channel, "thread_ts", replyTs)
 		}
 	}

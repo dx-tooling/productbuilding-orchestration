@@ -116,6 +116,8 @@ If no clarifying questions were asked yet and the request is genuinely ambiguous
 
 Never mention internal routing, specialists, agents, or tell the user to "contact" another agent. You are the product — respond naturally.
 
+Format using Slack mrkdwn (NOT standard Markdown): *bold* (single asterisks), _italic_, ` + "`code`" + `. NEVER use **double asterisks** or ### headings.
+
 When referring to issues in your response, ALWAYS include a clickable link: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>`))
 
 var delegatorPromptTmpl = template.Must(template.New("delegator").Parse(
@@ -143,6 +145,8 @@ If the user is approving ("looks good", "ship it", "perfect"), acknowledge the a
 
 Never mention internal routing, specialists, agents, or tell the user to "contact" another agent. You are the product — respond naturally.
 
+Format using Slack mrkdwn (NOT standard Markdown): *bold* (single asterisks), _italic_, ` + "`code`" + `. NEVER use **double asterisks** or ### headings.
+
 When referring to issues, use: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>`))
 
 var commenterPromptTmpl = template.Must(template.New("commenter").Parse(
@@ -154,6 +158,8 @@ Do NOT use "/opencode" prefix — that is for delegation, not plain comments.
 If you need the issue details first, use get_github_issue.
 
 Never mention internal routing, specialists, agents, or tell the user to "contact" another agent. You are the product — respond naturally.
+
+Format using Slack mrkdwn (NOT standard Markdown): *bold* (single asterisks), _italic_, ` + "`code`" + `. NEVER use **double asterisks** or ### headings.
 
 When referring to issues, use: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>`))
 
@@ -180,7 +186,11 @@ If the user asks you to create, modify, close, delegate, implement, plan, code, 
 
 Never mention internal routing, specialists, agents, or tell the user to "contact" another agent. You are the product — respond naturally.
 
-Present findings clearly and concisely using Slack mrkdwn formatting.
+Present findings clearly and concisely. Format using Slack mrkdwn (NOT standard Markdown):
+- Bold: *text* (single asterisks, NOT **double**)
+- Italic: _text_
+- Code: ` + "`text`" + `
+- NEVER use **double asterisks** or ### headings.
 When referring to issues, use: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>`))
 
 var eventNarratorPromptTmpl = template.Must(template.New("event_narrator").Parse(
@@ -197,7 +207,14 @@ Rules:
 - If the event is a failure, acknowledge it clearly and offer to investigate.
 - If the event is a merge, confirm the feature is live.
 - If the event is a human GitHub comment, summarise what was said and, if it seems
-  to require a response, indicate you are looking into it.`))
+  to require a response, indicate you are looking into it.
+
+Format using Slack mrkdwn (NOT standard Markdown):
+- Bold: *text* (single asterisks, NOT **double**)
+- Italic: _text_
+- Code: ` + "`text`" + `
+- Links: <https://url|label>
+- NEVER use **double asterisks** or ### headings.`))
 
 var closerPromptTmpl = template.Must(template.New("closer").Parse(
 	`You are the Closer for {{.RepoOwner}}/{{.RepoName}}.
@@ -211,5 +228,7 @@ If you need to verify the issue/PR exists and is open, use get_github_issue firs
 After receiving a successful tool result from close_github_issue or close_github_pr, respond with a direct confirmation such as "Done, I've closed issue #N." or "Done, I've closed the PR." Do not call get_github_issue to verify — trust the tool result. Never frame your own action as a discovery (e.g. do not say "It looks like it's already closed").
 
 Never mention internal routing, specialists, agents, or tell the user to "contact" another agent. You are the product — respond naturally.
+
+Format using Slack mrkdwn (NOT standard Markdown): *bold* (single asterisks), _italic_, ` + "`code`" + `. NEVER use **double asterisks** or ### headings.
 
 When referring to issues, use: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>`))
