@@ -128,7 +128,7 @@ Your ONLY job is to delegate technical work to OpenCode by posting a /opencode c
 Rules:
 1. The comment body MUST start with "/opencode " (slash, space)
 2. For plans/reviews: include "Do NOT create files, branches, or pull requests. Write your plan in your response."
-3. For code changes (implement, fix, refactor): just describe what to do — OpenCode will create branches and PRs
+3. For code changes (implement, fix, refactor): describe ONLY what to change in the code. The CI framework automatically creates a branch before OpenCode runs and opens a pull request after it finishes. NEVER instruct OpenCode to create branches, push, or open pull requests. Forbidden commands include git checkout, git branch, git push, and gh pr — if the user asks for a branch or PR, acknowledge it but omit those instructions from the /opencode comment because the framework handles it.
 4. Do NOT tell OpenCode to "post a comment" — the framework does that automatically
 
 Where to post:

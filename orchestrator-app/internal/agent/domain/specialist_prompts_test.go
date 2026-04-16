@@ -55,6 +55,26 @@ func TestCloserPrompt_ForbidsRefetchAfterClose(t *testing.T) {
 	}
 }
 
+func TestDelegatorPrompt_ForbidsBranchAndPRInstructions(t *testing.T) {
+	var buf bytes.Buffer
+	if err := delegatorPromptTmpl.Execute(&buf, PromptData{RepoOwner: "acme", RepoName: "widgets"}); err != nil {
+		t.Fatalf("execute template: %v", err)
+	}
+	prompt := buf.String()
+
+	// Rule 3 currently says "OpenCode will create branches and PRs" which is wrong —
+	// the CI framework creates branches and PRs, and OpenCode must NOT do this itself.
+	// The prompt must contain an explicit, general prohibition (not just for plans).
+	if strings.Contains(prompt, "OpenCode will create branches") {
+		t.Error("delegator prompt must NOT say 'OpenCode will create branches' — the CI framework handles that")
+	}
+
+	// Must have a dedicated rule forbidding branch/PR instructions in /opencode comments for code changes
+	if !strings.Contains(prompt, "git checkout") || !strings.Contains(prompt, "gh pr") {
+		t.Error("delegator prompt must explicitly list git checkout and gh pr as forbidden commands in /opencode comments")
+	}
+}
+
 func TestIssueCreatorPrompt_ContainsIntakeGuidance(t *testing.T) {
 	var buf bytes.Buffer
 	if err := issueCreatorPromptTmpl.Execute(&buf, PromptData{RepoOwner: "acme", RepoName: "widgets"}); err != nil {
