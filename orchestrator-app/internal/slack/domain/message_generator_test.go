@@ -324,6 +324,60 @@ func TestMessageGenerator_PROpened_PhaseOpen_ReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestMessageGenerator_German_PreviewReady(t *testing.T) {
+	g := NewMessageGeneratorWithLanguage("de")
+	event := slackfacade.NotificationEvent{
+		Type:       slackfacade.EventPRReady,
+		PreviewURL: "https://preview.example.com",
+	}
+	msg := g.EventMessage(event, nil)
+	if strings.Contains(msg.Text, "preview is live") {
+		t.Errorf("German message should not contain English text, got: %s", msg.Text)
+	}
+	if !strings.Contains(msg.Text, "preview.example.com") {
+		t.Errorf("Expected URL in message, got: %s", msg.Text)
+	}
+}
+
+func TestMessageGenerator_German_PRMerged(t *testing.T) {
+	g := NewMessageGeneratorWithLanguage("de")
+	event := slackfacade.NotificationEvent{Type: slackfacade.EventPRMerged}
+	msg := g.EventMessage(event, nil)
+	if strings.Contains(msg.Text, "This PR has been merged") {
+		t.Errorf("German message should not contain English, got: %s", msg.Text)
+	}
+	if msg.Text == "" {
+		t.Error("Expected non-empty German message for PR merged")
+	}
+}
+
+func TestMessageGenerator_German_CIFailed(t *testing.T) {
+	g := NewMessageGeneratorWithLanguage("de")
+	event := slackfacade.NotificationEvent{
+		Type:         slackfacade.EventCIFailed,
+		CheckRunName: "build",
+	}
+	msg := g.EventMessage(event, nil)
+	if strings.Contains(msg.Text, "CI failed on the latest push") {
+		t.Errorf("German message should not contain English, got: %s", msg.Text)
+	}
+	if !strings.Contains(msg.Text, "build") {
+		t.Errorf("Expected check name in message, got: %s", msg.Text)
+	}
+}
+
+func TestMessageGenerator_English_Default(t *testing.T) {
+	g := NewMessageGenerator()
+	event := slackfacade.NotificationEvent{
+		Type:       slackfacade.EventPRReady,
+		PreviewURL: "https://preview.example.com",
+	}
+	msg := g.EventMessage(event, nil)
+	if !strings.Contains(msg.Text, "preview is live") {
+		t.Errorf("Expected English text, got: %s", msg.Text)
+	}
+}
+
 func TestMessageGenerator_NilSnapshot_Fallback(t *testing.T) {
 	g := NewMessageGenerator()
 

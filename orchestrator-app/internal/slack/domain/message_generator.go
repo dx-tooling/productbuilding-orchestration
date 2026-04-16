@@ -9,10 +9,20 @@ import (
 )
 
 // MessageGenerator produces conversational PM-style Slack messages using feature context.
-type MessageGenerator struct{}
+type MessageGenerator struct {
+	language string
+}
 
 func NewMessageGenerator() *MessageGenerator {
-	return &MessageGenerator{}
+	return &MessageGenerator{language: "en"}
+}
+
+func NewMessageGeneratorWithLanguage(lang string) *MessageGenerator {
+	return &MessageGenerator{language: lang}
+}
+
+func (g *MessageGenerator) t(key MessageKey) string {
+	return LocalizedMsg(g.language, key)
 }
 
 // ParentMessage creates the initial thread message for an issue or PR.
@@ -41,7 +51,7 @@ func (g *MessageGenerator) parentMessageIssue(event slackfacade.NotificationEven
 
 	lines := []string{
 		fmt.Sprintf("*#%d %s*", number, title),
-		fmt.Sprintf("Opened by @%s", author),
+		fmt.Sprintf(g.t(msgOpenedBy), author),
 	}
 
 	if body != "" {
@@ -49,7 +59,7 @@ func (g *MessageGenerator) parentMessageIssue(event slackfacade.NotificationEven
 		lines = append(lines, "", fmt.Sprintf("> %s", strings.ReplaceAll(bodyPreview, "\n", "\n> ")))
 	}
 
-	lines = append(lines, "", fmt.Sprintf("<%s|GitHub>", url))
+	lines = append(lines, "", fmt.Sprintf("<%s|%s>", url, g.t(msgGitHub)))
 
 	return MessageBlock{Text: strings.Join(lines, "\n")}
 }
@@ -73,16 +83,16 @@ func (g *MessageGenerator) parentMessagePR(event slackfacade.NotificationEvent, 
 		}
 		total := snap.PR.Additions + snap.PR.Deletions
 		if total > 0 {
-			lineInfo = fmt.Sprintf(", touching %d lines", total)
+			lineInfo = fmt.Sprintf(g.t(msgTouching), total)
 		}
 	}
 
 	lines := []string{
 		fmt.Sprintf("*#%d %s*", number, title),
-		fmt.Sprintf("@%s opened a pull request%s", author, lineInfo),
+		fmt.Sprintf(g.t(msgOpenedPR), author, lineInfo),
 	}
 
-	lines = append(lines, fmt.Sprintf("<%s|View PR>", url))
+	lines = append(lines, fmt.Sprintf("<%s|%s>", url, g.t(msgViewPR)))
 
 	return MessageBlock{Text: strings.Join(lines, "\n")}
 }
@@ -120,7 +130,7 @@ func (g *MessageGenerator) EventMessage(event slackfacade.NotificationEvent, sna
 		slackfacade.EventIssueClosed, slackfacade.EventPRClosed, slackfacade.EventCIPassed:
 		return MessageBlock{}
 	default:
-		text = fmt.Sprintf("Update: %s", event.Type)
+		text = fmt.Sprintf(g.t(msgUpdate), event.Type)
 	}
 
 	return MessageBlock{Text: text}
@@ -129,7 +139,7 @@ func (g *MessageGenerator) EventMessage(event slackfacade.NotificationEvent, sna
 func (g *MessageGenerator) eventPROpened(event slackfacade.NotificationEvent, snap *featurecontext.FeatureSnapshot, phase WorkstreamPhase) string {
 	// PM-style framing when phase is open (user's issue is being worked on)
 	if phase == PhaseOpen {
-		return "Work has started on your request. I'll let you know when there's something to look at."
+		return g.t(msgWorkStarted)
 	}
 
 	author := event.Author
@@ -145,32 +155,32 @@ func (g *MessageGenerator) eventPROpened(event slackfacade.NotificationEvent, sn
 		}
 		total := snap.PR.Additions + snap.PR.Deletions
 		if total > 0 {
-			lineInfo = fmt.Sprintf(", touching %d lines", total)
+			lineInfo = fmt.Sprintf(g.t(msgTouching), total)
 		}
 	}
 
-	return fmt.Sprintf("@%s opened a pull request%s.\n<%s|View PR>", author, lineInfo, url)
+	return fmt.Sprintf(g.t(msgOpenedPR), author, lineInfo) + fmt.Sprintf(".\n<%s|%s>", url, g.t(msgViewPR))
 }
 
 func (g *MessageGenerator) eventPreviewReady(event slackfacade.NotificationEvent, phase WorkstreamPhase) string {
 	var heading string
 	switch phase {
 	case PhaseRevision:
-		heading = "Updated preview is live — this should address the feedback you gave."
+		heading = g.t(msgPreviewRevision)
 	case PhaseInProgress, PhaseOpen:
-		heading = "This is ready for you to try out. Let me know what you think."
+		heading = g.t(msgPreviewReview)
 	default:
-		heading = "The preview is live — you can try it out here:"
+		heading = g.t(msgPreviewLive)
 	}
 
 	lines := []string{heading}
-	links := fmt.Sprintf("<%s|Open Preview>", event.PreviewURL)
+	links := fmt.Sprintf("<%s|%s>", event.PreviewURL, g.t(msgOpenPreview))
 	if event.LogsURL != "" {
-		links += fmt.Sprintf("  |  <%s|Logs>", event.LogsURL)
+		links += fmt.Sprintf("  |  <%s|%s>", event.LogsURL, g.t(msgLogs))
 	}
 	lines = append(lines, links)
 	if event.UserNote != "" {
-		lines = append(lines, fmt.Sprintf("> *Note:* %s", event.UserNote))
+		lines = append(lines, fmt.Sprintf("> *%s* %s", g.t(msgNote), event.UserNote))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -187,11 +197,11 @@ func (g *MessageGenerator) eventPreviewFailed(event slackfacade.NotificationEven
 		stageName = strings.TrimSpace(stage[:idx])
 	}
 
-	text := fmt.Sprintf("The preview failed during the %s step.", stageName)
+	text := fmt.Sprintf(g.t(msgPreviewFailed), stageName)
 	if event.LogsURL != "" {
-		text += fmt.Sprintf(" Check the <%s|logs> for details, or ask me to investigate.", event.LogsURL)
+		text += fmt.Sprintf(g.t(msgLogsForDetails), event.LogsURL)
 	} else {
-		text += " Ask me to investigate if you'd like."
+		text += g.t(msgAskInvestigate)
 	}
 	return text
 }
@@ -201,13 +211,13 @@ func (g *MessageGenerator) eventComment(event slackfacade.NotificationEvent) str
 	quoted := "> " + strings.ReplaceAll(body, "\n", "\n> ")
 
 	lines := []string{
-		fmt.Sprintf("@%s commented on GitHub:", event.Author),
+		fmt.Sprintf(g.t(msgCommentedOnGH), event.Author),
 		quoted,
 	}
 
 	url := event.CommentURL()
 	if url != "" {
-		lines = append(lines, fmt.Sprintf("<%s|View comment>", url))
+		lines = append(lines, fmt.Sprintf("<%s|%s>", url, g.t(msgViewComment)))
 	}
 
 	return strings.Join(lines, "\n")
@@ -216,22 +226,22 @@ func (g *MessageGenerator) eventComment(event slackfacade.NotificationEvent) str
 func (g *MessageGenerator) eventPRMerged(snap *featurecontext.FeatureSnapshot, phase WorkstreamPhase) string {
 	// PM-style confirmation when the user has been in a review cycle
 	if phase == PhaseReview || phase == PhaseRevision {
-		return "This is live now. Let me know if anything looks off in production."
+		return g.t(msgPRMergedReview)
 	}
 
-	text := "This PR has been merged."
+	text := g.t(msgPRMerged)
 	if snap != nil && snap.CIStatus == featurecontext.CIPassing {
-		text += " CI was passing on the final commit."
+		text += g.t(msgPRMergedCI)
 	}
-	text += " The preview will be torn down shortly."
+	text += g.t(msgPreviewTeardown)
 	return text
 }
 
 func (g *MessageGenerator) eventCIFailed(event slackfacade.NotificationEvent) string {
-	lines := []string{"CI failed on the latest push."}
+	lines := []string{g.t(msgCIFailed)}
 
 	if event.CheckRunName != "" {
-		lines[0] = fmt.Sprintf("CI failed on the latest push. The `%s` job failed:", event.CheckRunName)
+		lines[0] = fmt.Sprintf(g.t(msgCIFailedJob), event.CheckRunName)
 	}
 
 	if event.FailureSummary != "" {
@@ -239,7 +249,7 @@ func (g *MessageGenerator) eventCIFailed(event slackfacade.NotificationEvent) st
 	}
 
 	if event.WorkflowURL != "" {
-		lines = append(lines, fmt.Sprintf("<%s|View run>", event.WorkflowURL))
+		lines = append(lines, fmt.Sprintf("<%s|%s>", event.WorkflowURL, g.t(msgViewRun)))
 	}
 
 	return strings.Join(lines, "\n")

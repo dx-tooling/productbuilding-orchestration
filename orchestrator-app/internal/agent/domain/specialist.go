@@ -276,6 +276,7 @@ func (s *Specialist) renderPrompt(req RunRequest) (string, error) {
 	data := PromptData{
 		RepoOwner: req.Target.RepoOwner,
 		RepoName:  req.Target.RepoName,
+		Language:  req.Target.LanguageOrDefault(),
 	}
 
 	var buf bytes.Buffer

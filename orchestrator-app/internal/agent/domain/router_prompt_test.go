@@ -5,8 +5,15 @@ import (
 	"testing"
 )
 
+func TestRenderRouterPrompt_ContainsLanguageInstruction(t *testing.T) {
+	prompt := renderRouterPrompt("acme", "widgets", "de")
+	if !strings.Contains(prompt, "MUST respond in de") {
+		t.Error("expected router prompt to contain language instruction for 'de'")
+	}
+}
+
 func TestRenderRouterPrompt_ContainsEventNarratorRouting(t *testing.T) {
-	prompt := renderRouterPrompt("acme", "widgets")
+	prompt := renderRouterPrompt("acme", "widgets", "en")
 
 	if !strings.Contains(prompt, "event_narrator") {
 		t.Error("expected router prompt to contain event_narrator specialist")
@@ -17,7 +24,7 @@ func TestRenderRouterPrompt_ContainsEventNarratorRouting(t *testing.T) {
 }
 
 func TestRenderRouterPrompt_ContainsPhaseGuidance(t *testing.T) {
-	prompt := renderRouterPrompt("acme", "widgets")
+	prompt := renderRouterPrompt("acme", "widgets", "en")
 
 	// The router prompt should include guidance about workstream phases
 	if !strings.Contains(prompt, "Workstream phase") {

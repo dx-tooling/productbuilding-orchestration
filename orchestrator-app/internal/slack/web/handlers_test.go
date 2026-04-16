@@ -1345,3 +1345,27 @@ func TestHandler_AppMention_NoThread_StillWorks(t *testing.T) {
 		t.Errorf("Expected empty FeatureSummary when no thread, got %q", lastReq.FeatureSummary)
 	}
 }
+
+func TestUserFacingErrorMessage_German(t *testing.T) {
+	msg := userFacingErrorMessageForLang(fmt.Errorf("something unexpected"), "de")
+	if strings.Contains(msg, "encountered an error") {
+		t.Errorf("German error should not contain English text, got: %q", msg)
+	}
+	if msg == "" {
+		t.Error("Expected non-empty German error message")
+	}
+}
+
+func TestUserFacingErrorMessage_English(t *testing.T) {
+	msg := userFacingErrorMessageForLang(fmt.Errorf("something unexpected"), "en")
+	if !strings.Contains(msg, "encountered an error") {
+		t.Errorf("Expected English error message, got: %q", msg)
+	}
+}
+
+func TestUserFacingErrorMessage_503_German(t *testing.T) {
+	msg := userFacingErrorMessageForLang(fmt.Errorf("status 503"), "de")
+	if strings.Contains(msg, "temporarily unavailable") {
+		t.Errorf("German 503 error should not contain English text, got: %q", msg)
+	}
+}

@@ -149,4 +149,5 @@ type SpecialistResult struct {
 type PromptData struct {
 	RepoOwner string
 	RepoName  string
+	Language  string
 }

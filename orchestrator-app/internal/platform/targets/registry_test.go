@@ -69,6 +69,42 @@ func TestTargetConfig_BotGitHubLogin_LoadFromFile(t *testing.T) {
 	}
 }
 
+func TestTargetConfig_LanguageOrDefault_Empty(t *testing.T) {
+	tc := TargetConfig{RepoOwner: "acme", RepoName: "widgets"}
+	if tc.LanguageOrDefault() != "en" {
+		t.Errorf("got %q, want %q", tc.LanguageOrDefault(), "en")
+	}
+}
+
+func TestTargetConfig_LanguageOrDefault_Set(t *testing.T) {
+	tc := TargetConfig{RepoOwner: "acme", RepoName: "widgets", Language: "de"}
+	if tc.LanguageOrDefault() != "de" {
+		t.Errorf("got %q, want %q", tc.LanguageOrDefault(), "de")
+	}
+}
+
+func TestTargetConfig_Language_LoadFromJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/targets.json"
+	data := `[{"repo_owner":"acme","repo_name":"widgets","github_pat":"pat","webhook_secret":"sec","language":"de"}]`
+	if err := os.WriteFile(path, []byte(data), 0644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	r := NewRegistry("productbuilding-")
+	if err := r.LoadFromFile(path); err != nil {
+		t.Fatalf("LoadFromFile: %v", err)
+	}
+
+	tc, ok := r.Get("acme", "widgets")
+	if !ok {
+		t.Fatal("expected to find target")
+	}
+	if tc.LanguageOrDefault() != "de" {
+		t.Errorf("got %q, want %q", tc.LanguageOrDefault(), "de")
+	}
+}
+
 func TestRegistry_GetByChannelName_WrongPrefix(t *testing.T) {
 	r := NewRegistry("productbuilding-")
 	r.targets["acme/app"] = TargetConfig{

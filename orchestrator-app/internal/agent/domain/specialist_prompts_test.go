@@ -4,7 +4,42 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"text/template"
 )
+
+func TestPromptData_HasLanguageField(t *testing.T) {
+	pd := PromptData{RepoOwner: "acme", RepoName: "widgets", Language: "de"}
+	if pd.Language != "de" {
+		t.Errorf("got %q, want %q", pd.Language, "de")
+	}
+}
+
+func TestAllSpecialistPrompts_ContainLanguageInstruction(t *testing.T) {
+	templates := map[string]*template.Template{
+		"issue_creator":  issueCreatorPromptTmpl,
+		"delegator":      delegatorPromptTmpl,
+		"commenter":      commenterPromptTmpl,
+		"researcher":     researcherPromptTmpl,
+		"event_narrator": eventNarratorPromptTmpl,
+		"closer":         closerPromptTmpl,
+	}
+	for name, tmpl := range templates {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			err := tmpl.Execute(&buf, PromptData{RepoOwner: "acme", RepoName: "widgets", Language: "de"})
+			if err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			prompt := buf.String()
+			if !strings.Contains(prompt, "MUST respond in") {
+				t.Errorf("%s: missing language instruction", name)
+			}
+			if !strings.Contains(prompt, "respond in de") {
+				t.Errorf("%s: language code 'de' not rendered in instruction", name)
+			}
+		})
+	}
+}
 
 func TestDelegatorPrompt_ContainsFeedbackRelayGuidance(t *testing.T) {
 	var buf bytes.Buffer

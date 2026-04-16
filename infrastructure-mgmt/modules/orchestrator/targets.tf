@@ -45,6 +45,7 @@ resource "aws_secretsmanager_secret_version" "target" {
     webhook_secret  = each.value.webhook_secret
     slack_channel   = each.value.slack_channel
     slack_bot_token = each.value.slack_bot_token
+    language        = each.value.language
   })
 }
 

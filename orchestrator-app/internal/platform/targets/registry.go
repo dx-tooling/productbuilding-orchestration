@@ -21,6 +21,17 @@ type TargetConfig struct {
 
 	// Bot identity — used to distinguish bot-initiated events from human events
 	BotGitHubLogin string `json:"bot_github_login,omitempty"`
+
+	// Language for all user-facing text (prompts, messages). E.g. "en", "de".
+	Language string `json:"language"`
+}
+
+// LanguageOrDefault returns the configured language, defaulting to "en".
+func (tc TargetConfig) LanguageOrDefault() string {
+	if tc.Language == "" {
+		return "en"
+	}
+	return tc.Language
 }
 
 // Registry provides lookup of target repo configurations.

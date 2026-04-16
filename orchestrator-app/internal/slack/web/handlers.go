@@ -382,7 +382,7 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 		slog.Error("agent error", "error", err, "channel", event.Channel)
 		_ = h.slackClient.AddReaction(ctx, target.SlackBotToken, event.Channel, event.Ts, "x")
 		if err := h.slackClient.PostToThread(ctx, target.SlackBotToken, event.Channel, replyTs,
-			domain.MessageBlock{Text: userFacingErrorMessage(err)}); err != nil {
+			domain.MessageBlock{Text: userFacingErrorMessageForLang(err, target.LanguageOrDefault())}); err != nil {
 			slog.Error("failed to post error reply", "error", err, "channel", event.Channel, "thread_ts", replyTs)
 		}
 		return
@@ -437,10 +437,11 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 	}
 
 	// Synthesize fallback if agent returned no text but did create/delegate issues
+	lang := target.LanguageOrDefault()
 	if resp.Text == "" && len(resp.SideEffects.CreatedIssues) > 0 {
 		issue := resp.SideEffects.CreatedIssues[0]
-		resp.Text = fmt.Sprintf("Created <https://github.com/%s/%s/issues/%d|#%d>: %s",
-			target.RepoOwner, target.RepoName, issue.Number, issue.Number, issue.Title)
+		link := fmt.Sprintf("https://github.com/%s/%s/issues/%d", target.RepoOwner, target.RepoName, issue.Number)
+		resp.Text = fmt.Sprintf(domain.LocalizedMsg(lang, domain.MsgFallbackCreated), link, issue.Number, issue.Title)
 	}
 	if resp.Text == "" && len(resp.SideEffects.DelegatedIssues) > 0 {
 		var parts []string
@@ -448,7 +449,7 @@ func (h *Handler) handleAppMention(ctx context.Context, event slackAppMentionEve
 			parts = append(parts, fmt.Sprintf("<https://github.com/%s/%s/issues/%d|#%d>",
 				target.RepoOwner, target.RepoName, num, num))
 		}
-		resp.Text = fmt.Sprintf("Delegated to %s", strings.Join(parts, ", "))
+		resp.Text = fmt.Sprintf(domain.LocalizedMsg(lang, domain.MsgFallbackDelegated), strings.Join(parts, ", "))
 	}
 
 	if resp.Text != "" {
@@ -559,18 +560,18 @@ func (h *Handler) updatePhaseAfterAgentRun(ctx context.Context, threadTs string,
 	}
 }
 
-func userFacingErrorMessage(err error) string {
+func userFacingErrorMessageForLang(err error, lang string) string {
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "status 503") ||
 		strings.Contains(msg, "status 502") ||
 		strings.Contains(msg, "status 504"):
-		return "The AI service is temporarily unavailable. Please try again in a few minutes."
+		return domain.LocalizedMsg(lang, domain.MsgErrUnavailable)
 	case strings.Contains(msg, "status 429") && strings.Contains(msg, "overloaded"):
-		return "The AI service is currently overloaded. Please try again in a few minutes."
+		return domain.LocalizedMsg(lang, domain.MsgErrOverloaded)
 	case strings.Contains(msg, "status 429"):
-		return "The AI service is rate-limited right now. Please try again shortly."
+		return domain.LocalizedMsg(lang, domain.MsgErrRateLimit)
 	default:
-		return "Sorry, I encountered an error processing your request. Please try again."
+		return domain.LocalizedMsg(lang, domain.MsgErrGeneric)
 	}
 }

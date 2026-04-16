@@ -73,7 +73,6 @@ type Notifier struct {
 	repository ThreadRepository
 	debouncer  Debouncer
 	assembler  FeatureContextAssembler  // enriches notifications with feature context
-	messages   *MessageGenerator        // produces conversational messages
 	narrator   EventAgentRunner         // optional: LLM narrator for preview events
 	pending    map[string]*pendingFlush // key: channel#issue -> two-lane buffer
 	reactions  map[string]string        // threadTs -> current emoji
@@ -88,7 +87,6 @@ func NewNotifier(client SlackClient, repository ThreadRepository, debouncer Debo
 		repository: repository,
 		debouncer:  debouncer,
 		assembler:  assembler,
-		messages:   NewMessageGenerator(),
 		pending:    make(map[string]*pendingFlush),
 		reactions:  make(map[string]string),
 		retryWait:  5 * time.Second,
@@ -150,6 +148,8 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 	if p == nil {
 		return
 	}
+
+	msgs := NewMessageGeneratorWithLanguage(target.LanguageOrDefault())
 
 	var thread *SlackThread
 
@@ -248,7 +248,7 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 			newThread := false
 			if thread == nil {
 				newThread = true
-				parentMsg := n.messages.ParentMessage(*event, snap)
+				parentMsg := msgs.ParentMessage(*event, snap)
 				parentTs, err := n.client.PostMessage(ctx, target.SlackBotToken, target.SlackChannel, parentMsg)
 				if err != nil {
 					slog.Warn("failed to create slack thread",
@@ -320,7 +320,7 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 
 				// Fall back to template message if narrator unavailable or failed.
 				if !posted {
-					updateMsg := n.messages.EventMessage(*event, snap, thread.WorkstreamPhase)
+					updateMsg := msgs.EventMessage(*event, snap, thread.WorkstreamPhase)
 					if err := n.client.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, updateMsg); err != nil {
 						slog.Warn("failed to post to slack thread",
 							"error", err,
@@ -369,7 +369,7 @@ func (n *Notifier) flush(ctx context.Context, key string, target targets.TargetC
 		// Skip template messages when agent invoker handles the event type
 		if !shouldSkipMessage(p.comments[0].Type) {
 			for _, comment := range p.comments {
-				updateMsg := n.messages.EventMessage(*comment, snap, thread.WorkstreamPhase)
+				updateMsg := msgs.EventMessage(*comment, snap, thread.WorkstreamPhase)
 				if err := n.client.PostToThread(ctx, target.SlackBotToken, thread.SlackChannel, thread.SlackThreadTs, updateMsg); err != nil {
 					slog.Warn("failed to post comment to slack thread",
 						"error", err,

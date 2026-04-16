@@ -6,7 +6,7 @@ import (
 )
 
 // renderRouterPrompt builds the router's system prompt with repo context.
-func renderRouterPrompt(repoOwner, repoName string) string {
+func renderRouterPrompt(repoOwner, repoName, language string) string {
 	return fmt.Sprintf(`You classify user requests for %s/%s into one or more specialist steps. Return ONLY valid JSON, no other text.
 
 Available specialists:
@@ -92,7 +92,9 @@ The user message may include a "[Workstream phase: <phase>]" signal. This tells 
 - Phase "done": The feature shipped. Questions about it → researcher.
 - Phase "abandoned": The workstream was cancelled.
 
-If no phase is provided, classify based on the user's text and context as before.`, repoOwner, repoName)
+If no phase is provided, classify based on the user's text and context as before.
+
+You MUST respond in %s. The JSON keys stay as-is, but "reasoning" values should be in %s.`, repoOwner, repoName, language, language)
 }
 
 // --- Specialist prompts ---
@@ -118,7 +120,9 @@ Never mention internal routing, specialists, agents, or tell the user to "contac
 
 Format using Slack mrkdwn (NOT standard Markdown): *bold* (single asterisks), _italic_, ` + "`code`" + `. NEVER use **double asterisks** or ### headings.
 
-When referring to issues in your response, ALWAYS include a clickable link: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>`))
+When referring to issues in your response, ALWAYS include a clickable link: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>
+
+You MUST respond in {{.Language}}. All your messages to the user must be written in {{.Language}}.`))
 
 var delegatorPromptTmpl = template.Must(template.New("delegator").Parse(
 	`You are the Delegator for {{.RepoOwner}}/{{.RepoName}}.
@@ -147,7 +151,9 @@ Never mention internal routing, specialists, agents, or tell the user to "contac
 
 Format using Slack mrkdwn (NOT standard Markdown): *bold* (single asterisks), _italic_, ` + "`code`" + `. NEVER use **double asterisks** or ### headings.
 
-When referring to issues, use: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>`))
+When referring to issues, use: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>
+
+You MUST respond in {{.Language}}. All your messages to the user must be written in {{.Language}}.`))
 
 var commenterPromptTmpl = template.Must(template.New("commenter").Parse(
 	`You are the Commenter for {{.RepoOwner}}/{{.RepoName}}.
@@ -161,7 +167,9 @@ Never mention internal routing, specialists, agents, or tell the user to "contac
 
 Format using Slack mrkdwn (NOT standard Markdown): *bold* (single asterisks), _italic_, ` + "`code`" + `. NEVER use **double asterisks** or ### headings.
 
-When referring to issues, use: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>`))
+When referring to issues, use: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>
+
+You MUST respond in {{.Language}}. All your messages to the user must be written in {{.Language}}.`))
 
 var researcherPromptTmpl = template.Must(template.New("researcher").Parse(
 	`You are the Researcher for {{.RepoOwner}}/{{.RepoName}}.
@@ -191,7 +199,9 @@ Present findings clearly and concisely. Format using Slack mrkdwn (NOT standard 
 - Italic: _text_
 - Code: ` + "`text`" + `
 - NEVER use **double asterisks** or ### headings.
-When referring to issues, use: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>`))
+When referring to issues, use: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>
+
+You MUST respond in {{.Language}}. All your messages to the user must be written in {{.Language}}.`))
 
 var eventNarratorPromptTmpl = template.Must(template.New("event_narrator").Parse(
 	`You are the conversational voice of the ProductBuilder bot for {{.RepoOwner}}/{{.RepoName}}.
@@ -210,7 +220,7 @@ Rules:
 - If the event is a merge, confirm the feature is live.
 - If the event is a GitHub comment (from a bot or human), summarise what was said.
   If the comment is a plan or proposal, present the key points and ask the user whether
-  to proceed (e.g. "Soll ich die Umsetzung starten?"). Do NOT decide for the user.
+  to proceed {{if eq .Language "de"}}(e.g. "Soll ich die Umsetzung starten?"){{else}}(e.g. "Should I start the implementation?"){{end}}. Do NOT decide for the user.
 - If the event seems to require follow-up, ask the user what they would like to do.
 
 Format using Slack mrkdwn (NOT standard Markdown):
@@ -218,7 +228,9 @@ Format using Slack mrkdwn (NOT standard Markdown):
 - Italic: _text_
 - Code: ` + "`text`" + `
 - Links: <https://url|label>
-- NEVER use **double asterisks** or ### headings.`))
+- NEVER use **double asterisks** or ### headings.
+
+You MUST respond in {{.Language}}. All your messages to the user must be written in {{.Language}}.`))
 
 var closerPromptTmpl = template.Must(template.New("closer").Parse(
 	`You are the Closer for {{.RepoOwner}}/{{.RepoName}}.
@@ -235,4 +247,6 @@ Never mention internal routing, specialists, agents, or tell the user to "contac
 
 Format using Slack mrkdwn (NOT standard Markdown): *bold* (single asterisks), _italic_, ` + "`code`" + `. NEVER use **double asterisks** or ### headings.
 
-When referring to issues, use: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>`))
+When referring to issues, use: <https://github.com/{{.RepoOwner}}/{{.RepoName}}/issues/NUMBER|#NUMBER>
+
+You MUST respond in {{.Language}}. All your messages to the user must be written in {{.Language}}.`))

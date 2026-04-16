@@ -29,7 +29,7 @@ var researcherFallback = RoutingDecision{
 
 // Route makes one LLM call and returns a RoutingDecision.
 func (r *Router) Route(ctx context.Context, userText string, target targets.TargetConfig, linkedIssue *IssueContext, threadMessages []ThreadMessage, phase slackdomain.WorkstreamPhase) (RoutingDecision, error) {
-	systemPrompt := renderRouterPrompt(target.RepoOwner, target.RepoName)
+	systemPrompt := renderRouterPrompt(target.RepoOwner, target.RepoName, target.LanguageOrDefault())
 
 	userMsg := userText
 	if phase != "" {
