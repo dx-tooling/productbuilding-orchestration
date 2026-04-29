@@ -255,7 +255,19 @@ All configuration is via environment variables, loaded with [caarlos0/env](https
 | **Explicit DI** | `main.go` constructs the full dependency graph. No framework, no magic, easy to trace. |
 | **Per-PR mutex** | Prevents concurrent preview operations on the same PR when rapid webhook events arrive. |
 | **Reconciliation on startup** | After re-provisioning, the orchestrator rebuilds previews from current GitHub state — self-healing. |
+| **Orchestrator-managed target ingress** | Per-target webhooks and `FIREWORKS_API_KEY` Actions secrets are reconciled by the orchestrator at boot using each target's own PAT, not by Terraform's `integrations/github` provider. One deployment can therefore manage targets across any number of GitHub orgs without per-org provider aliases. See `orchestrator-app/internal/targetadmin/`. |
 | **Two-lane notification buffer** | Status events overwrite (latest wins), comment events append (all preserved). Eliminates races between rapid state transitions. See `internal/slack/domain/NOTIFIER.md`. |
+
+## Per-target PAT model
+
+Each registered target supplies a single fine-grained GitHub PAT that the orchestrator uses for *both* runtime work (clone, post PR comments, create issues) *and* ingress wiring (ensuring the target's webhook + `FIREWORKS_API_KEY` Actions secret point at this orchestrator). The reconciler in `orchestrator-app/internal/targetadmin/` runs once at startup and uses each target's PAT for its own ensure-pass.
+
+Two requirements on every per-target PAT:
+
+1. **Repository permissions** (fine-grained PAT): Actions: R, Contents: R, Issues: R+W, Pull requests: R+W, **Webhooks: R+W**, **Secrets: R+W**, Metadata: R.
+2. **The PAT owner must have Admin access on the target repo.** PAT scopes describe what the user *may* request; webhook and secret administration is gated by the user's repo role on GitHub's side. A non-admin's PAT will get 403 on webhook calls regardless of scopes — even with Webhooks: R+W set. If the bot user is an org member but not a repo admin, add it as a direct collaborator with the Admin role (or via a team that has Admin on the repo).
+
+This requirement is repeated in the embedded `onboard-target` task that `mise run create-deployment` writes into each new deployment repo.
 
 ## Further reading
 
