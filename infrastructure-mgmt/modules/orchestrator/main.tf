@@ -1,5 +1,11 @@
 data "aws_caller_identity" "current" {}
 
+locals {
+  # Pin the AZ so the persistent EBS volume can reattach reliably across
+  # instance replacements (e.g. AMI bumps). Defaults to <region>a.
+  availability_zone = coalesce(var.availability_zone, "${var.aws_region}a")
+}
+
 # --- Route53 ---
 
 resource "aws_route53_zone" "preview" {
@@ -177,6 +183,7 @@ data "aws_ami" "ubuntu" {
 resource "aws_instance" "orchestrator" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
+  availability_zone      = local.availability_zone
   key_name               = aws_key_pair.orchestrator.key_name
   iam_instance_profile   = aws_iam_instance_profile.orchestrator.name
   vpc_security_group_ids = [aws_security_group.orchestrator.id]
@@ -199,4 +206,32 @@ resource "aws_instance" "orchestrator" {
   tags = {
     Name = "${var.project_prefix}-orchestrator"
   }
+}
+
+# --- Persistent State Volume ---
+# Survives instance replacement (e.g. AMI upgrades). Holds the orchestrator
+# SQLite DB and Traefik's Let's Encrypt cert cache, mounted at
+# /var/lib/orchestrator-state on the host. See cloud-init.yml for the
+# first-boot format-and-mount sequence.
+
+resource "aws_ebs_volume" "state" {
+  availability_zone = local.availability_zone
+  size              = var.state_volume_size_gb
+  type              = "gp3"
+  encrypted         = true
+
+  tags = {
+    Name = "${var.project_prefix}-orchestrator-state"
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_volume_attachment" "state" {
+  device_name                    = "/dev/sdf"
+  volume_id                      = aws_ebs_volume.state.id
+  instance_id                    = aws_instance.orchestrator.id
+  stop_instance_before_detaching = true
 }

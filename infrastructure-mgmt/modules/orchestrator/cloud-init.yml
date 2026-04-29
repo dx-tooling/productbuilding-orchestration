@@ -43,6 +43,48 @@ write_files:
       REPO_CLONE_URL="${repo_clone_url}"
       SLACK_WORKSPACE="${slack_workspace}"
 
+      echo "=== Provisioning persistent state volume ==="
+      STATE_MOUNT=/var/lib/orchestrator-state
+      STATE_LABEL=orchestrator-state
+
+      # Wait for the secondary EBS to attach (up to ~60s). lsblk lists block
+      # devices; we want the only "disk" with no MOUNTPOINT and no children
+      # (the root disk has children for the mounted partitions).
+      DEVICE=""
+      for i in $(seq 1 30); do
+        DEVICE=$(lsblk -ndo NAME,TYPE,MOUNTPOINT | awk '$2=="disk" && $3=="" {print "/dev/"$1}' | while read -r dev; do
+          # Skip if the device has any partitions/children
+          [ "$(lsblk -no NAME "$dev" | wc -l)" -eq 1 ] && echo "$dev"
+        done | head -1)
+        [ -n "$DEVICE" ] && break
+        sleep 2
+      done
+      if [ -z "$DEVICE" ]; then
+        echo "ERROR: persistent state volume not found after 60s" >&2
+        lsblk >&2
+        exit 1
+      fi
+      echo "Persistent state volume detected at $DEVICE"
+
+      # Format only if there is no filesystem yet (idempotent across boots).
+      if ! blkid "$DEVICE" >/dev/null 2>&1; then
+        echo "First boot: formatting $DEVICE as ext4 with label $STATE_LABEL"
+        mkfs.ext4 -L "$STATE_LABEL" "$DEVICE"
+      else
+        echo "Existing filesystem detected on $DEVICE, skipping mkfs"
+      fi
+
+      mkdir -p "$STATE_MOUNT"
+
+      # Persist mount via fstab (label-based so it survives device renames).
+      if ! grep -q "LABEL=$STATE_LABEL" /etc/fstab; then
+        echo "LABEL=$STATE_LABEL $STATE_MOUNT ext4 defaults,nofail,x-systemd.device-timeout=30 0 2" >> /etc/fstab
+      fi
+      mount -a
+
+      mkdir -p "$STATE_MOUNT/db" "$STATE_MOUNT/letsencrypt"
+      chown -R ubuntu:ubuntu "$STATE_MOUNT"
+
       echo "=== Creating shared Docker network ==="
       docker network create preview-net 2>/dev/null || true
 

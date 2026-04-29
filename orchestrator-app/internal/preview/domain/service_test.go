@@ -315,6 +315,10 @@ func (m *mockComposeManager) Down(ctx context.Context, projectName, workDir stri
 	return m.downErr
 }
 
+func (m *mockComposeManager) IsRunning(ctx context.Context, projectName string) (bool, error) {
+	return false, nil
+}
+
 func (m *mockComposeManager) Exec(ctx context.Context, projectName, serviceName, workDir string, command []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

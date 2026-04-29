@@ -16,6 +16,8 @@ type ComposeManager interface {
 	GenerateOverride(workDir, serviceName, routerName, host string, port int) (overridePath string, err error)
 	Up(ctx context.Context, projectName, workDir string, composeFiles []string, extraEnv []string) error
 	Down(ctx context.Context, projectName, workDir string) error
+	// IsRunning reports whether at least one container belonging to the project is currently running.
+	IsRunning(ctx context.Context, projectName string) (bool, error)
 	// Exec runs a command in a running container
 	Exec(ctx context.Context, projectName, serviceName, workDir string, command []string) error
 	// Logs streams container logs to the provided writer

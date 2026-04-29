@@ -32,6 +32,18 @@ variable "instance_type" {
   default     = "t3.xlarge"
 }
 
+variable "availability_zone" {
+  description = "Availability zone for the orchestrator instance and its persistent state EBS volume. Pinned so the volume can re-attach across instance replacements. Defaults to <aws_region>a if null."
+  type        = string
+  default     = null
+}
+
+variable "state_volume_size_gb" {
+  description = "Size of the persistent EBS volume that holds orchestrator SQLite + Traefik ACME cache. 20 GB is comfortable for a long-running deployment with a handful of targets."
+  type        = number
+  default     = 20
+}
+
 variable "ssh_public_key" {
   description = "SSH public key for EC2 instance access"
   type        = string
