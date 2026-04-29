@@ -49,6 +49,7 @@ type Service struct {
 	notifier           SlackNotifier
 	targetRegistry     *targets.Registry
 	slackThreadChecker SlackThreadChecker
+	prStateChecker     PullRequestStateChecker
 	previewDomain      string
 	workspaceDir       string
 
@@ -67,6 +68,13 @@ type ServiceOption func(*Service)
 // WithSlackThreadChecker enables minimal PR comments when Slack is tracking the feature.
 func WithSlackThreadChecker(checker SlackThreadChecker) ServiceOption {
 	return func(s *Service) { s.slackThreadChecker = checker }
+}
+
+// WithPRStateChecker enables ReconcileActive's "skip closed PRs" probe.
+// If not set, ReconcileActive treats every PR as open and may redeploy
+// previews for PRs that closed while the orchestrator was offline.
+func WithPRStateChecker(checker PullRequestStateChecker) ServiceOption {
+	return func(s *Service) { s.prStateChecker = checker }
 }
 
 func NewService(
@@ -142,6 +150,104 @@ func (s *Service) unregisterDeployment(key string) {
 
 func (s *Service) ListPreviews(ctx context.Context) ([]Preview, error) {
 	return s.repo.ListActive(ctx)
+}
+
+// ReconcileActive brings the world back into sync with what SQLite says
+// after an orchestrator restart. It runs in two passes:
+//
+//  1. Orphan sweep — any row in pending/building/deploying status had its
+//     owning goroutine die when the orchestrator stopped. Mark these as
+//     failed with a clear error_stage so they don't appear stuck.
+//  2. Active reconcile — for each ready row, probe Docker to see if the
+//     compose project is still running. If it is, no-op. If not, probe
+//     GitHub to see if the PR is still open; if closed, mark the preview
+//     deleted and move on; if open, redeploy via DeployPreview using the
+//     stored branch + SHA. Rows for unregistered targets, missing SHAs,
+//     or transient probe failures are skipped with a warning.
+//
+// Per-row failures don't abort the loop. Intended to be called once at
+// orchestrator startup; re-reconciliation between restarts is achieved
+// by `mise run deploy`.
+func (s *Service) ReconcileActive(ctx context.Context) {
+	actives, err := s.repo.ListActive(ctx)
+	if err != nil {
+		slog.Error("reconcile: list active previews failed", "error", err)
+		return
+	}
+
+	// Pass 1: orphan sweep
+	for i := range actives {
+		p := &actives[i]
+		if p.Status != StatusPending && p.Status != StatusBuilding && p.Status != StatusDeploying {
+			continue
+		}
+		slog.Info("reconcile: marking interrupted preview as failed",
+			"project", p.ComposeProject,
+			"owner", p.RepoOwner, "repo", p.RepoName, "pr", p.PRNumber,
+			"prior_status", p.Status)
+		p.Status = StatusFailed
+		p.ErrorStage = "startup-reconcile"
+		p.ErrorMessage = "interrupted by orchestrator restart"
+		if err := s.repo.Update(ctx, *p); err != nil {
+			slog.Warn("reconcile: failed to update orphan row", "id", p.ID, "error", err)
+		}
+	}
+
+	// Pass 2: active reconcile (re-fetch since orphan sweep mutated rows)
+	for i := range actives {
+		p := &actives[i]
+		if p.Status != StatusReady {
+			continue
+		}
+		if len(p.HeadSHA) < 8 {
+			slog.Warn("reconcile: skipping preview with malformed HeadSHA", "id", p.ID, "len", len(p.HeadSHA))
+			continue
+		}
+		target, ok := s.targetRegistry.Get(p.RepoOwner, p.RepoName)
+		if !ok {
+			slog.Warn("reconcile: target no longer registered, skipping",
+				"owner", p.RepoOwner, "repo", p.RepoName)
+			continue
+		}
+		running, err := s.compose.IsRunning(ctx, p.ComposeProject)
+		if err != nil {
+			slog.Warn("reconcile: probe failed", "project", p.ComposeProject, "error", err)
+			continue
+		}
+		if running {
+			continue
+		}
+		// Compose project is gone (e.g. instance replacement, docker prune).
+		// Decide between redeploy and reaping based on PR state.
+		if s.prStateChecker != nil {
+			open, err := s.prStateChecker.IsPullRequestOpen(ctx, p.RepoOwner, p.RepoName, p.PRNumber, target.GitHubPAT)
+			if err != nil {
+				slog.Warn("reconcile: PR-state probe failed, skipping",
+					"owner", p.RepoOwner, "repo", p.RepoName, "pr", p.PRNumber, "error", err)
+				continue
+			}
+			if !open {
+				slog.Info("reconcile: PR no longer open, marking preview deleted",
+					"owner", p.RepoOwner, "repo", p.RepoName, "pr", p.PRNumber)
+				p.Status = StatusDeleted
+				if err := s.repo.Update(ctx, *p); err != nil {
+					slog.Warn("reconcile: update to deleted failed", "id", p.ID, "error", err)
+				}
+				continue
+			}
+		}
+		slog.Info("reconcile: redeploying missing preview",
+			"project", p.ComposeProject,
+			"owner", p.RepoOwner, "repo", p.RepoName, "pr", p.PRNumber)
+		req := DeployRequest{
+			RepoOwner: p.RepoOwner,
+			RepoName:  p.RepoName,
+			PRNumber:  p.PRNumber,
+			Branch:    p.BranchName,
+			HeadSHA:   p.HeadSHA,
+		}
+		s.DeployPreview(ctx, req, target.GitHubPAT)
+	}
 }
 
 func (s *Service) GetPreview(ctx context.Context, repoOwner, repoName string, prNumber int) (*Preview, error) {

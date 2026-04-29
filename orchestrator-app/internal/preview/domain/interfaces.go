@@ -45,6 +45,13 @@ type SlackThreadChecker interface {
 	HasThread(ctx context.Context, repoOwner, repoName string, prNumber int) bool
 }
 
+// PullRequestStateChecker reports whether a given pull request is currently
+// open on GitHub. Used by ReconcileActive to skip redeploying previews whose
+// PRs have been closed while the orchestrator was offline.
+type PullRequestStateChecker interface {
+	IsPullRequestOpen(ctx context.Context, owner, repo string, prNumber int, pat string) (bool, error)
+}
+
 // DeployRequest is the input for deploying or updating a preview.
 type DeployRequest struct {
 	RepoOwner         string

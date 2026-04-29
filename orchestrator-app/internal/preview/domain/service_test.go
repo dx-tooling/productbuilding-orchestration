@@ -284,6 +284,11 @@ type mockComposeManager struct {
 	upErr       error
 	downErr     error
 	execErr     error
+
+	// Per-project IsRunning result for reconcile tests. Absent → false.
+	runningProjects map[string]bool
+	// IsRunning returns this error if non-nil (overrides runningProjects).
+	isRunningErr error
 }
 
 func (m *mockComposeManager) GenerateOverride(workDir, serviceName, routerName, host string, port int) (string, error) {
@@ -316,7 +321,15 @@ func (m *mockComposeManager) Down(ctx context.Context, projectName, workDir stri
 }
 
 func (m *mockComposeManager) IsRunning(ctx context.Context, projectName string) (bool, error) {
-	return false, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.isRunningErr != nil {
+		return false, m.isRunningErr
+	}
+	if m.runningProjects == nil {
+		return false, nil
+	}
+	return m.runningProjects[projectName], nil
 }
 
 func (m *mockComposeManager) Exec(ctx context.Context, projectName, serviceName, workDir string, command []string) error {
