@@ -28,18 +28,32 @@ func generateSignature(payload []byte, secret string) string {
 
 // Mock implementations
 type mockPreviewService struct {
+	mu           sync.Mutex
 	deployCalled bool
 	deployReq    previewdomain.DeployRequest
 	deleteCalled bool
 	deleteReq    previewdomain.DeployRequest
+
+	// Optional: when set, DeployPreview closes deployDone after recording.
+	// Tests that need to wait for the handler's goroutine to finish set this
+	// instead of using a brittle time.Sleep.
+	deployDone     chan struct{}
+	deployDoneOnce sync.Once
 }
 
 func (m *mockPreviewService) DeployPreview(ctx context.Context, req previewdomain.DeployRequest, pat string) {
+	m.mu.Lock()
 	m.deployCalled = true
 	m.deployReq = req
+	m.mu.Unlock()
+	if m.deployDone != nil {
+		m.deployDoneOnce.Do(func() { close(m.deployDone) })
+	}
 }
 
 func (m *mockPreviewService) DeletePreview(ctx context.Context, req previewdomain.DeployRequest, pat string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.deleteCalled = true
 	m.deleteReq = req
 }
@@ -1157,7 +1171,7 @@ func TestHandleWebhook_CheckRun_NoPR_Ignored(t *testing.T) {
 }
 
 func TestHandleWebhook_PROpened_DeployRequestHasLinkedIssueNumber(t *testing.T) {
-	previewSvc := &mockPreviewService{}
+	previewSvc := &mockPreviewService{deployDone: make(chan struct{})}
 	slackNotifier := &mockSlackNotifier{}
 	registry := &mockTargetRegistry{
 		config: targets.TargetConfig{
@@ -1199,8 +1213,14 @@ func TestHandleWebhook_PROpened_DeployRequestHasLinkedIssueNumber(t *testing.T) 
 	rec := httptest.NewRecorder()
 	handler.HandleWebhook(rec, req)
 
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-previewSvc.deployDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for DeployPreview")
+	}
 
+	previewSvc.mu.Lock()
+	defer previewSvc.mu.Unlock()
 	if !previewSvc.deployCalled {
 		t.Fatal("Expected DeployPreview to be called")
 	}

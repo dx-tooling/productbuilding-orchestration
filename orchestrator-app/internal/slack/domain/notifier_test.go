@@ -1873,9 +1873,9 @@ func TestNotifier_PRReady_UsesNarratorWhenAvailable(t *testing.T) {
 	})
 
 	target := targets.TargetConfig{
-		RepoOwner:    "acme",
-		RepoName:     "widgets",
-		SlackChannel: "#test",
+		RepoOwner:     "acme",
+		RepoName:      "widgets",
+		SlackChannel:  "#test",
 		SlackBotToken: "xoxb-test",
 	}
 
@@ -1931,9 +1931,9 @@ func TestNotifier_PRReady_FallsBackToTemplateOnNarratorError(t *testing.T) {
 	})
 
 	target := targets.TargetConfig{
-		RepoOwner:    "acme",
-		RepoName:     "widgets",
-		SlackChannel: "#test",
+		RepoOwner:     "acme",
+		RepoName:      "widgets",
+		SlackChannel:  "#test",
 		SlackBotToken: "xoxb-test",
 	}
 
@@ -1986,9 +1986,9 @@ func TestNotifier_PRReady_WithoutNarrator_UsesTemplate(t *testing.T) {
 	})
 
 	target := targets.TargetConfig{
-		RepoOwner:    "acme",
-		RepoName:     "widgets",
-		SlackChannel: "#test",
+		RepoOwner:     "acme",
+		RepoName:      "widgets",
+		SlackChannel:  "#test",
 		SlackBotToken: "xoxb-test",
 	}
 

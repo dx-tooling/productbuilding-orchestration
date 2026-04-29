@@ -627,10 +627,10 @@ func TestHandleEvent_InThreadMention_PopulatesLinkedPR(t *testing.T) {
 	}
 	threadFinder := &mockThreadFinder{
 		thread: &domain.SlackThread{
-			GithubIssueID:  19,
-			GithubPRID:     22,
-			RepoOwner:      "example-org",
-			RepoName:       "playground",
+			GithubIssueID:   19,
+			GithubPRID:      22,
+			RepoOwner:       "example-org",
+			RepoName:        "playground",
 			WorkstreamPhase: domain.PhaseReview,
 		},
 	}

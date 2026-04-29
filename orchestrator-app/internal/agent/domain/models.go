@@ -31,10 +31,10 @@ type RunRequest struct {
 	BotUserID       string
 	Target          targets.TargetConfig
 	LinkedIssue     *IssueContext
-	LinkedPR        *LinkedPRContext                // Active PR for this workstream; if set, delegator posts on PR
-	ThreadMessages  []ThreadMessage                 // Pre-fetched thread context; if set, specialist skips fetching
-	FeatureSummary  string                          // Pre-formatted feature context summary for LLM
-	WorkstreamPhase slackdomain.WorkstreamPhase     // Lifecycle phase of the workstream (e.g. review, revision)
+	LinkedPR        *LinkedPRContext            // Active PR for this workstream; if set, delegator posts on PR
+	ThreadMessages  []ThreadMessage             // Pre-fetched thread context; if set, specialist skips fetching
+	FeatureSummary  string                      // Pre-formatted feature context summary for LLM
+	WorkstreamPhase slackdomain.WorkstreamPhase // Lifecycle phase of the workstream (e.g. review, revision)
 	OnIssueCreated  func(owner, repo string, number int, title string)
 }
 
@@ -126,9 +126,9 @@ type RoutingDecision struct {
 
 // RoutingStep identifies a specialist to invoke with optional parameters.
 type RoutingStep struct {
-	Specialist string            `json:"specialist"`
+	Specialist string         `json:"specialist"`
 	Params     map[string]any `json:"params"`
-	Reasoning  string            `json:"reasoning"`
+	Reasoning  string         `json:"reasoning"`
 }
 
 // PriorStepContext carries output from a preceding specialist step in a chain.
