@@ -10,13 +10,8 @@ variable "project_prefix" {
   default     = "productbuilder"
 }
 
-variable "github_org" {
-  description = "GitHub organization name"
-  type        = string
-}
-
 variable "github_mgmt_pat" {
-  description = "GitHub PAT for managing org resources (webhooks, secrets)"
+  description = "GitHub PAT used by cloud-init to clone the orchestration repo onto the EC2 host. No longer used for managing per-target webhooks or Actions secrets — that's the orchestrator's targetadmin reconciler's job using per-target PATs."
   type        = string
   sensitive   = true
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -30,6 +31,10 @@ import (
 	slackdomain "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/domain"
 	slackinfra "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/infra"
 	slackweb "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/slack/web"
+
+	// Targetadmin vertical (GitHub-side ingress reconciler)
+	targetadmindomain "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/targetadmin/domain"
+	targetadmininfra "github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/targetadmin/infra"
 
 	// Platform
 	"github.com/dx-tooling/productbuilding-orchestration/orchestrator-app/internal/platform/config"
@@ -299,6 +304,20 @@ func main() {
 	//      (e.g. after EC2 replacement, or local docker prune), redeploy via
 	//      the existing DeployPreview path. Closed PRs are reaped instead.
 	go reconcilePreviews(previewRepo, composeRunner, registry, githubClient, previewService)
+
+	// ── Reconcile GitHub-side target ingress ───────────────────────────
+	// Ensures every registered target has a webhook on GitHub pointing here
+	// with the correct secret/events, plus an up-to-date FIREWORKS_API_KEY
+	// Actions secret (for OpenCode workflows on the target repo). Uses each
+	// target's PAT, so onboarding a target in any GitHub org is purely a
+	// tfvars edit + apply + deploy — no provider aliases required.
+	adminClient := targetadmininfra.NewGitHubAdminClient(githubClient)
+	adminReconciler := targetadmindomain.NewReconciler(
+		registry,
+		adminClient,
+		fmt.Sprintf("https://api.%s/webhook", cfg.PreviewDomain),
+	)
+	go adminReconciler.ReconcileAll(context.Background())
 
 	// ── Build Agent ────────────────────────────────────────────────────
 	llmClient, err := agentdomain.NewLLMClient(cfg.LLMConfig())

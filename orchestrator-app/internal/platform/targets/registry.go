@@ -15,6 +15,11 @@ type TargetConfig struct {
 	GitHubPAT     string `json:"github_pat"`
 	WebhookSecret string `json:"webhook_secret"`
 
+	// Set on the target repo as the FIREWORKS_API_KEY GitHub Actions secret
+	// by the orchestrator's targetadmin reconciler so the OpenCode workflow
+	// can authenticate to Fireworks.
+	FireworksAPIKey string `json:"fireworks_api_key,omitempty"`
+
 	// Optional Slack integration
 	SlackChannel  string `json:"slack_channel,omitempty"`
 	SlackBotToken string `json:"slack_bot_token,omitempty"`
@@ -106,4 +111,13 @@ func (r *Registry) LoadFromFile(path string) error {
 // Count returns the number of registered targets.
 func (r *Registry) Count() int {
 	return len(r.targets)
+}
+
+// All returns a snapshot slice of all registered targets. Order is unspecified.
+func (r *Registry) All() []TargetConfig {
+	out := make([]TargetConfig, 0, len(r.targets))
+	for _, t := range r.targets {
+		out = append(out, t)
+	}
+	return out
 }

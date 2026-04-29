@@ -61,7 +61,6 @@ CFG_AWS_ACCESS_KEY_ID=""
 CFG_AWS_SECRET_ACCESS_KEY=""
 CFG_AWS_REGION="eu-central-1"
 CFG_GITHUB_PAT_MGMT=""
-CFG_GITHUB_ORG=""
 CFG_ORCH_GITHUB_ORG="dx-tooling"
 CFG_PREVIEW_DOMAIN=""
 CFG_ACME_EMAIL=""
@@ -119,24 +118,22 @@ fi
 # ── 2. GitHub ──
 
 section_header "GitHub Configuration"
-echo "  The management PAT is used by Terraform to create webhooks and"
-echo "  manage repo secrets across all target repositories."
+echo "  The orchestration PAT is used by cloud-init on the EC2 host to clone"
+echo "  the productbuilding-orchestration repo. It does NOT manage per-target"
+echo "  webhooks or Actions secrets — those are created by the orchestrator"
+echo "  process itself, using each target's own per-target PAT, so there is"
+echo "  no requirement that all targets live in one GitHub org."
 echo ""
-echo "  Create a classic PAT at: https://github.com/settings/tokens/new"
-echo "  Required scopes: repo (full), admin:repo_hook, read:org"
+echo "  Create a fine-grained PAT at: https://github.com/settings/personal-access-tokens/new"
+echo "  Resource owner: the org hosting productbuilding-orchestration"
+echo "  Repository access: only the productbuilding-orchestration repo"
+echo "  Repository permissions: Contents: Read"
 echo ""
 
-read -rp "  GitHub Management PAT: " CFG_GITHUB_PAT_MGMT
+read -rp "  Orchestration repo PAT: " CFG_GITHUB_PAT_MGMT
 while [[ -z "$CFG_GITHUB_PAT_MGMT" ]]; do
     echo "  (required)"
-    read -rp "  GitHub Management PAT: " CFG_GITHUB_PAT_MGMT
-done
-
-echo ""
-read -rp "  GitHub organization (where target repos live): " CFG_GITHUB_ORG
-while [[ -z "$CFG_GITHUB_ORG" ]]; do
-    echo "  (required)"
-    read -rp "  GitHub organization: " CFG_GITHUB_ORG
+    read -rp "  Orchestration repo PAT: " CFG_GITHUB_PAT_MGMT
 done
 
 echo ""
@@ -222,9 +219,8 @@ echo "  AWS Account:    $CFG_AWS_ACCOUNT_ID"
 echo "  AWS Region:     $CFG_AWS_REGION"
 echo "  AWS Key:        $(mask_secret "$CFG_AWS_ACCESS_KEY_ID")"
 echo ""
-echo "  GitHub Org:     $CFG_GITHUB_ORG"
 echo "  Orch Org:       $CFG_ORCH_GITHUB_ORG"
-echo "  Mgmt PAT:       $(mask_secret "$CFG_GITHUB_PAT_MGMT")"
+echo "  Orch Repo PAT:  $(mask_secret "$CFG_GITHUB_PAT_MGMT")"
 echo ""
 echo "  Preview Domain: $CFG_PREVIEW_DOMAIN"
 echo "  ACME Email:     $CFG_ACME_EMAIL"
@@ -652,7 +648,6 @@ module "orchestrator" {
 
   aws_region               = var.aws_region
   project_prefix           = var.project_prefix
-  github_org               = var.github_org
   github_mgmt_pat          = var.github_mgmt_pat
   preview_domain           = var.preview_domain
   instance_type            = var.instance_type
@@ -680,14 +675,8 @@ variable "project_prefix" {
   default     = "${CFG_PROJECT_PREFIX:-productbuilder}"
 }
 
-variable "github_org" {
-  description = "GitHub organization name"
-  type        = string
-  default     = "${CFG_GITHUB_ORG}"
-}
-
 variable "github_mgmt_pat" {
-  description = "GitHub PAT for managing org resources (webhooks, secrets)"
+  description = "GitHub PAT used by cloud-init to clone the orchestration repo onto the EC2 host. Per-target webhooks and Actions secrets are managed by the orchestrator process using per-target PATs, not this one."
   type        = string
   sensitive   = true
 }
@@ -765,10 +754,6 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
-    github = {
-      source  = "integrations/github"
-      version = "~> 6.0"
-    }
   }
 }
 
@@ -776,10 +761,11 @@ provider "aws" {
   region = var.aws_region
 }
 
-provider "github" {
-  owner = var.github_org
-  token = var.github_mgmt_pat
-}
+# Per-target GitHub-side resources (webhooks, Actions secrets) are managed by
+# the orchestrator process at startup using each target's own PAT — see the
+# targetadmin reconciler in orchestrator-app/internal/targetadmin. This means
+# one orchestrator deployment can manage targets across any number of GitHub
+# orgs without needing a provider alias per org.
 EOF
 
 cat > "$DEPLOY_DIR/infrastructure-mgmt/main/backend.tf" <<EOF
@@ -1614,8 +1600,12 @@ fi
 echo ""
 echo "  GitHub PAT — fine-grained, for the orchestrator to interact with this repo."
 echo ""
-echo "  The orchestrator uses this PAT to clone the repo, post PR comments,"
-echo "  and create issues from Slack."
+echo "  The orchestrator uses this PAT for both runtime concerns (cloning the"
+echo "  repo, posting PR comments, creating issues) AND for ingress wiring"
+echo "  (ensuring this repo's webhook + FIREWORKS_API_KEY Actions secret point"
+echo "  at this orchestrator). The same per-target PAT covers both — there is"
+echo "  no separate management PAT, and no requirement that all targets live"
+echo "  in the same GitHub org."
 echo "  Create one at: https://github.com/settings/personal-access-tokens/new"
 echo ""
 echo "  Settings:"
@@ -1628,7 +1618,8 @@ echo "        Actions:        Read        (CI/CD status and log analysis)"
 echo "        Contents:       Read        (clone the repo)"
 echo "        Issues:         Read+Write  (create issues, post comments)"
 echo "        Pull requests:  Read+Write  (post preview URL comments)"
-echo "        Actions:        Read        (CI status via workflow runs)"
+echo "        Webhooks:       Read+Write  (orchestrator manages its own ingress webhook)"
+echo "        Secrets:        Read+Write  (orchestrator sets FIREWORKS_API_KEY for OpenCode workflow)"
 echo "        Metadata:       Read        (required by default)"
 echo ""
 read -rp "GitHub PAT (github_pat_...): " GITHUB_PAT

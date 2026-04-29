@@ -23,6 +23,21 @@ type Client struct {
 	baseURL    string // optional, for testing; defaults to "https://api.github.com"
 }
 
+// Webhook is a per-repository webhook as represented by the GitHub REST API.
+// Used by the targetadmin reconciler to ensure each registered target's
+// webhook points at this orchestrator with the correct secret/events.
+//
+// Secret is write-only on the GitHub side: requests can set it, but the API
+// never returns it on reads (List/Get always omit it). Treat empty Secret on
+// a returned Webhook as "unknown", not "unset".
+type Webhook struct {
+	ID     int64
+	URL    string
+	Secret string
+	Events []string
+	Active bool
+}
+
 func NewClient() *Client {
 	return &Client{httpClient: &http.Client{}}
 }
@@ -969,4 +984,167 @@ func (c *Client) DeleteAllBotComments(ctx context.Context, owner, repo string, p
 	}
 
 	return nil
+}
+
+// ── Webhook CRUD (used by targetadmin reconciler) ───────────────────────────
+
+type webhookAPIResponse struct {
+	ID     int64    `json:"id"`
+	Active bool     `json:"active"`
+	Events []string `json:"events"`
+	Config struct {
+		URL string `json:"url"`
+	} `json:"config"`
+}
+
+// ListWebhooks returns all webhooks configured on the given repository.
+// The Secret field on returned Webhooks is always empty — GitHub never
+// reveals stored secrets via the API.
+func (c *Client) ListWebhooks(ctx context.Context, owner, repo, pat string) ([]Webhook, error) {
+	u := fmt.Sprintf("%s/repos/%s/%s/hooks", c.apiURL(), owner, repo)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list webhooks: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("list webhooks: status %d: %s", resp.StatusCode, body)
+	}
+
+	var raw []webhookAPIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("parse webhooks: %w", err)
+	}
+	out := make([]Webhook, 0, len(raw))
+	for _, h := range raw {
+		out = append(out, Webhook{
+			ID:     h.ID,
+			URL:    h.Config.URL,
+			Events: h.Events,
+			Active: h.Active,
+		})
+	}
+	return out, nil
+}
+
+// CreateWebhook creates a new webhook on the given repository.
+// The supplied Secret is sent to GitHub on the create request and stored
+// server-side; subsequent List/Get calls will not return it.
+func (c *Client) CreateWebhook(ctx context.Context, owner, repo, pat string, w Webhook) error {
+	u := fmt.Sprintf("%s/repos/%s/%s/hooks", c.apiURL(), owner, repo)
+	body := map[string]any{
+		"name":   "web",
+		"active": w.Active,
+		"events": w.Events,
+		"config": map[string]any{
+			"url":          w.URL,
+			"content_type": "json",
+			"insecure_ssl": "0",
+			"secret":       w.Secret,
+		},
+	}
+	return c.doJSON(ctx, "POST", u, pat, body, http.StatusCreated, http.StatusOK)
+}
+
+// UpdateWebhook updates an existing webhook (identified by hookID) to match
+// the desired Webhook configuration. Always passes Secret on the wire — this
+// is how secret rotation propagates from tfvars through the reconciler.
+func (c *Client) UpdateWebhook(ctx context.Context, owner, repo string, hookID int64, pat string, w Webhook) error {
+	u := fmt.Sprintf("%s/repos/%s/%s/hooks/%d", c.apiURL(), owner, repo, hookID)
+	body := map[string]any{
+		"active": w.Active,
+		"events": w.Events,
+		"config": map[string]any{
+			"url":          w.URL,
+			"content_type": "json",
+			"insecure_ssl": "0",
+			"secret":       w.Secret,
+		},
+	}
+	return c.doJSON(ctx, "PATCH", u, pat, body, http.StatusOK)
+}
+
+// ── Actions secrets (used by targetadmin reconciler) ────────────────────────
+
+// GetActionsSecretPublicKey fetches the repo's public key used for sealing
+// Actions secrets. Returns the keyID (opaque identifier supplied with each
+// PUT) and the base64-encoded 32-byte X25519 public key.
+func (c *Client) GetActionsSecretPublicKey(ctx context.Context, owner, repo, pat string) (string, string, error) {
+	u := fmt.Sprintf("%s/repos/%s/%s/actions/secrets/public-key", c.apiURL(), owner, repo)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("get actions public key: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", "", fmt.Errorf("get actions public key: status %d: %s", resp.StatusCode, body)
+	}
+
+	var pk struct {
+		KeyID string `json:"key_id"`
+		Key   string `json:"key"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&pk); err != nil {
+		return "", "", fmt.Errorf("parse public key: %w", err)
+	}
+	return pk.KeyID, pk.Key, nil
+}
+
+// PutActionsSecret writes (creates or updates) a repository-level Actions
+// secret. encryptedValue must be the base64-encoded sealed-box ciphertext
+// produced by sealing the plaintext with the repo's public key (see
+// targetadmin/infra/sealed_box.go).
+func (c *Client) PutActionsSecret(ctx context.Context, owner, repo, secretName, encryptedValue, keyID, pat string) error {
+	u := fmt.Sprintf("%s/repos/%s/%s/actions/secrets/%s", c.apiURL(), owner, repo, secretName)
+	body := map[string]any{
+		"encrypted_value": encryptedValue,
+		"key_id":          keyID,
+	}
+	return c.doJSON(ctx, "PUT", u, pat, body, http.StatusCreated, http.StatusNoContent, http.StatusOK)
+}
+
+// doJSON marshals body as JSON, sends an authed request, and returns nil if
+// the response status is in `acceptStatuses`. Used by the small admin methods
+// above to keep their HTTP plumbing identical.
+func (c *Client) doJSON(ctx context.Context, method, url, pat string, body any, acceptStatuses ...int) error {
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal body: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(buf))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("%s %s: %w", method, url, err)
+	}
+	defer resp.Body.Close()
+	for _, s := range acceptStatuses {
+		if resp.StatusCode == s {
+			return nil
+		}
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("%s %s: status %d: %s", method, url, resp.StatusCode, respBody)
 }
